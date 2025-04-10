@@ -113,17 +113,55 @@ You can customize which models are used via environment variables:
 
 - `BIG_MODEL`: The model to use for Claude Sonnet models (default: "gpt-4o")
 - `SMALL_MODEL`: The model to use for Claude Haiku models (default: "gpt-4o-mini")
+- `PREFERRED_PROVIDER`: Set to "google" (default), "openai" or "custom" to choose the primary backend
 
 Add these to your `.env` file to customize:
 ```
 OPENAI_API_KEY=your-openai-key
-# For OpenAI models (default)
+# For OpenAI models
+PREFERRED_PROVIDER=openai
 BIG_MODEL=gpt-4o
 SMALL_MODEL=gpt-4o-mini
 
 # For Gemini models
-# BIG_MODEL=gemini-2.5-pro-preview-03-25
-# SMALL_MODEL=gemini-2.0-flash
+PREFERRED_PROVIDER=google
+BIG_MODEL=gemini-2.5-pro-preview-03-25
+SMALL_MODEL=gemini-2.0-flash
+
+# For custom OpenAI-compatible models
+PREFERRED_PROVIDER=custom
+BIG_MODEL=my-large-model
+SMALL_MODEL=my-small-model
+```
+
+### Custom OpenAI-Compatible Models
+
+You can add support for custom OpenAI-compatible models by creating a `custom_models.yaml` file:
+
+```yaml
+- model_id: "my-model"
+  api_base: "https://api.example.com"
+  api_key_name: "MY_API_KEY"
+  can_stream: true
+  max_tokens: 8192
+  model_name: "actual-model-name"  # Optional - if different from model_id
+```
+
+Key features of custom models:
+- Supports any OpenAI-compatible API endpoint
+- Handles streaming responses if `can_stream: true`
+- Automatically adds `custom/` prefix to model names
+- Uses specified API key from environment variables
+- Supports tool use (function calling) if the backend supports it
+- Maintains Anthropic API compatibility while using custom backends
+- Automatically loads from `custom_models.yaml` on server startup
+- Supports multiple custom models in the same configuration file
+
+Then set these environment variables:
+```
+PREFERRED_PROVIDER=custom
+BIG_MODEL=my-model
+MY_API_KEY=your-api-key
 ```
 
 Or set them directly when running the server:
@@ -131,11 +169,14 @@ Or set them directly when running the server:
 # Using OpenAI models (with uv)
 BIG_MODEL=gpt-4o SMALL_MODEL=gpt-4o-mini uv run uvicorn server:app --host 0.0.0.0 --port 8082
 
+# Using custom models (with uv)
+PREFERRED_PROVIDER=custom BIG_MODEL=my-large-model SMALL_MODEL=my-small-model uv run uvicorn server:app --host 0.0.0.0 --port 8082
+
 # Using Gemini models (with uv)
 BIG_MODEL=gemini-2.5-pro-preview-03-25 SMALL_MODEL=gemini-2.0-flash uv run uvicorn server:app --host 0.0.0.0 --port 8082
 
-# Mix and match (with uv)
-BIG_MODEL=gemini-2.5-pro-preview-03-25 SMALL_MODEL=gpt-4o-mini uv run uvicorn server:app --host 0.0.0.0 --port 8082
+# Using custom models (with uv)
+PREFERRED_PROVIDER=custom BIG_MODEL=my-large-model SMALL_MODEL=my-small-model uv run uvicorn server:app --host 0.0.0.0 --port 8082
 ```
 
 ## How It Works 🧩

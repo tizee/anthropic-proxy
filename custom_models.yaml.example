@@ -1,0 +1,13 @@
+- model_id: my-large-model
+  model_name: my-large-model-for-sending-request
+  api_base: "https://api.example.com/api/v3"
+  can_stream: true
+  api_key_name: MY_API_KEY
+  max_tokens: 16384
+
+- model_id: my-small-model
+  model_name: my-small-model-for-sending-request
+  api_base: "https://api.example.com/api/v3"
+  can_stream: true
+  api_key_name: MY_API_KEY
+  max_tokens: 8192
