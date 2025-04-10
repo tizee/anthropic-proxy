@@ -1,5 +1,6 @@
 # Environment variables
 .env
+custom_models.yaml
 
 # Python
 __pycache__/
