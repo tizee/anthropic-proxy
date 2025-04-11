@@ -4,6 +4,8 @@
   can_stream: true
   api_key_name: MY_API_KEY
   max_tokens: 16384
+  input_cost_per_token: 0.0000025  # $ per token
+  output_cost_per_token: 0.0000075  # $ per token
 
 - model_id: my-small-model
   model_name: my-small-model-for-sending-request
@@ -11,3 +13,5 @@
   can_stream: true
   api_key_name: MY_API_KEY
   max_tokens: 8192
+  input_cost_per_token: 0.0000015  # $ per token
+  output_cost_per_token: 0.0000045  # $ per token

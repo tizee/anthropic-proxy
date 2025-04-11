@@ -26,7 +26,7 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.WARN,  # Change to INFO level to show more details
+    level=logging.DEBUG,  # Change to INFO level to show more details
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
@@ -108,6 +108,9 @@ def load_custom_models(config_file="custom_models.yaml"):
             logger.warning(f"No models found in config file: {config_file}")
             return
 
+        # Dictionary to collect models for registration with LiteLLM
+        models_to_register = {}
+
         for model in models:
             if "model_id" not in model or "api_base" not in model:
                 logger.warning(f"Invalid model configuration, missing required fields: {model}")
@@ -119,9 +122,41 @@ def load_custom_models(config_file="custom_models.yaml"):
                 "api_base": model["api_base"],
                 "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
-                "max_tokens": model.get("max_tokens", 8192) # Default to 8k if not specified
+                "max_tokens": model.get("max_tokens", 8192), # Default to 8k if not specified
+                "input_cost_per_token": model.get("input_cost_per_token", 0.0),
+                "output_cost_per_token": model.get("output_cost_per_token", 0.0)
             }
+
+            # Prepare the model for registration with LiteLLM pricing system
+            # For both the plain model ID and the prefixed version
+            for model_key in [model_id, f"openai/{model_id}", f"custom/{model_id}"]:
+                models_to_register[model_key] = {
+                    "max_tokens": CUSTOM_OPENAI_MODELS[model_id]["max_tokens"],
+                    "input_cost_per_token": CUSTOM_OPENAI_MODELS[model_id]["input_cost_per_token"],
+                    "output_cost_per_token": CUSTOM_OPENAI_MODELS[model_id]["output_cost_per_token"],
+                    "litellm_provider": "openai",
+                    "mode": "chat"
+                }
+
+                # Also register with the real model name if different
+                model_name = CUSTOM_OPENAI_MODELS[model_id]["model_name"]
+                if model_name != model_id:
+                    for model_name_key in [model_name, f"openai/{model_name}"]:
+                        models_to_register[model_name_key] = models_to_register[model_key].copy()
+
             logger.info(f"Loaded custom OpenAI-compatible model: {model_id} → {CUSTOM_OPENAI_MODELS[model_id]['model_name']}")
+
+        # Register all models with LiteLLM for pricing calculations
+        if models_to_register:
+            try:
+                from litellm import register_model
+                register_model(models_to_register)
+                logger.info(f"Registered {len(models_to_register)} custom model configurations with LiteLLM pricing system")
+                for model_key in models_to_register:
+                    logger.debug(f"Registered model pricing for: {model_key}")
+            except Exception as e:
+                logger.error(f"Failed to register custom models with LiteLLM pricing system: {str(e)}")
+
     except Exception as e:
         logger.error(f"Error loading custom models: {str(e)}")
 
@@ -724,6 +759,8 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
             clean_model = clean_model[len("anthropic/"):]
         elif clean_model.startswith("openai/"):
             clean_model = clean_model[len("openai/"):]
+        elif clean_model.startswith("custom/"):
+            clean_model = clean_model[len("custom/"):]
 
         # Check if this is a Claude model (which supports content blocks)
         is_claude_model = clean_model.startswith("claude-")
