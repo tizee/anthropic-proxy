@@ -19,7 +19,7 @@ import re
 from datetime import datetime
 import sys
 
-# litellm._turn_on_debug()
+litellm._turn_on_debug()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -108,7 +108,7 @@ def load_custom_models(config_file="custom_models.yaml"):
             logger.warning(f"No models found in config file: {config_file}")
             return
 
-        # Dictionary to collect models for registration with LiteLLM
+        # Dictionary to register models with LiteLLM pricing system
         models_to_register = {}
 
         for model in models:
@@ -117,43 +117,56 @@ def load_custom_models(config_file="custom_models.yaml"):
                 continue
 
             model_id = model["model_id"]
+            model_name = model.get("model_name", model_id)
+
+            # Set default pricing if not provided
+            input_cost = model.get("input_cost_per_token", 0.000001)  # Default if not specified
+            output_cost = model.get("output_cost_per_token", 0.000002)  # Default if not specified
+
             CUSTOM_OPENAI_MODELS[model_id] = {
-                "model_name": model.get("model_name", model_id),
+                "model_name": model_name,
                 "api_base": model["api_base"],
                 "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
-                "max_tokens": model.get("max_tokens", 8192), # Default to 8k if not specified
-                "input_cost_per_token": model.get("input_cost_per_token", 0.0),
-                "output_cost_per_token": model.get("output_cost_per_token", 0.0)
+                "max_tokens": model.get("max_tokens", 8192),
+                "input_cost_per_token": input_cost,
+                "output_cost_per_token": output_cost
             }
 
-            # Prepare the model for registration with LiteLLM pricing system
-            # For both the plain model ID and the prefixed version
-            for model_key in [model_id, f"openai/{model_id}", f"custom/{model_id}"]:
-                models_to_register[model_key] = {
+            # Register model pricing with LiteLLM - ensure all possible model names are registered
+            # Format: Register each possible way the model might be referenced
+            model_variations = [
+                f"openai/{model_id}",         # With openai/ prefix
+                f"openai/{model_name}",       # Model name with openai/ prefix
+            ]
+
+            for variation in model_variations:
+                models_to_register[variation] = {
                     "max_tokens": CUSTOM_OPENAI_MODELS[model_id]["max_tokens"],
-                    "input_cost_per_token": CUSTOM_OPENAI_MODELS[model_id]["input_cost_per_token"],
-                    "output_cost_per_token": CUSTOM_OPENAI_MODELS[model_id]["output_cost_per_token"],
+                    "input_cost_per_token": input_cost,
+                    "output_cost_per_token": output_cost,
                     "litellm_provider": "openai",
                     "mode": "chat"
                 }
 
-                # Also register with the real model name if different
-                model_name = CUSTOM_OPENAI_MODELS[model_id]["model_name"]
-                if model_name != model_id:
-                    for model_name_key in [model_name, f"openai/{model_name}"]:
-                        models_to_register[model_name_key] = models_to_register[model_key].copy()
+            logger.info(f"Loaded custom OpenAI-compatible model: {model_id} → {model_name}")
 
-            logger.info(f"Loaded custom OpenAI-compatible model: {model_id} → {CUSTOM_OPENAI_MODELS[model_id]['model_name']}")
-
-        # Register all models with LiteLLM for pricing calculations
+        # Register all model pricing with LiteLLM
         if models_to_register:
             try:
                 from litellm import register_model
+                # Register models with LiteLLM pricing system
                 register_model(models_to_register)
-                logger.info(f"Registered {len(models_to_register)} custom model configurations with LiteLLM pricing system")
+                logger.info(f"Registered {len(models_to_register)} model variations with LiteLLM pricing system")
+
+                # Verify registration (add debug output to confirm)
+                from litellm import model_cost
                 for model_key in models_to_register:
-                    logger.debug(f"Registered model pricing for: {model_key}")
+                    if model_key in model_cost:
+                        logger.info(f"✅ Successfully registered model pricing for: {model_key} = {model_cost[model_key]}")
+                    else:
+                        logger.warning(f"⚠️ Failed to verify pricing registration for: {model_key}")
+
             except Exception as e:
                 logger.error(f"Failed to register custom models with LiteLLM pricing system: {str(e)}")
 
@@ -338,7 +351,7 @@ class MessagesRequest(BaseModel):
         # --- Mapping Logic --- END ---
 
         if mapped:
-            logger.debug(f"📌 MODEL MAPPING: '{original_model}' ➡️ '{new_model}'")
+            logger.info(f"📌 MODEL MAPPING: '{original_model}' ➡️ '{new_model}'")
         else:
              # If no mapping occurred and no prefix exists, log warning or decide default
              if not v.startswith(('openai/', 'gemini/', 'anthropic/', 'custom/')):
