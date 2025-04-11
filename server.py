@@ -19,14 +19,14 @@ import re
 from datetime import datetime
 import sys
 
-litellm._turn_on_debug()
+# litellm._turn_on_debug()
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Change to INFO level to show more details
+    level=logging.INFO,  # Change to INFO level to show more details
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
@@ -130,14 +130,17 @@ def load_custom_models(config_file="custom_models.yaml"):
                 "can_stream": model.get("can_stream", True),
                 "max_tokens": model.get("max_tokens", 8192),
                 "input_cost_per_token": input_cost,
-                "output_cost_per_token": output_cost
+                "output_cost_per_token": output_cost,
+                "max_input_tokens": model.get("max_input_tokens", 128000),
+                "supports_response_schema": True,
+                "supports_tool_choice":True
             }
 
             # Register model pricing with LiteLLM - ensure all possible model names are registered
             # Format: Register each possible way the model might be referenced
             model_variations = [
                 f"openai/{model_id}",         # With openai/ prefix
-                f"openai/{model_name}",       # Model name with openai/ prefix
+                f"openai/{model_name}",       # With openai/ prefix
             ]
 
             for variation in model_variations:
@@ -146,7 +149,10 @@ def load_custom_models(config_file="custom_models.yaml"):
                     "input_cost_per_token": input_cost,
                     "output_cost_per_token": output_cost,
                     "litellm_provider": "openai",
-                    "mode": "chat"
+                    "mode": "chat",
+                    "max_input_tokens": model.get("max_input_tokens", 128000),
+                    "supports_response_schema": True,
+                    "supports_tool_choice":True
                 }
 
             logger.info(f"Loaded custom OpenAI-compatible model: {model_id} → {model_name}")
@@ -925,6 +931,26 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
         if not content:
             content.append({"type": "text", "text": ""})
 
+        # Get the actual model name from the response
+        actual_model = None
+        if hasattr(litellm_response, 'model'):
+            actual_model = litellm_response.model
+        elif isinstance(litellm_response, dict) and 'model' in litellm_response:
+            actual_model = litellm_response['model']
+
+        # Calculate cost for non-streaming responses
+        model_to_use = original_request.model
+        if model_to_use.startswith("custom/"):
+            model_name = model_to_use[7:]  # Remove 'custom/' prefix
+            if model_name in CUSTOM_OPENAI_MODELS:
+                config = CUSTOM_OPENAI_MODELS[model_name]
+                input_cost = config.get("input_cost_per_token", 0.000001)
+                output_cost = config.get("output_cost_per_token", 0.000002)
+                total_cost = (prompt_tokens * input_cost) + (completion_tokens * output_cost)
+                logger.info(f"Response complete - Model: {model_to_use}, API returned model: {actual_model}, Input tokens: {prompt_tokens}, Output tokens: {completion_tokens}, Cost: ${total_cost:.8f}")
+            else:
+                logger.warning(f"Could not find model configuration for {model_to_use}")
+
         # Create Anthropic-style response
         anthropic_response = MessagesResponse(
             id=response_id,
@@ -1011,6 +1037,18 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                         input_tokens = chunk.usage.prompt_tokens
                     if hasattr(chunk.usage, 'completion_tokens'):
                         output_tokens = chunk.usage.completion_tokens
+                    # Calculate cost based on token counts
+                    model_to_use = original_request.model
+                    if model_to_use.startswith("custom/"):
+                        model_name = model_to_use[7:]  # Remove 'custom/' prefix
+                        if model_name in CUSTOM_OPENAI_MODELS:
+                            config = CUSTOM_OPENAI_MODELS[model_name]
+                            input_cost = config.get("input_cost_per_token", 0.000001)
+                            output_cost = config.get("output_cost_per_token", 0.000002)
+                            total_cost = (input_tokens * input_cost) + (output_tokens * output_cost)
+                            logger.info(f"Stream complete - Model: {model_to_use}, Input tokens: {input_tokens}, Output tokens: {output_tokens}, Cost: ${total_cost:.8f}")
+                        else:
+                            logger.warning(f"Could not find model configuration for {model_to_use}")
 
                 # Handle text content
                 if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
