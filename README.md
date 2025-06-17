@@ -1,10 +1,10 @@
-# Anthropic API Proxy for Gemini & OpenAI Models 🔄
+# Anthropic API Proxy for Multiple Model Providers 🔄
 
 **Claude Code version: 1.0.25**
 
-**Use Anthropic clients (like Claude Code) with Gemini or OpenAI backends.** 🤝
+**Use Anthropic clients (like Claude Code) with multiple model providers.** 🤝
 
-A proxy server that lets you use Anthropic clients with Gemini or OpenAI models via LiteLLM. 🌉
+A proxy server that lets you use Anthropic clients with various model providers via LiteLLM. 🌉
 
 
 ![Anthropic API Proxy](pic.png)
@@ -13,8 +13,9 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
 
 ### Prerequisites
 
-- OpenAI API key 🔑
-- Google AI Studio (Gemini) API key (if using default provider) 🔑
+- OpenAI API key (optional) 🔑
+- Google AI Studio (Gemini) API key (optional) 🔑
+- Custom model API key (if using custom models) 🔑
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
@@ -153,7 +154,7 @@ SMALL_MODEL=my-small-model
 
 ### Custom OpenAI-Compatible Models
 
-You can add support for custom OpenAI-compatible models by creating a `custom_models.yaml` file:
+You can add support for custom OpenAI-compatible models by creating a `custom_models.yaml` file. Alternatively, check [LiteLLM's supported providers](https://docs.litellm.ai/docs/providers) if you want to use specific provider's models without writing custom configs:
 
 ```yaml
 - model_id: "my-model"
