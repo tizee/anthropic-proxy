@@ -1,5 +1,7 @@
 # Anthropic API Proxy for Gemini & OpenAI Models 🔄
 
+**Claude Code version: 1.0.25**
+
 **Use Anthropic clients (like Claude Code) with Gemini or OpenAI backends.** 🤝
 
 A proxy server that lets you use Anthropic clients with Gemini or OpenAI models via LiteLLM. 🌉
@@ -43,6 +45,15 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gemini-2.5-pro-preview-03-25` (if `PREFERRED_PROVIDER=google` and model is known) or `gpt-4o`.
    *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gemini-2.0-flash` (if `PREFERRED_PROVIDER=google` and model is known) or `gpt-4o-mini`.
 
+   **New Advanced Configuration**:
+   *   `HOST`: Server host (default: 0.0.0.0)
+   *   `PORT`: Server port (default: 8082)
+   *   `LOG_LEVEL`: Log verbosity (DEBUG, INFO, WARNING, ERROR, CRITICAL; default: WARNING)
+   *   `MAX_TOKENS_LIMIT`: Max tokens per request (default: 16384)
+   *   `REQUEST_TIMEOUT`: Request timeout in seconds (default: 120)
+   *   `MAX_RETRIES`: Max request retries (default: 2)
+   *   `CUSTOM_MODELS_FILE`: Path to custom models config (default: custom_models.yaml)
+
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=google` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `gemini/` *if* those models are in the server's known `GEMINI_MODELS` list.
    - Otherwise (if `PREFERRED_PROVIDER=openai` or the specified Google model isn't known), they map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
@@ -80,27 +91,33 @@ The proxy automatically maps Claude models to either OpenAI or Gemini models bas
 
 #### OpenAI Models
 The following OpenAI models are supported with automatic `openai/` prefix handling:
+- gpt-4o
+- gpt-4o-mini
+- gpt-4.5-preview
+- gpt-4o-audio-preview
+- chatgpt-4o-latest
 - o3-mini
 - o1
 - o1-mini
 - o1-pro
-- gpt-4.5-preview
-- gpt-4o
-- gpt-4o-audio-preview
-- chatgpt-4o-latest
-- gpt-4o-mini
-- gpt-4o-mini-audio-preview
 
 #### Gemini Models
 The following Gemini models are supported with automatic `gemini/` prefix handling:
 - gemini-2.5-pro-preview-03-25
 - gemini-2.0-flash
+- gemini-1.5-pro-latest
+- gemini-1.5-pro-preview-0514
+- gemini-1.5-flash-latest
+- gemini-1.5-flash-preview-0514
+- gemini-pro
+- gemini-2.5-pro-preview-05-06
+- gemini-2.5-flash-preview-05-20
 
 ### Model Prefix Handling
 The proxy automatically adds the appropriate prefix to model names:
-- OpenAI models get the `openai/` prefix 
+- OpenAI models get the `openai/` prefix
 - Gemini models get the `gemini/` prefix
-- The BIG_MODEL and SMALL_MODEL will get the appropriate prefix based on whether they're in the OpenAI or Gemini model lists
+- Custom models get the `custom/` prefix
 
 For example:
 - `gpt-4o` becomes `openai/gpt-4o`
@@ -190,6 +207,34 @@ This proxy works by:
 5. **Returning** the formatted response to the client ✅
 
 The proxy handles both streaming and non-streaming responses, maintaining compatibility with all Claude clients. 🌊
+
+## Debugging 🐛
+
+### Enabling Debug Logging
+To enable detailed debug logging, set the logging level to `DEBUG` in `server.py` by modifying the `logging.basicConfig` call:
+```python
+logging.basicConfig(
+    level=logging.DEBUG,  # Change to DEBUG for detailed logs
+    format='%(asctime)s - %(levelname)s - %(message)s',
+)
+```
+
+### Logging Levels
+- `INFO`: Basic request/response logging (default)
+- `DEBUG`: Detailed logs including model mappings and request processing
+
+### Filtering Logs
+The server filters out certain verbose logs by default. To see all logs, remove or modify the `MessageFilter` class in `server.py`.
+
+### Troubleshooting
+- **Server not starting**: Check logs for errors related to missing API keys or invalid model configurations.
+- **Connection issues**: Verify the proxy URL (`http://localhost:8082`) is accessible.
+- **Model mapping failures**: Ensure `BIG_MODEL` and `SMALL_MODEL` are correctly set in `.env`.
+
+### Common Issues
+- **Invalid API keys**: Double-check your API keys in `.env`.
+- **Unsupported models**: Confirm model names match the supported lists in the "Model Mapping" section.
+- **Streaming errors**: Disable streaming with `--no-streaming` in tests to isolate issues.
 
 ## Contributing 🤝
 
