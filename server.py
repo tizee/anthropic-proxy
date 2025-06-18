@@ -6,9 +6,7 @@ from fastapi import FastAPI, Request, HTTPException
 import uvicorn
 import logging
 import json
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Any, Optional, Union, Literal
-import httpx
+from pydantic import BaseModel, field_validator
 import os
 from fastapi.responses import JSONResponse, StreamingResponse
 import litellm
@@ -18,9 +16,6 @@ from dotenv import load_dotenv
 import re
 from datetime import datetime
 import sys
-
-# drop parameters when changing models
-litellm.drop_params = True
 
 # Load environment variables from .env file
 load_dotenv()
@@ -57,7 +52,6 @@ class Config:
 
         # Request limits and timeouts
         self.max_tokens_limit = int(os.environ.get("MAX_TOKENS_LIMIT", "16384"))
-        self.request_timeout = int(os.environ.get("REQUEST_TIMEOUT", "120"))
         self.max_retries = int(os.environ.get("MAX_RETRIES", "2"))
 
         # Custom models configuration file
@@ -107,6 +101,11 @@ try:
 except Exception as e:
     print(f"🔴 Configuration Error: {e}")
     sys.exit(1)
+
+# LiteLLM settings
+# drop parameters when changing models
+litellm.drop_params = True
+litellm.num_retries = config.max_retries
 
 # Configure logging
 logging.basicConfig(
@@ -813,7 +812,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
     litellm_request = {
         "model": anthropic_request.model,
         "messages": litellm_messages,
-        "max_tokens": min(anthropic_request.max_tokens, 16384),
+        "max_tokens": min(anthropic_request.max_tokens, config.max_tokens_limit),
         "temperature": anthropic_request.temperature,
         "stream": anthropic_request.stream,
     }
@@ -1759,9 +1758,6 @@ async def count_tokens(
 
         # Use LiteLLM's token_counter function
         try:
-            # Import token_counter function
-            from litellm import token_counter
-
             # Log the request beautifully
             num_tools = len(request.tools) if request.tools else 0
 
@@ -1776,7 +1772,7 @@ async def count_tokens(
             )
 
             # Count tokens
-            token_count = token_counter(
+            token_count = litellm.token_counter(
                 model=converted_request["model"],
                 messages=converted_request["messages"],
             )
