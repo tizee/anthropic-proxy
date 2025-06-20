@@ -16,34 +16,70 @@ from dotenv import load_dotenv
 import re
 from datetime import datetime
 import sys
+import tiktoken
+import hashlib
+
+from models import (
+    MessagesRequest,
+    MessagesResponse,
+    Usage,
+    ContentBlockText,
+    ContentBlockToolUse,
+    ContentBlockThinking,
+    ThinkingConfigEnabled,
+    ThinkingConfigDisabled,
+    TokenCountRequest,
+    TokenCountResponse,
+    Message,
+    SystemContent,
+    Tool,
+)
+
+
+class SessionStats(BaseModel):
+    """Statistics for the current proxy session."""
+
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_input_cost: str = "0.0"
+    total_output_cost: str = "0.0"
+
+
+# Global state for session statistics
+session_stats = SessionStats()
 
 # Load environment variables from .env file
 load_dotenv()
 
+
 class Config:
-    """Universal proxy server configuration"""
+    """Universal proxy server configuration with intelligent routing"""
+
     def __init__(self):
         # API Keys
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
         self.openai_api_key = os.environ.get("OPENAI_API_KEY")
         self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
 
-        # Provider preference and model mapping
-        self.preferred_provider = os.environ.get("PREFERRED_PROVIDER", "google").lower()
+        # BIG_MODEL and SMALL_MODEL are deprecated in favor of intelligent routing.
+        # See router_config below.
 
-        # Set default models based on preferred provider
-        if self.preferred_provider == "google":
-            default_big_model = "gemini-2.5-pro-preview-03-25"
-            default_small_model = "gemini-2.0-flash"
-        elif self.preferred_provider == "openai":
-            default_big_model = "gpt-4o"
-            default_small_model = "gpt-4o-mini"
-        else:  # custom
-            default_big_model = "custom-large-model"
-            default_small_model = "custom-small-model"
+        # Router configuration for intelligent model selection
+        self.router_config = {
+            "background": os.environ.get(
+                "ROUTER_BACKGROUND", "custom/deepseek-v3-250324"
+            ),
+            "think": os.environ.get("ROUTER_THINK", "custom/deepseek-r1-250528"),
+            "long_context": os.environ.get(
+                "ROUTER_LONG_CONTEXT", "custom/gemini-2.5-pro"
+            ),
+            "default": os.environ.get("ROUTER_DEFAULT", "custom/deepseek-v3-250324"),
+        }
 
-        self.big_model = os.environ.get("BIG_MODEL", default_big_model)
-        self.small_model = os.environ.get("SMALL_MODEL", default_small_model)
+        # Token thresholds
+        self.long_context_threshold = int(
+            os.environ.get("LONG_CONTEXT_THRESHOLD", "128000")
+        )
 
         # Server configuration
         self.host = os.environ.get("HOST", "0.0.0.0")
@@ -55,7 +91,9 @@ class Config:
         self.max_retries = int(os.environ.get("MAX_RETRIES", "2"))
 
         # Custom models configuration file
-        self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", "custom_models.yaml")
+        self.custom_models_file = os.environ.get(
+            "CUSTOM_MODELS_FILE", "custom_models.yaml"
+        )
 
         # Custom API keys storage
         self.custom_api_keys = {}
@@ -72,7 +110,7 @@ class Config:
 
         if self.gemini_api_key:
             providers_configured.append("gemini")
-            
+
         if self.custom_api_keys:
             providers_configured.append("custom")
 
@@ -94,35 +132,50 @@ class Config:
             return self.custom_api_keys[provider]
         return None
 
+
 # Initialize configuration
 try:
     config = Config()
     if config.log_level.lower() == "debug":
         # DEBUG mode
         litellm._turn_on_debug()
-    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}, Preferred='{config.preferred_provider}', BIG='{config.big_model}', SMALL='{config.small_model}'")
+    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
+    print(
+        f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
+    )
 except Exception as e:
     print(f"🔴 Configuration Error: {e}")
     sys.exit(1)
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, config.log_level.upper()),
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Initialize tiktoken encoder for token counting
+try:
+    enc = tiktoken.get_encoding("cl100k_base")
+    logger.debug("✅ TikToken encoder initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize TikToken encoder: {e}")
+    enc = None
 
 # LiteLLM settings
 # drop parameters when changing models
 litellm.drop_params = True
 litellm.num_retries = config.max_retries
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.log_level.upper()),
-    format='%(asctime)s - %(levelname)s - %(message)s',
-)
-logger = logging.getLogger(__name__)
 
 # Configure uvicorn to be quieter
 import uvicorn
+
 # Tell uvicorn's loggers to be quiet
 logging.getLogger("uvicorn").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+
 
 # Constants for better maintainability
 class Constants:
@@ -154,6 +207,7 @@ class Constants:
     DELTA_TEXT = "text_delta"
     DELTA_INPUT_JSON = "input_json_delta"
 
+
 # Create a filter to block any log messages containing specific strings
 class MessageFilter(logging.Filter):
     def filter(self, record):
@@ -163,22 +217,25 @@ class MessageFilter(logging.Filter):
             "HTTP Request:",
             "selected model name for cost calculation",
             "utils.py",
-            "cost_calculator"
+            "cost_calculator",
         ]
 
-        if hasattr(record, 'msg') and isinstance(record.msg, str):
+        if hasattr(record, "msg") and isinstance(record.msg, str):
             for phrase in blocked_phrases:
                 if phrase in record.msg:
                     return False
         return True
 
+
 # Apply the filter to the root logger to catch all messages
 root_logger = logging.getLogger()
 root_logger.addFilter(MessageFilter())
 
+
 # Custom formatter for model mapping logs
 class ColorizedFormatter(logging.Formatter):
     """Custom formatter to highlight model mappings"""
+
     BLUE = "\033[94m"
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -192,15 +249,19 @@ class ColorizedFormatter(logging.Formatter):
             return f"{self.BOLD}{self.GREEN}{record.msg}{self.RESET}"
         return super().format(record)
 
+
 # Apply custom formatter to console handler
 for handler in logger.handlers:
     if isinstance(handler, logging.StreamHandler):
-        handler.setFormatter(ColorizedFormatter('%(asctime)s - %(levelname)s - %(message)s'))
+        handler.setFormatter(
+            ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
 
 app = FastAPI()
 
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
+
 
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
@@ -215,7 +276,7 @@ def load_custom_models(config_file=None):
         return
 
     try:
-        with open(config_file, 'r') as file:
+        with open(config_file, "r") as file:
             models = yaml.safe_load(file)
 
         if not models:
@@ -227,15 +288,21 @@ def load_custom_models(config_file=None):
 
         for model in models:
             if "model_id" not in model or "api_base" not in model:
-                logger.warning(f"Invalid model configuration, missing required fields: {model}")
+                logger.warning(
+                    f"Invalid model configuration, missing required fields: {model}"
+                )
                 continue
 
             model_id = model["model_id"]
             model_name = model.get("model_name", model_id)
 
             # Set default pricing if not provided
-            input_cost = model.get("input_cost_per_token", 0.000001)  # Default if not specified
-            output_cost = model.get("output_cost_per_token", 0.000002)  # Default if not specified
+            input_cost = model.get(
+                "input_cost_per_token", 0.000001
+            )  # Default if not specified
+            output_cost = model.get(
+                "output_cost_per_token", 0.000002
+            )  # Default if not specified
 
             CUSTOM_OPENAI_MODELS[model_id] = {
                 "model_name": model_name,
@@ -247,16 +314,17 @@ def load_custom_models(config_file=None):
                 "output_cost_per_token": output_cost,
                 "max_input_tokens": model.get("max_input_tokens", 128000),
                 "supports_response_schema": True,
+                "supports_function_calling": True,
                 "supports_tool_choice": True,
                 "enable_thinking": model.get("enable_thinking", False),
-                "reasoning_effort": model.get("reasoning_effort", None)
+                "reasoning_effort": model.get("reasoning_effort", None),
             }
 
             # Register model pricing with LiteLLM - ensure all possible model names are registered
             # Format: Register each possible way the model might be referenced
             model_variations = [
-                f"openai/{model_id}",         # With openai/ prefix
-                f"openai/{model_name}",       # With openai/ prefix
+                f"openai/{model_id}",  # With openai/ prefix
+                f"openai/{model_name}",  # With openai/ prefix
             ]
 
             for variation in model_variations:
@@ -268,32 +336,46 @@ def load_custom_models(config_file=None):
                     "mode": "chat",
                     "max_input_tokens": model.get("max_input_tokens", 128000),
                     "supports_response_schema": True,
-                    "supports_tool_choice":True
+                    "supports_function_calling": True,
+                    "supports_tool_choice": True,
                 }
 
-            logger.info(f"Loaded custom OpenAI-compatible model: {model_id} → {model_name}")
+            logger.info(
+                f"Loaded custom OpenAI-compatible model: {model_id} → {model_name}"
+            )
 
         # Register all model pricing with LiteLLM
         if models_to_register:
             try:
                 from litellm import register_model
+
                 # Register models with LiteLLM pricing system
                 register_model(models_to_register)
-                logger.info(f"Registered {len(models_to_register)} model variations with LiteLLM pricing system")
+                logger.info(
+                    f"Registered {len(models_to_register)} model variations with LiteLLM pricing system"
+                )
 
                 # Verify registration (add debug output to confirm)
                 from litellm import model_cost
+
                 for model_key in models_to_register:
                     if model_key in model_cost:
-                        logger.info(f"✅ Successfully registered model pricing for: {model_key} = {model_cost[model_key]}")
+                        logger.info(
+                            f"✅ Successfully registered model pricing for: {model_key} = {model_cost[model_key]}"
+                        )
                     else:
-                        logger.warning(f"⚠️ Failed to verify pricing registration for: {model_key}")
+                        logger.warning(
+                            f"⚠️ Failed to verify pricing registration for: {model_key}"
+                        )
 
             except Exception as e:
-                logger.error(f"Failed to register custom models with LiteLLM pricing system: {str(e)}")
+                logger.error(
+                    f"Failed to register custom models with LiteLLM pricing system: {str(e)}"
+                )
 
     except Exception as e:
         logger.error(f"Error loading custom models: {str(e)}")
+
 
 load_custom_models()
 
@@ -318,7 +400,7 @@ OPENAI_MODELS = [
     "gpt-4o-audio-preview",
     "chatgpt-4o-latest",
     "gpt-4o-mini",
-    "gpt-4o-mini-audio-preview"
+    "gpt-4o-mini-audio-preview",
 ]
 
 # List of Gemini models
@@ -331,196 +413,476 @@ GEMINI_MODELS = [
     "gemini-2.5-pro-preview-05-06",
     "gemini-2.5-flash-preview-05-20",
     "gemini-2.0-flash-exp",
-    "gemini-exp-1206"
+    "gemini-exp-1206",
 ]
 
+
+def generate_thinking_signature(thinking_content: str) -> str:
+    """Generate a signature for thinking content using SHA-256 hash."""
+    if not thinking_content:
+        return ""
+
+    # Create SHA-256 hash of the thinking content
+    hash_object = hashlib.sha256(thinking_content.encode("utf-8"))
+    signature = hash_object.hexdigest()[:16]  # Use first 16 characters
+    return f"thinking_{signature}"
+
+
 # Helper function to clean schema for Gemini
+def _fix_gemini_uri_format(schema: dict) -> dict:
+    """Fix only the specific URI format issue that causes MALFORMED_FUNCTION_CALL in Gemini."""
+    if not isinstance(schema, dict):
+        return schema
+
+    # Create a copy to avoid modifying the original
+    fixed_schema = {}
+
+    for key, value in schema.items():
+        if key == "properties" and isinstance(value, dict):
+            # Fix properties recursively
+            fixed_properties = {}
+            for prop_name, prop_schema in value.items():
+                if isinstance(prop_schema, dict):
+                    fixed_prop = _fix_gemini_uri_format(prop_schema)
+                    fixed_properties[prop_name] = fixed_prop
+                else:
+                    fixed_properties[prop_name] = prop_schema
+            fixed_schema[key] = fixed_properties
+        elif key == "format" and value == "uri":
+            # Skip the format field if it's 'uri' - this is the main issue
+            logger.debug("Removing 'uri' format for Gemini compatibility")
+            continue
+        elif isinstance(value, dict):
+            # Recursively fix nested objects
+            fixed_schema[key] = _fix_gemini_uri_format(value)
+        elif isinstance(value, list):
+            # Handle arrays
+            fixed_list = []
+            for item in value:
+                if isinstance(item, dict):
+                    fixed_list.append(_fix_gemini_uri_format(item))
+                else:
+                    fixed_list.append(item)
+            fixed_schema[key] = fixed_list
+        else:
+            # Keep everything else as-is
+            fixed_schema[key] = value
+
+    return fixed_schema
+
+
 def clean_gemini_schema(schema: Any) -> Any:
-    """Recursively removes unsupported fields from a JSON schema for Gemini."""
+    """
+    Recursively clean and validate JSON schema for Gemini OpenAI API compatibility.
+    
+    Gemini requires a strict subset of OpenAPI schema format:
+    - Function names: descriptive, no spaces/special chars (underscores/camelCase OK)
+    - Parameters: must be object type with properties structure
+    - Required: array of mandatory parameter names
+    - Enum: use arrays for fixed value sets
+    """
     if isinstance(schema, dict):
-        # Remove specific keys unsupported by Gemini tool parameters
-        schema.pop("additionalProperties", None)
-        schema.pop("default", None)
-
-        # Check for unsupported 'format' in string types
-        if schema.get("type") == "string" and "format" in schema:
-            allowed_formats = {"enum", "date-time"}
-            if schema["format"] not in allowed_formats:
-                logger.debug(f"Removing unsupported format '{schema['format']}' for string type in Gemini schema.")
-                schema.pop("format")
-
-        # Recursively clean nested schemas (properties, items, etc.)
-        for key, value in list(schema.items()): # Use list() to allow modification during iteration
-            schema[key] = clean_gemini_schema(value)
+        # Create a copy to avoid modifying the original
+        cleaned_schema = {}
+        
+        for key, value in schema.items():
+            # Skip problematic fields that cause MALFORMED_FUNCTION_CALL
+            if key in [
+                "additionalProperties",  # Gemini doesn't support this
+                "default",              # Can cause validation issues
+                "examples",             # Not part of core OpenAPI subset
+                "title",                # Not needed for function parameters
+                "$schema",              # Schema metadata not needed
+                "$id",                  # Schema metadata not needed
+                "definitions",          # Complex references not supported
+                "$ref",                 # References not supported
+                "allOf", "anyOf", "oneOf",  # Complex schema combinations
+                "not",                  # Negation schemas not supported
+                "patternProperties",    # Advanced property patterns
+                "dependencies",         # Complex dependency validation
+                "const",                # Use enum instead
+                "contains",             # Array contains validation
+                "propertyNames",        # Property name validation
+                "if", "then", "else",   # Conditional schemas
+                "readOnly", "writeOnly", # OpenAPI 3.0 specific fields
+                "deprecated",           # OpenAPI metadata
+                "external_docs",        # OpenAPI documentation
+                "xml",                  # XML-specific metadata
+                "example",              # Use examples array instead
+            ]:
+                logger.debug(f"Removing unsupported field '{key}' for Gemini compatibility")
+                continue
+            
+            # Handle format field - only allow very basic formats
+            if key == "format":
+                # Gemini only supports very limited formats
+                allowed_formats = {"date-time", "email", "uri"}  # Minimal set
+                if value not in allowed_formats:
+                    logger.debug(f"Removing unsupported format '{value}' for Gemini compatibility")
+                    continue
+                # Even for allowed formats, be conservative and remove format
+                # as it can cause validation issues
+                logger.debug(f"Removing format '{value}' for maximum Gemini compatibility")
+                continue
+            
+            # Handle string length constraints - be more lenient
+            if key in ["minLength", "maxLength"] and isinstance(value, int):
+                # Keep reasonable constraints but avoid extremes
+                if key == "minLength" and value < 0:
+                    continue
+                if key == "maxLength" and value > 1000000:  # 1M chars max
+                    cleaned_schema[key] = 1000000
+                    continue
+            
+            # Handle numeric constraints
+            if key in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]:
+                # Keep basic numeric constraints
+                if isinstance(value, (int, float)):
+                    cleaned_schema[key] = value
+                continue
+            
+            # Handle pattern - remove complex regex patterns
+            if key == "pattern":
+                # Gemini may not support complex regex patterns
+                logger.debug(f"Removing pattern '{value}' for Gemini compatibility")
+                continue
+            
+            # Handle multipleOf - keep simple ones
+            if key == "multipleOf" and isinstance(value, (int, float)) and value > 0:
+                cleaned_schema[key] = value
+                continue
+            
+            # Recursively clean nested schemas
+            if isinstance(value, dict):
+                cleaned_value = clean_gemini_schema(value)
+                if cleaned_value:  # Only add if not empty
+                    cleaned_schema[key] = cleaned_value
+            elif isinstance(value, list):
+                cleaned_value = [clean_gemini_schema(item) for item in value]
+                # Filter out empty items
+                cleaned_value = [item for item in cleaned_value if item is not None and item != {}]
+                if cleaned_value:  # Only add if not empty
+                    cleaned_schema[key] = cleaned_value
+            else:
+                # Keep primitive values
+                cleaned_schema[key] = value
+        
+        return cleaned_schema
     elif isinstance(schema, list):
         # Recursively clean items in a list
-        return [clean_gemini_schema(item) for item in schema]
+        cleaned_list = [clean_gemini_schema(item) for item in schema]
+        # Filter out empty items
+        return [item for item in cleaned_list if item is not None and item != {}]
+    
     return schema
+
+
+def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
+    """
+    Validate a function definition for Gemini OpenAI API compatibility.
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    try:
+        # Check basic structure
+        if not isinstance(tool_def, dict):
+            return False, "Tool definition must be a dictionary"
+        
+        if tool_def.get("type") != "function":
+            return False, "Tool type must be 'function'"
+        
+        function_def = tool_def.get("function")
+        if not isinstance(function_def, dict):
+            return False, "Tool must have a 'function' object"
+        
+        # Validate function name
+        name = function_def.get("name")
+        if not name or not isinstance(name, str):
+            return False, "Function must have a non-empty string name"
+        
+        # Check name format - no spaces, only alphanumeric, underscores, hyphens
+        import re
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*$', name):
+            return False, f"Function name '{name}' contains invalid characters. Use alphanumeric, underscores, or hyphens only"
+        
+        # Validate description
+        description = function_def.get("description", "")
+        if not isinstance(description, str):
+            return False, "Function description must be a string"
+        
+        if len(description.strip()) == 0:
+            return False, "Function description cannot be empty (required for Gemini)"
+        
+        # Validate parameters schema
+        parameters = function_def.get("parameters")
+        if parameters is None:
+            # Empty parameters are allowed
+            return True, ""
+        
+        if not isinstance(parameters, dict):
+            return False, "Parameters must be a dictionary"
+        
+        # For Gemini, parameters must be object type
+        param_type = parameters.get("type")
+        if param_type is None:
+            return False, "Parameters must have a 'type' field"
+        
+        if param_type != "object":
+            return False, f"Parameters type must be 'object', got '{param_type}'"
+        
+        # Validate properties if present
+        properties = parameters.get("properties")
+        if properties is not None:
+            if not isinstance(properties, dict):
+                return False, "Properties must be a dictionary"
+            
+            for prop_name, prop_schema in properties.items():
+                if not isinstance(prop_name, str) or not prop_name.strip():
+                    return False, f"Property name must be a non-empty string, got '{prop_name}'"
+                
+                if not isinstance(prop_schema, dict):
+                    return False, f"Property '{prop_name}' schema must be a dictionary"
+                
+                # Each property must have a type
+                prop_type = prop_schema.get("type")
+                if prop_type is None:
+                    return False, f"Property '{prop_name}' must have a 'type' field"
+                
+                # Validate allowed types for Gemini
+                allowed_types = {"string", "number", "integer", "boolean", "array", "object"}
+                if prop_type not in allowed_types:
+                    return False, f"Property '{prop_name}' has unsupported type '{prop_type}'. Allowed: {allowed_types}"
+                
+                # Validate array items
+                if prop_type == "array":
+                    items = prop_schema.get("items")
+                    if items is None:
+                        return False, f"Array property '{prop_name}' must have 'items' definition"
+                    
+                    if isinstance(items, dict):
+                        items_type = items.get("type")
+                        if items_type is None:
+                            return False, f"Array property '{prop_name}' items must have a 'type' field"
+                        
+                        if items_type not in allowed_types:
+                            return False, f"Array property '{prop_name}' items has unsupported type '{items_type}'"
+        
+        # Validate required array if present
+        required = parameters.get("required")
+        if required is not None:
+            if not isinstance(required, list):
+                return False, "Required must be an array"
+            
+            for req_field in required:
+                if not isinstance(req_field, str) or not req_field.strip():
+                    return False, f"Required field must be a non-empty string, got '{req_field}'"
+                
+                # Check that required fields exist in properties
+                if properties and req_field not in properties:
+                    return False, f"Required field '{req_field}' not found in properties"
+        
+        return True, ""
+    
+    except Exception as e:
+        return False, f"Validation error: {str(e)}"
+
+
+# Token counting and routing functions
+def count_tokens_in_messages(messages: List[Dict], system=None, tools=None) -> int:
+    """Count tokens in messages using tiktoken"""
+    if enc is None:
+        logger.warning("TikToken encoder not available, using approximate count")
+        return 1000  # Fallback estimate
+
+    total_tokens = 0
+
+    try:
+        # Count message tokens
+        if messages:
+            for message in messages:
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    total_tokens += len(enc.encode(content))
+                elif isinstance(content, list):
+                    for content_part in content:
+                        if isinstance(content_part, dict):
+                            if content_part.get("type") == "text":
+                                text = content_part.get("text", "")
+                                total_tokens += len(enc.encode(text))
+                            elif content_part.get("type") == "tool_use":
+                                tool_input = content_part.get("input", {})
+                                total_tokens += len(enc.encode(json.dumps(tool_input)))
+                            elif content_part.get("type") == "tool_result":
+                                tool_content = content_part.get("content", "")
+                                if isinstance(tool_content, str):
+                                    total_tokens += len(enc.encode(tool_content))
+                                else:
+                                    total_tokens += len(
+                                        enc.encode(json.dumps(tool_content))
+                                    )
+
+        # Count system message tokens
+        if system:
+            if isinstance(system, str):
+                total_tokens += len(enc.encode(system))
+            elif isinstance(system, list):
+                for item in system:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        total_tokens += len(enc.encode(item.get("text", "")))
+
+        # Count tool tokens
+        if tools:
+            for tool in tools:
+                tool_name = tool.get("name", "")
+                tool_desc = tool.get("description", "")
+                tool_schema = tool.get("input_schema", {})
+                total_tokens += len(enc.encode(tool_name + tool_desc))
+                total_tokens += len(enc.encode(json.dumps(tool_schema)))
+
+    except Exception as e:
+        logger.error(f"Error counting tokens: {e}")
+        return 1000  # Fallback estimate
+
+    return total_tokens
+
+
+def count_tokens_in_response(response_content: str = "", thinking_content: str = "", tool_calls: list = None) -> int:
+    """Count tokens in response content using tiktoken"""
+    if enc is None:
+        logger.warning("TikToken encoder not available for response counting, using approximate count")
+        return len(response_content.split()) * 1.3  # Rough estimate: 1.3 tokens per word
+
+    total_tokens = 0
+
+    try:
+        # Count main response content tokens
+        if response_content:
+            total_tokens += len(enc.encode(response_content))
+
+        # Count thinking content tokens
+        if thinking_content:
+            total_tokens += len(enc.encode(thinking_content))
+
+        # Count tool calls tokens
+        if tool_calls:
+            for tool_call in tool_calls:
+                if hasattr(tool_call, 'function'):
+                    # OpenAI format
+                    name = getattr(tool_call.function, 'name', '')
+                    arguments = getattr(tool_call.function, 'arguments', '')
+                    total_tokens += len(enc.encode(name + arguments))
+                elif isinstance(tool_call, dict):
+                    # Dict format
+                    if 'function' in tool_call:
+                        func_data = tool_call['function']
+                        name = func_data.get('name', '')
+                        arguments = func_data.get('arguments', '')
+                        total_tokens += len(enc.encode(name + arguments))
+                    elif 'name' in tool_call and 'input' in tool_call:
+                        # Anthropic format
+                        name = tool_call.get('name', '')
+                        input_data = tool_call.get('input', {})
+                        total_tokens += len(enc.encode(name + json.dumps(input_data)))
+
+    except Exception as e:
+        logger.error(f"Error counting response tokens: {e}")
+        # Fallback estimation
+        return len(response_content.split()) * 1.3 if response_content else 0
+
+    return int(total_tokens)
+
+
+def determine_model_by_router(
+    original_model: str, token_count: int, has_thinking: bool
+) -> str:
+    """Determine which model to use based on routing logic"""
+
+    logger.debug(
+        f"🔀 Router input: model={original_model}, tokens={token_count}, thinking={has_thinking}"
+    )
+
+    # If model is explicitly specified with provider, use it directly
+    if "," in original_model:
+        provider, model = original_model.split(",", 1)
+        return f"{provider.strip()}/{model.strip()}"
+
+    # If token count is greater than threshold, use long context model (highest priority)
+    if token_count > config.long_context_threshold:
+        result = config.router_config["long_context"]
+        logger.info(
+            f"🔀 Router: Using long context model due to token count: {token_count}, result: {result}"
+        )
+        return result
+
+    # If has thinking enabled, use think model (second priority)
+    if has_thinking:
+        result = config.router_config["think"]
+        logger.info(
+            f"🔀 Router: Using think model for thinking request, result: {result}"
+        )
+        return result
+
+    # If the model is claude-3-5-haiku, use background model
+    if "haiku" in original_model.lower():
+        result = config.router_config["background"]
+        logger.info(
+            f"🔀 Router: Using background model for {original_model}, result: {result}"
+        )
+        return result
+
+    # If the model is sonnet, use default router
+    if "sonnet" in original_model.lower():
+        result = config.router_config["default"]
+        logger.info(
+            f"🔀 Router: Using default model for {original_model}, result: {result}"
+        )
+        return result
+
+    # Default model
+    result = config.router_config["default"]
+    logger.debug(f"🔀 Router: Using default model for {original_model}")
+    logger.info(f"🔀 Router final result: {result}")
+    return result
+
 
 # Shared model validation logic
 def validate_and_map_model(original_model: str, info=None) -> str:
-    """Validate and map model names based on configuration."""
+    """Validate and map model names by adding provider prefixes if missing."""
     new_model = original_model
-    
-    logger.debug(f"📋 MODEL VALIDATION: Original='{original_model}', Preferred='{config.preferred_provider}', BIG='{config.big_model}', SMALL='{config.small_model}'")
+    logger.debug(f"📋 Auto-prefixing model: Original='{original_model}'")
 
-    # Remove provider prefixes for easier matching
+    # Remove existing provider prefixes for clean matching
     clean_v = original_model
-    if clean_v.startswith('anthropic/'):
-        clean_v = clean_v[10:]
-    elif clean_v.startswith('openai/'):
-        clean_v = clean_v[7:]
-    elif clean_v.startswith('gemini/'):
-        clean_v = clean_v[7:]
-    elif clean_v.startswith('custom/'):
-        clean_v = clean_v[7:]
+    if clean_v.startswith(("anthropic/", "openai/", "gemini/", "custom/")):
+        parts = original_model.split("/", 1)
+        clean_v = parts[1]
 
-    # --- Mapping Logic --- START ---
     mapped = False
-
-    # Check for custom models first
-    if clean_v in CUSTOM_OPENAI_MODELS:
+    # Add provider prefixes if they are missing
+    if clean_v in CUSTOM_OPENAI_MODELS and not original_model.startswith("custom/"):
         new_model = f"custom/{clean_v}"
         mapped = True
-
-    # Map Haiku to SMALL_MODEL based on provider preference
-    if 'haiku' in clean_v.lower():
-        if config.preferred_provider == "google" and config.small_model in GEMINI_MODELS:
-            new_model = f"gemini/{config.small_model}"
-            mapped = True
-        elif config.preferred_provider == "openai" and config.small_model in OPENAI_MODELS:
-            new_model = f"openai/{config.small_model}"
-            mapped = True
-        elif config.preferred_provider == "custom" and config.small_model in CUSTOM_OPENAI_MODELS:
-            new_model = f"custom/{config.small_model}"
-            mapped = True
-
-    # Map Sonnet to BIG_MODEL based on provider preference
-    elif 'sonnet' in clean_v.lower():
-        if config.preferred_provider == "google" and config.big_model in GEMINI_MODELS:
-            new_model = f"gemini/{config.big_model}"
-            mapped = True
-        elif config.preferred_provider == "openai" and config.big_model in OPENAI_MODELS:
-            new_model = f"openai/{config.big_model}"
-            mapped = True
-        elif config.preferred_provider == "custom" and config.big_model in CUSTOM_OPENAI_MODELS:
-            new_model = f"custom/{config.big_model}"
-            mapped = True
-
-    # Add prefixes to non-mapped models if they match known lists
-    elif not mapped:
-        if clean_v in GEMINI_MODELS and not original_model.startswith('gemini/'):
-            new_model = f"gemini/{clean_v}"
-            mapped = True
-        elif clean_v in OPENAI_MODELS and not original_model.startswith('openai/'):
-            new_model = f"openai/{clean_v}"
-            mapped = True
-        elif clean_v in CUSTOM_OPENAI_MODELS and not original_model.startswith('custom/'):
-            new_model = f"custom/{clean_v}"
-            mapped = True
-    # --- Mapping Logic --- END ---
+    elif clean_v in GEMINI_MODELS and not original_model.startswith("gemini/"):
+        new_model = f"gemini/{clean_v}"
+        mapped = True
+    elif clean_v in OPENAI_MODELS and not original_model.startswith("openai/"):
+        new_model = f"openai/{clean_v}"
+        mapped = True
 
     if mapped:
-        logger.info(f"📌 MODEL MAPPING: '{original_model}' ➡️ '{new_model}'")
-    else:
-        if not original_model.startswith(('openai/', 'gemini/', 'anthropic/', 'custom/')):
-            logger.warning(f"⚠️ No prefix or mapping rule for model: '{original_model}'. Using as is.")
-        new_model = original_model
+        logger.info(f"📌 Auto-prefixing: '{original_model}' ➡️ '{new_model}'")
 
     # Store the original model in the values dictionary if info is provided
-    if info and hasattr(info, 'data') and isinstance(info.data, dict):
-        info.data['original_model'] = original_model
+    if info and hasattr(info, "data") and isinstance(info.data, dict):
+        info.data["original_model"] = original_model
 
     return new_model
 
+
 # Models for Anthropic API requests
-class ContentBlockText(BaseModel):
-    type: Literal["text"]
-    text: str
+# Type definitions moved to models.py
 
-class ContentBlockImage(BaseModel):
-    type: Literal["image"]
-    source: Dict[str, Any]
-
-class ContentBlockToolUse(BaseModel):
-    type: Literal["tool_use"]
-    id: str
-    name: str
-    input: Dict[str, Any]
-
-class ContentBlockToolResult(BaseModel):
-    type: Literal["tool_result"]
-    tool_use_id: str
-    content: Union[str, List[Dict[str, Any]], Dict[str, Any], List[Any], Any]
-
-class SystemContent(BaseModel):
-    type: Literal["text"]
-    text: str
-
-class Message(BaseModel):
-    role: Literal["user", "assistant"]
-    content: Union[str, List[Union[ContentBlockText, ContentBlockImage, ContentBlockToolUse, ContentBlockToolResult]]]
-
-class Tool(BaseModel):
-    name: str
-    description: Optional[str] = None
-    input_schema: Dict[str, Any]
-
-class ThinkingConfig(BaseModel):
-    enabled: bool = True
-
-class MessagesRequest(BaseModel):
-    model: str
-    max_tokens: int
-    messages: List[Message]
-    system: Optional[Union[str, List[SystemContent]]] = None
-    stop_sequences: Optional[List[str]] = None
-    stream: Optional[bool] = False
-    temperature: Optional[float] = 1.0
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
-    tools: Optional[List[Tool]] = None
-    tool_choice: Optional[Dict[str, Any]] = None
-    thinking: Optional[ThinkingConfig] = None
-    original_model: Optional[str] = None  # Will store the original model name
-
-    @field_validator('model')
-    def validate_model_field(cls, v, info):
-        return validate_and_map_model(v, info)
-
-class TokenCountRequest(BaseModel):
-    model: str
-    messages: List[Message]
-    system: Optional[Union[str, List[SystemContent]]] = None
-    tools: Optional[List[Tool]] = None
-    thinking: Optional[ThinkingConfig] = None
-    tool_choice: Optional[Dict[str, Any]] = None
-    original_model: Optional[str] = None  # Will store the original model name
-
-    @field_validator('model')
-    def validate_model_token_count(cls, v, info):
-        return validate_and_map_model(v, info)
-
-class TokenCountResponse(BaseModel):
-    input_tokens: int
-
-class Usage(BaseModel):
-    input_tokens: int
-    output_tokens: int
-    cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int = 0
-
-class MessagesResponse(BaseModel):
-    id: str
-    model: str
-    role: Literal["assistant"] = "assistant"
-    content: List[Union[ContentBlockText, ContentBlockToolUse]]
-    type: Literal["message"] = "message"
-    stop_reason: Optional[Literal["end_turn", "max_tokens", "stop_sequence",
-                                  "tool_use", "error"]] = None
-    stop_sequence: Optional[str] = None
-    usage: Usage
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -536,6 +898,7 @@ async def log_requests(request: Request, call_next):
 
     return response
 
+
 def setup_api_key_for_request(litellm_request: Dict[str, Any], model: str) -> None:
     """Set up the appropriate API key and base URL for the request based on model."""
     if model.startswith("openai/"):
@@ -549,66 +912,81 @@ def setup_api_key_for_request(litellm_request: Dict[str, Any], model: str) -> No
         if custom_model_name in CUSTOM_OPENAI_MODELS:
             model_config = CUSTOM_OPENAI_MODELS[custom_model_name]
             api_key_name = model_config.get("api_key_name", "OPENAI_API_KEY")
-            
+
             custom_api_key = config.custom_api_keys.get(api_key_name)
             if custom_api_key:
                 litellm_request["api_key"] = custom_api_key
             else:
                 litellm_request["api_key"] = config.openai_api_key
-            
+
             litellm_request["api_base"] = model_config.get("api_base")
-            
-            if model_config.get("model_name") and model_config.get("model_name") != custom_model_name:
+
+            if (
+                model_config.get("model_name")
+                and model_config.get("model_name") != custom_model_name
+            ):
                 litellm_request["model"] = f"openai/{model_config['model_name']}"
-                logger.debug(f"Using custom OpenAI-compatible model: {model} → {litellm_request['model']}")
+                logger.debug(
+                    f"Using custom OpenAI-compatible model: {model} → {litellm_request['model']}"
+                )
             else:
                 litellm_request["model"] = f"openai/{custom_model_name}"
-            
+
             logger.debug(f"Using custom API key ({api_key_name}) for model: {model}")
             logger.debug(f"Using custom API base: {litellm_request['api_base']}")
     else:
         litellm_request["api_key"] = config.anthropic_api_key
         logger.debug(f"Using Anthropic API key for model: {model}")
 
+
 def process_openai_message_format(litellm_request: Dict[str, Any]) -> None:
     """Process and convert messages for OpenAI format compatibility."""
     if "openai" not in litellm_request["model"] or "messages" not in litellm_request:
         return
-    
+
     logger.debug(f"Processing OpenAI model request: {litellm_request['model']}")
-    
+
     for i, msg in enumerate(litellm_request["messages"]):
         if not isinstance(msg.get("content"), list):
             if msg.get("content") is None:
                 litellm_request["messages"][i]["content"] = "..."
             continue
-            
+
         # Handle list content (content blocks)
         if _is_only_tool_result_content(msg["content"]):
             _convert_tool_result_only_message(litellm_request["messages"][i])
             continue
-            
+
         # Handle normal content blocks
         _convert_content_blocks_to_text(litellm_request["messages"][i])
-        
+
         # Remove unsupported fields
         for key in list(msg.keys()):
             if key not in ["role", "content", "name", "tool_call_id", "tool_calls"]:
                 logger.warning(f"Removing unsupported field from message: {key}")
                 del msg[key]
-    
+
     # Final validation
     for i, msg in enumerate(litellm_request["messages"]):
         if isinstance(msg.get("content"), list):
-            logger.warning(f"CRITICAL: Message {i} still has list content after processing")
-            litellm_request["messages"][i]["content"] = f"Content as JSON: {json.dumps(msg.get('content'))}"
+            logger.warning(
+                f"CRITICAL: Message {i} still has list content after processing"
+            )
+            litellm_request["messages"][i]["content"] = (
+                f"Content as JSON: {json.dumps(msg.get('content'))}"
+            )
         elif msg.get("content") is None:
             logger.warning(f"Message {i} has None content - replacing with placeholder")
             litellm_request["messages"][i]["content"] = "..."
 
+
 def _is_only_tool_result_content(content_list: list) -> bool:
     """Check if message contains only tool_result content blocks."""
-    return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content_list)
+    return all(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content_list
+    )
+
 
 def _convert_tool_result_only_message(message: Dict[str, Any]) -> None:
     """Convert a message that contains only tool_result blocks to text."""
@@ -616,7 +994,7 @@ def _convert_tool_result_only_message(message: Dict[str, Any]) -> None:
     for block in message["content"]:
         all_text += "Tool Result:\n"
         result_content = block.get("content", [])
-        
+
         if isinstance(result_content, list):
             for item in result_content:
                 if isinstance(item, dict) and item.get("type") == "text":
@@ -634,8 +1012,9 @@ def _convert_tool_result_only_message(message: Dict[str, Any]) -> None:
                 all_text += json.dumps(result_content) + "\n"
             except:
                 all_text += str(result_content) + "\n"
-    
+
     message["content"] = all_text.strip() or "..."
+
 
 def _convert_content_blocks_to_text(message: Dict[str, Any]) -> None:
     """Convert content blocks to simple text format for OpenAI."""
@@ -643,7 +1022,7 @@ def _convert_content_blocks_to_text(message: Dict[str, Any]) -> None:
     for block in message["content"]:
         if not isinstance(block, dict):
             continue
-            
+
         block_type = block.get("type")
         if block_type == "text":
             text_content += block.get("text", "") + "\n"
@@ -653,14 +1032,15 @@ def _convert_content_blocks_to_text(message: Dict[str, Any]) -> None:
             text_content += _get_tool_use_text(block)
         elif block_type == "image":
             text_content += "[Image content - not displayed in text format]\n"
-    
+
     message["content"] = text_content.strip() or "..."
+
 
 def _get_tool_result_text(block: Dict[str, Any]) -> str:
     """Get tool result content as text."""
     tool_id = block.get("tool_use_id", "unknown")
     text_content = f"[Tool Result ID: {tool_id}]\n"
-    
+
     result_content = block.get("content", [])
     if isinstance(result_content, list):
         for item in result_content:
@@ -689,8 +1069,9 @@ def _get_tool_result_text(block: Dict[str, Any]) -> str:
             text_content += json.dumps(result_content) + "\n"
         except:
             text_content += str(result_content) + "\n"
-    
+
     return text_content
+
 
 def _get_tool_use_text(block: Dict[str, Any]) -> str:
     """Get tool use content as text."""
@@ -699,38 +1080,104 @@ def _get_tool_use_text(block: Dict[str, Any]) -> str:
     tool_input = json.dumps(block.get("input", {}))
     return f"[Tool: {tool_name} (ID: {tool_id})]\nInput: {tool_input}\n\n"
 
+
 def _extract_error_details(e: Exception) -> Dict[str, Any]:
-    """Extract comprehensive error details from an exception."""
+    """Extract comprehensive error details from an exception, ensuring all values are JSON serializable."""
     import traceback
+
     error_details = {
         "error": str(e),
         "type": type(e).__name__,
-        "traceback": traceback.format_exc()
+        "traceback": traceback.format_exc(),
     }
 
-    # Check for LiteLLM-specific attributes
-    for attr in ['message', 'status_code', 'response', 'llm_provider', 'model']:
-        if hasattr(e, attr):
-            error_details[attr] = getattr(e, attr)
+    # Combine attributes from the exception's dict and common LiteLLM attributes
+    attrs_to_check = list(getattr(e, "__dict__", {}).keys())
+    attrs_to_check.extend(
+        ["message", "status_code", "response", "llm_provider", "model"]
+    )
+    attrs_to_check = sorted(list(set(attrs_to_check)))  # Get unique attributes
 
-    # Check for additional exception details
-    if hasattr(e, '__dict__'):
-        for key, value in e.__dict__.items():
-            if key not in error_details and key not in ['args', '__traceback__']:
-                error_details[key] = str(value)
+    for attr in attrs_to_check:
+        if (
+            hasattr(e, attr)
+            and attr not in error_details
+            and attr not in ["args", "__traceback__"]
+        ):
+            value = getattr(e, attr)
+
+            if attr == "response":
+                # The 'response' object from httpx/requests is not JSON serializable.
+                # Extract its text content if possible.
+                if hasattr(value, "text"):
+                    error_details[attr] = value.text
+                else:
+                    error_details[attr] = str(value)
+            elif isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                # This value is already JSON serializable
+                error_details[attr] = value
+            else:
+                # For any other non-serializable type, convert to string as a fallback.
+                error_details[attr] = str(value)
 
     return error_details
+
 
 def _format_error_message(e: Exception, error_details: Dict[str, Any]) -> str:
     """Format error message for response."""
     error_message = f"Error: {str(e)}"
-    if 'message' in error_details and error_details['message']:
+    if "message" in error_details and error_details["message"]:
         error_message += f"\nMessage: {error_details['message']}"
-    if 'response' in error_details and error_details['response']:
+    if "response" in error_details and error_details["response"]:
         error_message += f"\nResponse: {error_details['response']}"
     return error_message
 
+
+def update_session_stats(model: str, input_tokens: int, output_tokens: int):
+    """Update the global session statistics with new token counts and costs."""
+    global session_stats
+    input_cost_per_token = 0.0
+    output_cost_per_token = 0.0
+    # Clean model name to look up in custom models
+    clean_model_name = model
+    if model.startswith("custom/"):
+        clean_model_name = model[7:]
+    if clean_model_name in CUSTOM_OPENAI_MODELS:
+        model_config = CUSTOM_OPENAI_MODELS[clean_model_name]
+        input_cost_per_token = model_config.get("input_cost_per_token", 0.0)
+        output_cost_per_token = model_config.get("output_cost_per_token", 0.0)
+    else:
+        # Fallback to litellm's cost tracking for other models
+        try:
+            from litellm import cost_per_token
+
+            input_cost_per_token, output_cost_per_token = cost_per_token(
+                model_name=model
+            )
+        except Exception:
+            logger.warning(f"Could not retrieve cost for model {model} from litellm.")
+    # Calculate costs for this request
+    input_cost = input_tokens * input_cost_per_token
+    output_cost = output_tokens * output_cost_per_token
+    # Update global stats
+    session_stats.total_input_tokens += input_tokens
+    session_stats.total_output_tokens += output_tokens
+    session_stats.total_input_cost = "{:.12f}".format(
+        float(session_stats.total_input_cost) + input_cost
+    )
+    session_stats.total_output_cost = "{:.12f}".format(
+        float(session_stats.total_output_cost) + output_cost
+    )
+    logger.info(
+        f"📊 STATS UPDATE: Model={model}, Input={input_tokens}t/${input_cost:.6f}, Output={output_tokens}t/${output_cost:.6f}"
+    )
+    logger.info(
+        f"SESSION TOTALS: Input={session_stats.total_input_tokens}t/${float(session_stats.total_input_cost):.6f}, Output={session_stats.total_output_tokens}t/${float(session_stats.total_output_cost):.6f}"
+    )
+
+
 # Not using validation function as we're using the environment API key
+
 
 def parse_tool_result_content(content):
     """Parse and normalize tool result content into a string format."""
@@ -770,6 +1217,7 @@ def parse_tool_result_content(content):
     except:
         return "Unparseable content"
 
+
 def _extract_system_text(system_content) -> str:
     """Extract system text from various system content formats."""
     if isinstance(system_content, str):
@@ -777,58 +1225,99 @@ def _extract_system_text(system_content) -> str:
     elif isinstance(system_content, list):
         text_parts = []
         for block in system_content:
-            if hasattr(block, 'type') and block.type == Constants.CONTENT_TEXT:
+            if hasattr(block, "type") and block.type == Constants.CONTENT_TEXT:
                 text_parts.append(block.text)
-            elif isinstance(block, dict) and block.get("type") == Constants.CONTENT_TEXT:
+            elif (
+                isinstance(block, dict) and block.get("type") == Constants.CONTENT_TEXT
+            ):
                 text_parts.append(block.get("text", ""))
         return "\n\n".join(text_parts)
     return ""
 
+
 def _determine_model_type(model: str) -> tuple:
     """Determine model type flags based on model string."""
-    is_gemini_model = model.startswith("gemini/")
+    is_gemini_model = model.startswith("gemini/") or (
+        model.startswith("custom/") and "gemini" in model.lower()
+    )
     is_openai_model = model.startswith("openai/")
     is_custom_model = model.startswith("custom/")
     return is_gemini_model, is_openai_model, is_custom_model
+
 
 def _add_system_message(litellm_messages: list, system_content) -> None:
     """Add system message to the message list if present."""
     if system_content:
         system_text = _extract_system_text(system_content)
         if system_text.strip():
-            litellm_messages.append({"role": Constants.ROLE_SYSTEM, "content": system_text.strip()})
+            litellm_messages.append(
+                {"role": Constants.ROLE_SYSTEM, "content": system_text.strip()}
+            )
             logger.debug(f"Added system message: {len(system_text)} characters")
 
-def _add_thinking_config(litellm_request: Dict[str, Any], thinking_config, model: str) -> None:
+
+def _add_thinking_config(
+    litellm_request: Dict[str, Any], thinking_config, model: str
+) -> None:
     """Add thinking configuration based on model capabilities."""
     if thinking_config is None:
         return
-        
+
+    # Determine if thinking is enabled
+    thinking_enabled = False
+    budget_tokens = None
+
+    if isinstance(thinking_config, ThinkingConfigEnabled):
+        thinking_enabled = True
+        budget_tokens = thinking_config.budget_tokens
+    elif isinstance(thinking_config, ThinkingConfigDisabled):
+        thinking_enabled = False
+    elif hasattr(thinking_config, "type"):
+        thinking_enabled = thinking_config.type == "enabled"
+        if thinking_enabled and hasattr(thinking_config, "budget_tokens"):
+            budget_tokens = thinking_config.budget_tokens
+    elif hasattr(thinking_config, "enabled"):
+        # Legacy support for old format
+        thinking_enabled = thinking_config.enabled
+
     if model.startswith("gemini/"):
-        if thinking_config.enabled:
-            litellm_request["thinkingConfig"] = {"thinkingBudget": 24576}
+        if thinking_enabled:
+            thinking_budget = budget_tokens if budget_tokens is not None else 24576
+            litellm_request["thinkingConfig"] = {"thinkingBudget": thinking_budget}
         else:
             litellm_request["thinkingConfig"] = {"thinkingBudget": 0}
-    elif model.startswith("openai/") and thinking_config.enabled:
+    elif model.startswith("openai/") and thinking_enabled:
         litellm_request["reasoning_effort"] = "medium"
     elif model.startswith("custom/"):
         custom_model_name = model[7:]
         if custom_model_name in CUSTOM_OPENAI_MODELS:
             model_config = CUSTOM_OPENAI_MODELS[custom_model_name]
             if model_config.get("enable_thinking", False):
-                if thinking_config.enabled:
-                    litellm_request["thinkingConfig"] = {"thinkingBudget": 24576}
+                if thinking_enabled:
+                    thinking_budget = (
+                        budget_tokens if budget_tokens is not None else 24576
+                    )
+                    litellm_request["thinkingConfig"] = {
+                        "thinkingBudget": thinking_budget
+                    }
                 else:
                     litellm_request["thinkingConfig"] = {"thinkingBudget": 0}
-            elif model_config.get("reasoning_effort") is not None and thinking_config.enabled:
-                litellm_request["reasoning_effort"] = model_config.get("reasoning_effort")
+            elif model_config.get("reasoning_effort") is not None and thinking_enabled:
+                litellm_request["reasoning_effort"] = model_config.get(
+                    "reasoning_effort"
+                )
+
 
 def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str, Any]:
     """Convert Anthropic API request format to LiteLLM format (supports Gemini, OpenAI, and custom models)."""
 
     # Determine the target model type
-    is_gemini_model, is_openai_model, is_custom_model = _determine_model_type(anthropic_request.model)
-    logger.debug(f"Converting messages for model type: gemini={is_gemini_model}, openai={is_openai_model}, custom={is_custom_model}")
+    is_gemini_model, is_openai_model, is_custom_model = _determine_model_type(
+        anthropic_request.model
+    )
+    logger.debug(
+        f"Converting messages for model type: gemini={is_gemini_model}, openai={is_openai_model}, custom={is_custom_model}"
+    )
 
     litellm_messages = []
 
@@ -837,7 +1326,9 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
 
     # Process messages
     for i, msg in enumerate(anthropic_request.messages):
-        logger.debug(f"Processing message {i+1}/{len(anthropic_request.messages)}: role={msg.role}, type={type(msg.content)}")
+        logger.debug(
+            f"Processing message {i + 1}/{len(anthropic_request.messages)}: role={msg.role}, type={type(msg.content)}"
+        )
         if isinstance(msg.content, str):
             litellm_messages.append({"role": msg.role, "content": msg.content})
             continue
@@ -850,52 +1341,74 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
 
         logger.debug(f"Processing {len(msg.content)} content blocks")
         for j, block in enumerate(msg.content):
-            logger.debug(f"Block {j+1}: type={block.type}")
+            logger.debug(f"Block {j + 1}: type={block.type}")
             if block.type == Constants.CONTENT_TEXT:
                 text_parts.append(block.text)
             elif block.type == Constants.CONTENT_IMAGE:
-                if (isinstance(block.source, dict) and
-                    block.source.get("type") == "base64" and
-                    "media_type" in block.source and "data" in block.source):
-                    image_parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{block.source['media_type']};base64,{block.source['data']}"
+                if (
+                    isinstance(block.source, dict)
+                    and block.source.get("type") == "base64"
+                    and "media_type" in block.source
+                    and "data" in block.source
+                ):
+                    image_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{block.source['media_type']};base64,{block.source['data']}"
+                            },
                         }
-                    })
-            elif block.type == Constants.CONTENT_TOOL_USE and msg.role == Constants.ROLE_ASSISTANT:
-                tool_calls.append({
-                    "id": block.id,
-                    "type": Constants.TOOL_FUNCTION,
-                    Constants.TOOL_FUNCTION: {
-                        "name": block.name,
-                        "arguments": json.dumps(block.input)
+                    )
+            elif (
+                block.type == Constants.CONTENT_TOOL_USE
+                and msg.role == Constants.ROLE_ASSISTANT
+            ):
+                tool_calls.append(
+                    {
+                        "id": block.id,
+                        "type": Constants.TOOL_FUNCTION,
+                        Constants.TOOL_FUNCTION: {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input),
+                        },
                     }
-                })
-            elif block.type == Constants.CONTENT_TOOL_RESULT and msg.role == Constants.ROLE_USER:
+                )
+            elif (
+                block.type == Constants.CONTENT_TOOL_RESULT
+                and msg.role == Constants.ROLE_USER
+            ):
                 if is_gemini_model:
                     # Gemini: Split user message when tool_result is encountered
                     if text_parts or image_parts:
                         content_parts = []
                         text_content = "".join(text_parts).strip()
                         if text_content:
-                            content_parts.append({"type": Constants.CONTENT_TEXT, "text": text_content})
+                            content_parts.append(
+                                {"type": Constants.CONTENT_TEXT, "text": text_content}
+                            )
                         content_parts.extend(image_parts)
 
-                        litellm_messages.append({
-                            "role": Constants.ROLE_USER,
-                            "content": content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
-                        })
+                        litellm_messages.append(
+                            {
+                                "role": Constants.ROLE_USER,
+                                "content": content_parts[0]["text"]
+                                if len(content_parts) == 1
+                                and content_parts[0]["type"] == Constants.CONTENT_TEXT
+                                else content_parts,
+                            }
+                        )
                         text_parts.clear()
                         image_parts.clear()
 
                     # Add tool result as separate "tool" role message
                     parsed_content = parse_tool_result_content(block.content)
-                    pending_tool_messages.append({
-                        "role": Constants.ROLE_TOOL,
-                        "tool_call_id": block.tool_use_id,
-                        "content": parsed_content
-                    })
+                    pending_tool_messages.append(
+                        {
+                            "role": Constants.ROLE_TOOL,
+                            "tool_call_id": block.tool_use_id,
+                            "content": parsed_content,
+                        }
+                    )
                 else:
                     # OpenAI/Custom: Convert tool result to inline text
                     tool_id = block.tool_use_id if hasattr(block, "tool_use_id") else ""
@@ -912,19 +1425,28 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                     if image_parts:
                         text_content += "\n[Note: Image content present but not displayed in text format]"
                     if text_content:
-                        litellm_messages.append({"role": Constants.ROLE_USER, "content": text_content})
+                        litellm_messages.append(
+                            {"role": Constants.ROLE_USER, "content": text_content}
+                        )
                 else:
                     # Gemini: Support structured content
                     content_parts = []
                     text_content = "".join(text_parts).strip()
                     if text_content:
-                        content_parts.append({"type": Constants.CONTENT_TEXT, "text": text_content})
+                        content_parts.append(
+                            {"type": Constants.CONTENT_TEXT, "text": text_content}
+                        )
                     content_parts.extend(image_parts)
 
-                    litellm_messages.append({
-                        "role": Constants.ROLE_USER,
-                        "content": content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
-                    })
+                    litellm_messages.append(
+                        {
+                            "role": Constants.ROLE_USER,
+                            "content": content_parts[0]["text"]
+                            if len(content_parts) == 1
+                            and content_parts[0]["type"] == Constants.CONTENT_TEXT
+                            else content_parts,
+                        }
+                    )
             # Add any pending tool messages (only for Gemini)
             if is_gemini_model:
                 litellm_messages.extend(pending_tool_messages)
@@ -936,6 +1458,11 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             if is_openai_model or is_custom_model:
                 # OpenAI/Custom: Convert to simple string format
                 text_content = "".join(text_parts).strip()
+
+                # If we have tool_calls, clean the text content to avoid duplicates
+                if tool_calls and text_content:
+                    text_content = clean_tool_markers(text_content)
+
                 if text_content:
                     assistant_msg["content"] = text_content
                 elif not tool_calls:
@@ -947,12 +1474,24 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                 # Gemini: Support structured content
                 content_parts = []
                 text_content = "".join(text_parts).strip()
+
+                # If we have tool_calls, clean the text content to avoid duplicates
+                if tool_calls and text_content:
+                    text_content = clean_tool_markers(text_content)
+
                 if text_content:
-                    content_parts.append({"type": Constants.CONTENT_TEXT, "text": text_content})
+                    content_parts.append(
+                        {"type": Constants.CONTENT_TEXT, "text": text_content}
+                    )
                 content_parts.extend(image_parts)
 
                 if content_parts:
-                    assistant_msg["content"] = content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
+                    assistant_msg["content"] = (
+                        content_parts[0]["text"]
+                        if len(content_parts) == 1
+                        and content_parts[0]["type"] == Constants.CONTENT_TEXT
+                        else content_parts
+                    )
                 else:
                     assistant_msg["content"] = None
 
@@ -985,24 +1524,52 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         valid_tools = []
         for tool in anthropic_request.tools:
             if tool.name and tool.name.strip():
-                # Clean schema for Gemini models only
+                # For Gemini models, use minimal schema cleaning (follow TypeScript approach)
                 if is_gemini_model:
                     schema = clean_gemini_schema(tool.input_schema)
+                    # Only fix the specific URI format issue that causes problems
+                    if isinstance(schema, dict):
+                        schema = _fix_gemini_uri_format(schema)
                 else:
                     # Keep original schema for OpenAI/Custom models
                     schema = tool.input_schema
 
-                valid_tools.append({
+                # Create tool definition for Gemini OpenAI API compatibility
+                tool_def = {
                     "type": Constants.TOOL_FUNCTION,
                     Constants.TOOL_FUNCTION: {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "parameters": schema
-                    }
-                })
+                        "parameters": schema,
+                    },
+                }
+                
+                # Validate tool definition for Gemini
+                if is_gemini_model:
+                    is_valid, error_msg = validate_gemini_function_schema(tool_def)
+                    if not is_valid:
+                        logger.error(f"❌ Gemini tool validation failed for '{tool.name}': {error_msg}")
+                        logger.debug(f"❌ Invalid tool schema: {json.dumps(tool_def, indent=2)}")
+                        continue  # Skip invalid tools
+                    else:
+                        logger.debug(f"✅ Gemini tool validation passed for '{tool.name}'")
+                
+                valid_tools.append(tool_def)
+                logger.debug(f"Added tool: {tool.name}")
+
         if valid_tools:
             litellm_request["tools"] = valid_tools
-            logger.debug(f"Added {len(valid_tools)} tools to request")
+            if is_gemini_model:
+                logger.info(f"🔧 Added {len(valid_tools)} validated tools to Gemini request")
+                # Log all tool schemas for Gemini debugging
+                for i, tool in enumerate(valid_tools):
+                    tool_name = tool.get("function", {}).get("name", "unknown")
+                    logger.debug(f"🔧 Gemini Tool {i+1} ({tool_name}) schema:")
+                    logger.debug(json.dumps(tool, indent=2))
+            else:
+                logger.debug(
+                    f"Added {len(valid_tools)} tools to OpenAI/Custom model request"
+                )
 
     # Add tool choice configuration
     if anthropic_request.tool_choice:
@@ -1014,115 +1581,141 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         elif choice_type == "tool" and "name" in anthropic_request.tool_choice:
             litellm_request["tool_choice"] = {
                 "type": Constants.TOOL_FUNCTION,
-                Constants.TOOL_FUNCTION: {"name": anthropic_request.tool_choice["name"]}
+                Constants.TOOL_FUNCTION: {
+                    "name": anthropic_request.tool_choice["name"]
+                },
             }
         else:
             litellm_request["tool_choice"] = "auto"
 
     # Add thinking configuration based on model capabilities
-    _add_thinking_config(litellm_request, anthropic_request.thinking, anthropic_request.model)
+    _add_thinking_config(
+        litellm_request, anthropic_request.thinking, anthropic_request.model
+    )
 
     # Add user metadata if provided
-    if (anthropic_request.metadata and
-        "user_id" in anthropic_request.metadata and
-        isinstance(anthropic_request.metadata["user_id"], str)):
+    if (
+        anthropic_request.metadata
+        and "user_id" in anthropic_request.metadata
+        and isinstance(anthropic_request.metadata["user_id"], str)
+    ):
         litellm_request["user"] = anthropic_request.metadata["user_id"]
 
     return litellm_request
 
+
 def clean_tool_markers(content: str) -> str:
-    """Clean up tool call markers and malformed content."""
+    """Clean up tool call markers and malformed content (DeepSeek-R1 style)."""
     if not content:
         return content
 
-    # Remove specific tool call markers from your example
-    content = re.sub(r'<｜tool▁call▁end｜>', '', content)
-    content = re.sub(r'<\|tool_call_end\|>', '', content)
+    # Remove specific tool call markers
+    content = re.sub(r"<｜tool▁call▁end｜>", "", content)
+    content = re.sub(r"<\|tool_call_end\|>", "", content)
 
-    # Remove bash/function blocks
-    content = re.sub(r'```bash\s*function\s+\w+.*?```', '', content, flags=re.DOTALL)
+    # Remove DeepSeek-R1 function call blocks completely
+    patterns_to_remove = [
+        # Pattern 1: function FunctionName\n```json\n{...}\n```
+        r"function\s+\w+\s*\n\s*```json\s*\n\s*{[\s\S]*?}\s*\n\s*```",
+        # Pattern 2: function FunctionName ```json\n{...}\n```
+        r"function\s+\w+\s*```json\s*\n\s*{[\s\S]*?}\s*\n\s*```",
+        # Pattern 3: function FunctionName\n```json{...}```
+        r"function\s+\w+\s*\n?\s*```json\s*{.*?}\s*```",
+        # Pattern 4: More flexible - function name followed by any JSON in code blocks
+        r"function\s+\w+[\s\S]*?```(?:json)?\s*{[\s\S]*?}\s*```",
+    ]
 
-    # Remove standalone function + json blocks but preserve other content
-    content = re.sub(r'function\s+\w+\s*```json\s*{.*?}\s*```(?:<｜tool▁call▁end｜>)?', '', content, flags=re.DOTALL)
+    for pattern in patterns_to_remove:
+        content = re.sub(pattern, "", content, flags=re.DOTALL | re.IGNORECASE)
 
     # Remove standalone function names that appear by themselves
-    content = re.sub(r'^\s*function\s+\w+\s*$', '', content, flags=re.MULTILINE)
+    content = re.sub(r"^\s*function\s+\w+\s*$", "", content, flags=re.MULTILINE)
 
     # Clean up excessive whitespace
-    content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)
-    content = re.sub(r'^\s*\n+', '', content)  # Remove leading newlines
+    content = re.sub(r"\n\s*\n\s*\n+", "\n\n", content)
+    content = re.sub(r"^\s*\n+", "", content)  # Remove leading newlines
     content = content.strip()
 
     return content
 
+
 def parse_tool_calls_from_content(content: str) -> list:
-    """Extract tool calls from malformed content."""
+    """Extract tool calls from malformed content (DeepSeek-R1 style)."""
     tool_calls = []
 
-    # Look for multiple patterns of tool calls
+    # DeepSeek-R1 specific patterns
     patterns = [
-        # Pattern: function FunctionName \n ```json\n{...}\n```
-        r'function\s+(\w+)\s*\n?\s*```json\s*\n?\s*({.*?})\s*\n?\s*```',
-        # Pattern: function FunctionName ```json{...}```
-        r'function\s+(\w+)\s*```json\s*({.*?})\s*```',
-        # Pattern: function FunctionName followed by JSON on next lines
-        r'function\s+(\w+)\s*\n\s*```json\s*\n({[\s\S]*?})\s*\n```'
+        # Pattern 1: function FunctionName\n```json\n{...}\n```
+        r"function\s+(\w+)\s*\n\s*```json\s*\n\s*({[\s\S]*?})\s*\n\s*```",
+        # Pattern 2: function FunctionName ```json\n{...}\n```
+        r"function\s+(\w+)\s*```json\s*\n\s*({[\s\S]*?})\s*\n\s*```",
+        # Pattern 3: function FunctionName\n```json{...}```
+        r"function\s+(\w+)\s*\n?\s*```json\s*({.*?})\s*```",
+        # Pattern 4: More flexible - function name followed by any JSON in code blocks
+        r"function\s+(\w+)[\s\S]*?```(?:json)?\s*({[\s\S]*?})\s*```",
     ]
 
-    for pattern in patterns:
-        matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            function_name = match[0]
-            json_str = match[1].strip()
-            try:
-                arguments = json.loads(json_str)
-                tool_calls.append({
-                    "id": f"tool_{uuid.uuid4()}",
-                    "type": "function",
-                    "function": {
-                        "name": function_name,
-                        "arguments": json.dumps(arguments)
-                    }
-                })
-                logger.debug(f"Extracted tool call: {function_name}")
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse JSON for function {function_name}: {json_str[:100]}... Error: {e}")
+    logger.debug(f"Attempting to parse tool calls from content: {content[:200]}...")
 
-    # If no matches found, try a more flexible approach
+    for i, pattern in enumerate(patterns):
+        matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
+        if matches:
+            logger.debug(f"Pattern {i + 1} found {len(matches)} matches")
+            for match in matches:
+                function_name = match[0]
+                json_str = match[1].strip()
+
+                # Clean up the JSON string
+                json_str = re.sub(r"\n\s*", " ", json_str)  # Remove extra whitespace
+                json_str = re.sub(r",\s*}", "}", json_str)  # Remove trailing commas
+                json_str = re.sub(
+                    r",\s*]", "]", json_str
+                )  # Remove trailing commas in arrays
+
+                try:
+                    arguments = json.loads(json_str)
+                    tool_call_id = f"toolu_{uuid.uuid4().hex[:24]}"
+                    tool_calls.append(
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": function_name,
+                                "arguments": json.dumps(arguments)
+                                if isinstance(arguments, dict)
+                                else json_str,
+                            },
+                        }
+                    )
+                    logger.info(
+                        f"Successfully extracted tool call: {function_name} with args: {json.dumps(arguments)[:100]}"
+                    )
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"Failed to parse JSON for function {function_name}: {json_str[:100]}... Error: {e}"
+                    )
+                    # Try to create a tool call with raw arguments
+                    tool_call_id = f"toolu_{uuid.uuid4().hex[:24]}"
+                    tool_calls.append(
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": function_name,
+                                "arguments": json.dumps({"raw_input": json_str}),
+                            },
+                        }
+                    )
+
+            # If we found matches with this pattern, stop trying others
+            if tool_calls:
+                break
+
     if not tool_calls:
-        # Look for just function names followed by any JSON-like structure
-        loose_pattern = r'function\s+(\w+).*?({[^}]*})'
-        matches = re.findall(loose_pattern, content, re.DOTALL)
-        for match in matches:
-            function_name = match[0]
-            json_str = match[1]
-            try:
-                # Try to fix common JSON issues
-                json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
-                json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
-                arguments = json.loads(json_str)
-                tool_calls.append({
-                    "id": f"tool_{uuid.uuid4()}",
-                    "type": "function",
-                    "function": {
-                        "name": function_name,
-                        "arguments": json.dumps(arguments)
-                    }
-                })
-                logger.debug(f"Extracted tool call (loose): {function_name}")
-            except json.JSONDecodeError:
-                # Last resort - create tool call with raw string
-                tool_calls.append({
-                    "id": f"tool_{uuid.uuid4()}",
-                    "type": "function",
-                    "function": {
-                        "name": function_name,
-                        "arguments": json.dumps({"raw_input": json_str})
-                    }
-                })
-                logger.warning(f"Created raw tool call for {function_name}: {json_str[:50]}...")
+        logger.debug("No tool calls found using standard patterns")
 
     return tool_calls
+
 
 def _extract_response_data(litellm_response, default_response_id: str) -> dict:
     """Extract response data from LiteLLM response in various formats."""
@@ -1130,21 +1723,32 @@ def _extract_response_data(litellm_response, default_response_id: str) -> dict:
         "response_id": default_response_id,
         "raw_content": "",
         "tool_calls": None,
+        "thinking_content": None,
         "finish_reason": "stop",
         "prompt_tokens": 0,
-        "completion_tokens": 0
+        "completion_tokens": 0,
     }
 
     # Handle LiteLLM ModelResponse object format
-    if hasattr(litellm_response, 'choices') and hasattr(litellm_response, 'usage'):
+    if hasattr(litellm_response, "choices") and hasattr(litellm_response, "usage"):
         choices = litellm_response.choices
         message = choices[0].message if choices else None
-        response_data["raw_content"] = getattr(message, 'content', "") or ""
-        response_data["tool_calls"] = getattr(message, 'tool_calls', None)
-        response_data["finish_reason"] = choices[0].finish_reason if choices else "stop"
-        response_data["response_id"] = getattr(litellm_response, 'id', default_response_id)
+        response_data["raw_content"] = getattr(message, "content", "") or ""
+        response_data["tool_calls"] = getattr(message, "tool_calls", None)
 
-        if hasattr(litellm_response, 'usage'):
+        # Extract reasoning_content from deepseek reasoning models
+        if hasattr(message, "reasoning_content") and message.reasoning_content:
+            response_data["thinking_content"] = message.reasoning_content
+            logger.debug(
+                f"Extracted reasoning_content: {len(message.reasoning_content)} characters"
+            )
+
+        response_data["finish_reason"] = choices[0].finish_reason if choices else "stop"
+        response_data["response_id"] = getattr(
+            litellm_response, "id", default_response_id
+        )
+
+        if hasattr(litellm_response, "usage"):
             usage = litellm_response.usage
             response_data["prompt_tokens"] = getattr(usage, "prompt_tokens", 0)
             response_data["completion_tokens"] = getattr(usage, "completion_tokens", 0)
@@ -1155,13 +1759,24 @@ def _extract_response_data(litellm_response, default_response_id: str) -> dict:
         message = choices[0].get("message", {}) if choices else {}
         response_data["raw_content"] = message.get("content", "") or ""
         response_data["tool_calls"] = message.get("tool_calls")
-        response_data["finish_reason"] = choices[0].get("finish_reason", "stop") if choices else "stop"
+
+        # Extract reasoning_content from deepseek reasoning models (dict format)
+        if message.get("reasoning_content"):
+            response_data["thinking_content"] = message.get("reasoning_content")
+            logger.debug(
+                f"Extracted reasoning_content (dict): {len(message.get('reasoning_content'))} characters"
+            )
+
+        response_data["finish_reason"] = (
+            choices[0].get("finish_reason", "stop") if choices else "stop"
+        )
         usage = litellm_response.get("usage", {})
         response_data["prompt_tokens"] = usage.get("prompt_tokens", 0)
         response_data["completion_tokens"] = usage.get("completion_tokens", 0)
         response_data["response_id"] = litellm_response.get("id", default_response_id)
 
     return response_data
+
 
 def _extract_tool_call_data(tool_call) -> tuple:
     """Extract tool call data from different formats."""
@@ -1176,8 +1791,9 @@ def _extract_tool_call_data(tool_call) -> tuple:
         arguments_str = tool_call.function.arguments
     else:
         return None, None, None
-    
+
     return tool_id, name, arguments_str
+
 
 def _parse_tool_arguments(arguments_str: str) -> dict:
     """Parse tool arguments safely."""
@@ -1189,7 +1805,10 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
     except json.JSONDecodeError:
         return {"raw_arguments": arguments_str}
 
-def convert_litellm_to_anthropic(litellm_response, original_request: MessagesRequest) -> MessagesResponse:
+
+def convert_litellm_to_anthropic(
+    litellm_response, original_request: MessagesRequest
+) -> MessagesResponse:
     """Convert LiteLLM response back to Anthropic API format."""
     try:
         # Extract response data safely
@@ -1207,28 +1826,54 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         response_id = response_data["response_id"]
         raw_content = response_data["raw_content"]
         tool_calls = response_data["tool_calls"]
+        thinking_content = response_data["thinking_content"]
         finish_reason = response_data["finish_reason"]
         prompt_tokens = response_data["prompt_tokens"]
         completion_tokens = response_data["completion_tokens"]
 
         logger.debug(f"Raw content extracted: {len(raw_content)} characters")
+        logger.debug(f"Tool calls from response: {tool_calls}")
 
         # Clean up content text - remove tool call markers if present
         content_text = clean_tool_markers(raw_content) if raw_content else ""
 
         # Try to extract tool calls from malformed content if no proper tool_calls found
-        if not tool_calls and raw_content and 'function' in raw_content:
-            extracted_tool_calls = parse_tool_calls_from_content(raw_content)
-            if extracted_tool_calls:
-                tool_calls = extracted_tool_calls
-                logger.debug(f"Extracted {len(tool_calls)} tool calls from malformed content")
+        if not tool_calls and raw_content:
+            # Check for DeepSeek-R1 style function calls first
+            if "function" in raw_content and (
+                "```json" in raw_content or "{" in raw_content
+            ):
+                extracted_tool_calls = parse_tool_calls_from_content(raw_content)
+                if extracted_tool_calls:
+                    tool_calls = extracted_tool_calls
+                    logger.debug(
+                        f"Extracted {len(tool_calls)} tool calls from DeepSeek-R1 style content"
+                    )
+                    # Clean the content to remove the tool call markup
+                    content_text = clean_tool_markers(raw_content)
 
         # Build content blocks
         content_blocks = []
 
+        # Add thinking content first if present (for Claude Code display)
+        if thinking_content:
+            thinking_signature = generate_thinking_signature(thinking_content)
+            content_blocks.append(
+                ContentBlockThinking(
+                    type="thinking",
+                    thinking=thinking_content,
+                    signature=thinking_signature,
+                )
+            )
+            logger.debug(
+                f"Added thinking content block: {len(thinking_content)} characters, signature: {thinking_signature}"
+            )
+
         # Add text content if present
         if content_text:
-            content_blocks.append(ContentBlockText(type=Constants.CONTENT_TEXT, text=content_text))
+            content_blocks.append(
+                ContentBlockText(type=Constants.CONTENT_TEXT, text=content_text)
+            )
 
         # Process tool calls
         if tool_calls:
@@ -1242,19 +1887,23 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
                         continue
 
                     arguments_dict = _parse_tool_arguments(arguments_str)
-                    content_blocks.append(ContentBlockToolUse(
-                        type=Constants.CONTENT_TOOL_USE,
-                        id=tool_id,
-                        name=name,
-                        input=arguments_dict
-                    ))
+                    content_blocks.append(
+                        ContentBlockToolUse(
+                            type=Constants.CONTENT_TOOL_USE,
+                            id=tool_id,
+                            name=name,
+                            input=arguments_dict,
+                        )
+                    )
                 except Exception as e:
                     logger.warning(f"Error processing tool call: {e}")
                     continue
 
         # Ensure at least one content block
         if not content_blocks:
-            content_blocks.append(ContentBlockText(type=Constants.CONTENT_TEXT, text=""))
+            content_blocks.append(
+                ContentBlockText(type=Constants.CONTENT_TEXT, text="")
+            )
 
         # Map finish reason to Anthropic format
         if finish_reason == "length":
@@ -1266,6 +1915,7 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         else:
             stop_reason = Constants.STOP_END_TURN
 
+
         return MessagesResponse(
             id=response_id,
             model=original_request.original_model or original_request.model,
@@ -1273,10 +1923,7 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
             content=content_blocks,
             stop_reason=stop_reason,
             stop_sequence=None,
-            usage=Usage(
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens
-            )
+            usage=Usage(input_tokens=prompt_tokens, output_tokens=completion_tokens),
         )
 
     except Exception as e:
@@ -1285,60 +1932,106 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
             id=f"msg_error_{uuid.uuid4()}",
             model=original_request.original_model or original_request.model,
             role=Constants.ROLE_ASSISTANT,
-            content=[ContentBlockText(type=Constants.CONTENT_TEXT, text="Response conversion error")],
+            content=[
+                ContentBlockText(
+                    type=Constants.CONTENT_TEXT, text="Response conversion error"
+                )
+            ],
             stop_reason=Constants.STOP_ERROR,
-            usage=Usage(input_tokens=0, output_tokens=0)
+            usage=Usage(input_tokens=0, output_tokens=0),
         )
+
 
 def _send_message_start_event(message_id: str, model: str):
     """Send message_start event."""
     message_data = {
-        'type': 'message_start',
-        'message': {
-            'id': message_id,
-            'type': 'message',
-            'role': 'assistant',
-            'model': model,
-            'content': [],
-            'stop_reason': None,
-            'stop_sequence': None,
-            'usage': {
-                'input_tokens': 0,
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 0,
-                'output_tokens': 0
-            }
-        }
+        "type": "message_start",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        },
     }
     return f"event: message_start\ndata: {json.dumps(message_data)}\n\n"
 
+
 def _send_content_block_start_event(index: int, block_type: str, **kwargs):
     """Send content_block_start event."""
-    content_block = {'type': block_type, **kwargs}
-    if block_type == 'text':
-        content_block['text'] = ''
+    content_block = {"type": block_type, **kwargs}
+    if block_type == "text":
+        content_block["text"] = ""
+    elif block_type == "tool_use":
+        # Ensure tool_use blocks have required fields
+        if "id" not in content_block:
+            content_block["id"] = f"toolu_{uuid.uuid4().hex[:24]}"
+        if "name" not in content_block:
+            content_block["name"] = ""
+        if "input" not in content_block:
+            content_block["input"] = {}
     return f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': index, 'content_block': content_block})}\n\n"
 
+
+# see https://docs.anthropic.com/en/docs/build-with-claude/streaming#event-types
 def _send_content_block_delta_event(index: int, delta_type: str, content: str):
     """Send content_block_delta event."""
-    return f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': {'type': delta_type, 'text': content if delta_type == 'text_delta' else None, 'partial_json': content if delta_type == 'input_json_delta' else None}})}\n\n"
+    delta = {"type": delta_type}
+    if delta_type == "text_delta":
+        delta["text"] = content
+    elif delta_type == "input_json_delta":
+        delta["partial_json"] = content
+    elif delta_type == "thinking_delta":
+        delta["thinking"] = content
+    elif delta_type == "signature_delta":
+        delta["signature"] = content
+    return f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': index, 'delta': delta})}\n\n"
+
 
 def _send_content_block_stop_event(index: int):
     """Send content_block_stop event."""
     return f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': index})}\n\n"
 
-def _send_message_delta_event(stop_reason: str, output_tokens: int):
+
+def _normalize_block(block):
+    if isinstance(block, BaseModel):
+        return block.model_dump(exclude_none=True)  # pydantic ≥v2
+    return block
+
+
+def _send_message_delta_event(
+    stop_reason: str, output_tokens: int, content_blocks=None
+):
     """Send message_delta event."""
     usage = {"output_tokens": output_tokens}
-    return f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage})}\n\n"
+    delta = {"stop_reason": stop_reason, "stop_sequence": None}
+
+    # Include content blocks in the delta if provided (required for proper Anthropic format)
+    if content_blocks is not None:
+        # Convert dict content blocks to proper Pydantic models
+        converted_blocks = [_normalize_block(b) for b in content_blocks]
+        delta["content"] = converted_blocks
+
+    return f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': delta, 'usage': usage})}\n\n"
+
 
 def _send_message_stop_event():
     """Send message_stop event."""
     return f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
+
 def _send_ping_event():
     """Send ping event."""
     return f"event: ping\ndata: {json.dumps({'type': 'ping'})}\n\n"
+
 
 def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
     """Map OpenAI finish_reason to Anthropic stop_reason."""
@@ -1349,36 +2042,46 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
     else:
         return "end_turn"
 
+
 async def handle_streaming(response_generator, original_request: MessagesRequest):
     """Handle streaming responses from LiteLLM and convert to Anthropic format."""
+    has_sent_stop_reason = False
+    is_tool_use = False
+    output_tokens = 0
+    current_content_blocks = []
     try:
         # Send initial events
         message_id = f"msg_{uuid.uuid4().hex[:24]}"
         yield _send_message_start_event(message_id, original_request.model)
-        yield _send_content_block_start_event(0, 'text')
         yield _send_ping_event()
 
-        tool_index = None
-        current_tool_call = None
-        tool_content = ""
-        accumulated_text = ""  # Track accumulated text content
-        text_sent = False  # Track if we've sent any text content
-        text_block_closed = False  # Track if text block is closed
+        # State tracking variables
+        content_block_index = 0
+        accumulated_text = ""
+        text_block_started = False
+        text_block_closed = False
         input_tokens = 0
-        output_tokens = 0
-        has_sent_stop_reason = False
-        last_tool_index = 0
+
+        # Tool call state
+        tool_json = ""
+        current_tool_id = None
+        current_tool_name = None
+
+        # Thinking/reasoning state
+        thinking_block_started = False
+        thinking_block_closed = False
+        accumulated_thinking = ""
+
+        logger.debug(f"Starting streaming for model: {original_request.model}")
 
         # Process each chunk
         async for chunk in response_generator:
             try:
-
-
                 # Check if this is the end of the response with usage data
-                if hasattr(chunk, 'usage') and chunk.usage is not None:
-                    if hasattr(chunk.usage, 'prompt_tokens'):
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    if hasattr(chunk.usage, "prompt_tokens"):
                         input_tokens = chunk.usage.prompt_tokens
-                    if hasattr(chunk.usage, 'completion_tokens'):
+                    if hasattr(chunk.usage, "completion_tokens"):
                         output_tokens = chunk.usage.completion_tokens
                     # Calculate cost based on token counts
                     model_to_use = original_request.model
@@ -1388,163 +2091,331 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                             config = CUSTOM_OPENAI_MODELS[model_name]
                             input_cost = config.get("input_cost_per_token", 0.000001)
                             output_cost = config.get("output_cost_per_token", 0.000002)
-                            total_cost = (input_tokens * input_cost) + (output_tokens * output_cost)
-                            logger.info(f"Stream complete - Model: {model_to_use}, Input tokens: {input_tokens}, Output tokens: {output_tokens}, Cost: ${total_cost:.8f}")
+                            total_cost = (input_tokens * input_cost) + (
+                                output_tokens * output_cost
+                            )
+                            logger.info(
+                                f"Stream complete - Model: {model_to_use}, Input tokens: {input_tokens}, Output tokens: {output_tokens}, Cost: ${total_cost:.8f}"
+                            )
                         else:
-                            logger.warning(f"Could not find model configuration for {model_to_use}")
+                            logger.warning(
+                                f"Could not find model configuration for {model_to_use}"
+                            )
 
-                # Handle text content
-                if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
+                    # Update session statistics for streaming
+                    update_session_stats(
+                        model=model_to_use,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+
+                # Handle content from choices
+                if hasattr(chunk, "choices") and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
 
                     # Get the delta from the choice
-                    if hasattr(choice, 'delta'):
+                    if hasattr(choice, "delta"):
                         delta = choice.delta
                     else:
                         # If no delta, try to get message
-                        delta = getattr(choice, 'message', {})
+                        delta = getattr(choice, "message", {})
 
                     # Check for finish_reason to know when we're done
-                    finish_reason = getattr(choice, 'finish_reason', None)
+                    if hasattr(choice, "finish_reason"):
+                        finish_reason = choice.finish_reason
+                    elif isinstance(choice, dict):
+                        finish_reason = choice.get("finish_reason")
+                    else:
+                        finish_reason = None
 
-                    # Process text content
-                    delta_content = None
-
-                    # Handle different formats of delta content
-                    if hasattr(delta, 'content'):
-                        delta_content = delta.content
-                    elif isinstance(delta, dict) and 'content' in delta:
-                        delta_content = delta['content']
-
-                    # Accumulate text content
-                    if delta_content is not None and delta_content != "":
-                        accumulated_text += delta_content
-
-                        # Always emit text deltas if no tool calls started
-                        if tool_index is None and not text_block_closed:
-                            text_sent = True
-                            yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta_content}})}\n\n"
-
-                    # Process tool calls
+                    # Handle tool calls first (they take priority)
                     delta_tool_calls = None
-
-                    # Handle different formats of tool calls
-                    if hasattr(delta, 'tool_calls'):
+                    if hasattr(delta, "tool_calls"):
                         delta_tool_calls = delta.tool_calls
-                    elif isinstance(delta, dict) and 'tool_calls' in delta:
-                        delta_tool_calls = delta['tool_calls']
+                    elif isinstance(delta, dict) and "tool_calls" in delta:
+                        delta_tool_calls = delta["tool_calls"]
 
-                    # Process tool calls if any
                     if delta_tool_calls:
-                        # First tool call we've seen - need to handle text properly
-                        if tool_index is None:
-                            # If we've been streaming text, close that text block
-                            if text_sent and not text_block_closed:
-                                text_block_closed = True
-                                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-                            # If we've accumulated text but not sent it, we need to emit it now
-                            # This handles the case where the first delta has both text and a tool call
-                            elif accumulated_text and not text_sent and not text_block_closed:
-                                # Send the accumulated text
-                                text_sent = True
-                                yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': accumulated_text}})}\n\n"
-                                # Close the text block
-                                text_block_closed = True
-                                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-                            # Close text block even if we haven't sent anything - models sometimes emit empty text blocks
-                            elif not text_block_closed:
-                                text_block_closed = True
-                                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-
                         # Convert to list if it's not already
                         if not isinstance(delta_tool_calls, list):
                             delta_tool_calls = [delta_tool_calls]
 
                         for tool_call in delta_tool_calls:
-                            # Get the index of this tool call (for multiple tools)
-                            current_index = None
-                            if isinstance(tool_call, dict) and 'index' in tool_call:
-                                current_index = tool_call['index']
-                            elif hasattr(tool_call, 'index'):
-                                current_index = tool_call.index
-                            else:
-                                current_index = 0
+                            # If we haven't started a tool yet, we need to handle any accumulated text first
+                            if not is_tool_use:
+                                # If we have accumulated text, send it first
+                                if accumulated_text and not text_block_started:
+                                    text_block = {"type": "text", "text": ""}
+                                    current_content_blocks.append(text_block)
+                                    yield _send_content_block_start_event(
+                                        content_block_index, "text"
+                                    )
+                                    text_block_started = True
 
-                            # Check if this is a new tool or a continuation
-                            if tool_index is None or current_index != tool_index:
-                                # New tool call - create a new tool_use block
-                                tool_index = current_index
-                                last_tool_index += 1
-                                anthropic_tool_index = last_tool_index
+                                    # Send the accumulated text
+                                    yield _send_content_block_delta_event(
+                                        content_block_index,
+                                        "text_delta",
+                                        accumulated_text,
+                                    )
 
-                                # Extract function info
+                                    # Update the content block
+                                    current_content_blocks[content_block_index][
+                                        "text"
+                                    ] = accumulated_text
+
+                                    # Close the text block
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+                                elif text_block_started and not text_block_closed:
+                                    # Close any open text block
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+                                elif not text_block_started and not text_block_closed:
+                                    # Even if no text, we might need to close the implicit text block
+                                    text_block = {"type": "text", "text": ""}
+                                    current_content_blocks.append(text_block)
+                                    yield _send_content_block_start_event(
+                                        content_block_index, "text"
+                                    )
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+
+                                # Now start the tool use block
+                                is_tool_use = True
+
+                                # Extract tool info
                                 if isinstance(tool_call, dict):
-                                    function = tool_call.get('function', {})
-                                    name = function.get('name', '') if isinstance(function, dict) else ""
-                                    tool_id = tool_call.get('id', f"toolu_{uuid.uuid4().hex[:24]}")
+                                    function = tool_call.get("function", {})
+                                    current_tool_name = (
+                                        function.get("name", "")
+                                        if isinstance(function, dict)
+                                        else ""
+                                    )
+                                    current_tool_id = tool_call.get(
+                                        "id", f"toolu_{uuid.uuid4().hex[:24]}"
+                                    )
                                 else:
-                                    function = getattr(tool_call, 'function', None)
-                                    name = getattr(function, 'name', '') if function else ''
-                                    tool_id = getattr(tool_call, 'id', f"toolu_{uuid.uuid4().hex[:24]}")
+                                    function = getattr(tool_call, "function", None)
+                                    current_tool_name = (
+                                        getattr(function, "name", "")
+                                        if function
+                                        else ""
+                                    )
+                                    current_tool_id = getattr(
+                                        tool_call,
+                                        "id",
+                                        f"toolu_{uuid.uuid4().hex[:24]}",
+                                    )
 
-                                # Start a new tool_use block
-                                yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': anthropic_tool_index, 'content_block': {'type': 'tool_use', 'id': tool_id, 'name': name, 'input': {}}})}\n\n"
-                                current_tool_call = tool_call
-                                tool_content = ""
+                                # Create tool use block
+                                tool_block = {
+                                    "type": "tool_use",
+                                    "id": current_tool_id,
+                                    "name": current_tool_name,
+                                    "input": {},
+                                }
+                                current_content_blocks.append(tool_block)
+
+                                yield _send_content_block_start_event(
+                                    content_block_index,
+                                    "tool_use",
+                                    id=current_tool_id,
+                                    name=current_tool_name,
+                                )
+                                tool_json = ""
 
                             # Extract function arguments
                             arguments = None
-                            if isinstance(tool_call, dict) and 'function' in tool_call:
-                                function = tool_call.get('function', {})
-                                arguments = function.get('arguments', '') if isinstance(function, dict) else ''
-                            elif hasattr(tool_call, 'function'):
-                                function = getattr(tool_call, 'function', None)
-                                arguments = getattr(function, 'arguments', '') if function else ''
+                            if isinstance(tool_call, dict) and "function" in tool_call:
+                                function = tool_call.get("function", {})
+                                arguments = (
+                                    function.get("arguments", "")
+                                    if isinstance(function, dict)
+                                    else ""
+                                )
+                            elif hasattr(tool_call, "function"):
+                                function = getattr(tool_call, "function", None)
+                                arguments = (
+                                    getattr(function, "arguments", "")
+                                    if function
+                                    else ""
+                                )
 
                             # If we have arguments, send them as a delta
                             if arguments:
-                                # Try to detect if arguments are valid JSON or just a fragment
+                                tool_json += arguments
+
+                                # Try to parse JSON to update the content block
                                 try:
-                                    # If it's already a dict, use it
-                                    if isinstance(arguments, dict):
-                                        args_json = json.dumps(arguments)
-                                    else:
-                                        # Otherwise, try to parse it
-                                        json.loads(arguments)
-                                        args_json = arguments
-                                except (json.JSONDecodeError, TypeError):
-                                    # If it's a fragment, treat it as a string
-                                    args_json = arguments
+                                    parsed_json = json.loads(tool_json)
+                                    current_content_blocks[content_block_index][
+                                        "input"
+                                    ] = parsed_json
+                                except json.JSONDecodeError:
+                                    # JSON not yet complete, continue accumulating
+                                    pass
 
-                                # Add to accumulated tool content
-                                tool_content += args_json if isinstance(args_json, str) else ""
+                                # Send the delta
+                                yield _send_content_block_delta_event(
+                                    content_block_index, "input_json_delta", arguments
+                                )
 
-                                # Send the update
-                                yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': anthropic_tool_index, 'delta': {'type': 'input_json_delta', 'partial_json': args_json}})}\n\n"
+                    # Handle reasoning/thinking content first (from deepseek reasoning models)
+                    delta_reasoning = None
+                    if hasattr(delta, "reasoning_content"):
+                        delta_reasoning = delta.reasoning_content
+                    elif isinstance(delta, dict) and "reasoning_content" in delta:
+                        delta_reasoning = delta["reasoning_content"]
+
+                    if delta_reasoning is not None and delta_reasoning != "":
+                        accumulated_thinking += delta_reasoning
+
+                        # Start thinking block if not started
+                        if not thinking_block_started:
+                            thinking_block = {"type": "thinking", "thinking": ""}
+                            current_content_blocks.append(thinking_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "thinking"
+                            )
+                            thinking_block_started = True
+
+                        # Send thinking delta
+                        yield _send_content_block_delta_event(
+                            content_block_index, "thinking_delta", delta_reasoning
+                        )
+
+                        # Update content block
+                        if content_block_index < len(current_content_blocks):
+                            current_content_blocks[content_block_index]["thinking"] = (
+                                accumulated_thinking
+                            )
+
+                    # Check if reasoning is complete (no more reasoning deltas and we have normal content)
+                    elif thinking_block_started and not thinking_block_closed:
+                        # If we have normal content coming and thinking was active, close thinking block
+                        delta_content = None
+                        if hasattr(delta, "content"):
+                            delta_content = delta.content
+                        elif isinstance(delta, dict) and "content" in delta:
+                            delta_content = delta["content"]
+
+                        if delta_content is not None and delta_content != "":
+                            # Close thinking block and prepare for text block
+                            # Generate signature for completed thinking content
+                            if content_block_index < len(current_content_blocks):
+                                thinking_signature = generate_thinking_signature(
+                                    accumulated_thinking
+                                )
+                                current_content_blocks[content_block_index][
+                                    "signature"
+                                ] = thinking_signature
+                                # Send signature delta before closing thinking block
+                                yield _send_content_block_delta_event(
+                                    content_block_index,
+                                    "signature_delta",
+                                    thinking_signature,
+                                )
+                            yield _send_content_block_stop_event(content_block_index)
+                            thinking_block_closed = True
+                            content_block_index += 1
+
+                    # Handle text content (only if not in tool mode)
+                    elif not is_tool_use:
+                        delta_content = None
+                        if hasattr(delta, "content"):
+                            delta_content = delta.content
+                        elif isinstance(delta, dict) and "content" in delta:
+                            delta_content = delta["content"]
+
+                        if delta_content is not None and delta_content != "":
+                            accumulated_text += delta_content
+
+                            # Start text block if not started
+                            if not text_block_started:
+                                text_block = {"type": "text", "text": ""}
+                                current_content_blocks.append(text_block)
+                                yield _send_content_block_start_event(
+                                    content_block_index, "text"
+                                )
+                                text_block_started = True
+
+                            # Send text delta
+                            yield _send_content_block_delta_event(
+                                content_block_index, "text_delta", delta_content
+                            )
+
+                            # Update content block
+                            if content_block_index < len(current_content_blocks):
+                                current_content_blocks[content_block_index]["text"] = (
+                                    accumulated_text
+                                )
 
                     # Process finish_reason - end the streaming response
                     if finish_reason and not has_sent_stop_reason:
+                        logger.debug(f"Processing finish_reason: {finish_reason}")
                         has_sent_stop_reason = True
 
-                        # Close any open tool call blocks
-                        if tool_index is not None:
-                            for i in range(1, last_tool_index + 1):
-                                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': i})}\n\n"
+                        # Close thinking block if it was started
+                        if thinking_block_started and not thinking_block_closed:
+                            # Generate signature for completed thinking content
+                            if content_block_index < len(current_content_blocks):
+                                thinking_signature = generate_thinking_signature(
+                                    accumulated_thinking
+                                )
+                                current_content_blocks[content_block_index][
+                                    "signature"
+                                ] = thinking_signature
+                                # Send signature delta before closing thinking block
+                                yield _send_content_block_delta_event(
+                                    content_block_index,
+                                    "signature_delta",
+                                    thinking_signature,
+                                )
+                            yield _send_content_block_stop_event(content_block_index)
+                            thinking_block_closed = True
+                            content_block_index += 1
 
-                        # If we accumulated text but never sent or closed text block, do it now
-                        if not text_block_closed:
-                            if accumulated_text and not text_sent:
-                                # Send the accumulated text
-                                yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': accumulated_text}})}\n\n"
-                            # Close the text block
-                            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                        # If we haven't started any blocks yet, start and immediately close a text block
+                        if (
+                            not text_block_started
+                            and not is_tool_use
+                            and not thinking_block_started
+                        ):
+                            text_block = {"type": "text", "text": ""}
+                            current_content_blocks.append(text_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "text"
+                            )
+                            yield _send_content_block_stop_event(content_block_index)
+                        elif text_block_started or is_tool_use:
+                            # Close the current content block
+                            yield _send_content_block_stop_event(content_block_index)
 
-                        # Map and send final events
+                        # Determine stop reason
                         stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
-                        yield _send_message_delta_event(stop_reason, output_tokens)
+                        logger.debug(f"Mapped stop_reason: {stop_reason}")
+
+                        # Send message delta with final content and stop reason
+                        yield _send_message_delta_event(
+                            stop_reason, output_tokens, current_content_blocks
+                        )
+
+                        # Send message stop
                         yield _send_message_stop_event()
-                        yield "data: [DONE]\n\n"
+                        logger.debug("Streaming completed successfully")
+                        has_sent_stop_reason = True
                         return
+
             except Exception as e:
                 # Log error but continue processing other chunks
                 logger.error(f"Error processing chunk: {str(e)}")
@@ -1552,56 +2423,151 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
 
         # If we didn't get a finish reason, close any open blocks
         if not has_sent_stop_reason:
-            # Close any open tool call blocks
-            if tool_index is not None:
-                for i in range(1, last_tool_index + 1):
-                    yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': i})}\n\n"
+            logger.debug("No finish_reason received, closing stream manually")
+            # If we haven't started any blocks yet, start and immediately close a text block
+            if not text_block_started and not is_tool_use:
+                text_block = {"type": "text", "text": ""}
+                current_content_blocks.append(text_block)
+                yield _send_content_block_start_event(content_block_index, "text")
+                yield _send_content_block_stop_event(content_block_index)
+            elif text_block_started or is_tool_use:
+                # Close the current content block if there is one
+                yield _send_content_block_stop_event(content_block_index)
 
-            # Close the text content block
-            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-
-            # Send final events if no finish reason was processed
-            yield _send_message_delta_event('end_turn', output_tokens)
+            # Send final events
+            stop_reason = "tool_use" if is_tool_use else "end_turn"
+            yield _send_message_delta_event(
+                stop_reason, output_tokens, current_content_blocks
+            )
             yield _send_message_stop_event()
-            yield "data: [DONE]\n\n"
+            logger.debug("Streaming completed without finish_reason")
 
     except Exception as e:
         import traceback
+
         error_traceback = traceback.format_exc()
-        error_message = f"Error in streaming: {str(e)}\n\nFull traceback:\n{error_traceback}"
+        error_message = (
+            f"Error in streaming: {str(e)}\n\nFull traceback:\n{error_traceback}"
+        )
         logger.error(error_message)
 
         # Send error events
-        yield _send_message_delta_event('error', 0)
+        logger.error(f"Streaming error: {error_message}")
+        yield _send_message_delta_event("error", 0, [])
         yield _send_message_stop_event()
-        yield "data: [DONE]\n\n"
+
+    finally:
+        if not has_sent_stop_reason:
+            stop_reason = "tool_use" if is_tool_use else "end_turn"
+            yield _send_message_delta_event(
+                stop_reason, output_tokens, current_content_blocks
+            )
+            yield _send_message_stop_event()
+            logger.debug(
+                "Streaming finally: emitted missing message_delta + message_stop"
+            )
+
+        # Fallback: Update session stats if not already done (when input_tokens is 0)
+        if input_tokens == 0:
+            logger.debug("No usage info from streaming, calculating tokens manually")
+            try:
+                # Calculate input tokens from original request
+                messages_dict = original_request.messages or []
+                system_dict = original_request.system
+                tools_dict = original_request.tools
+                calculated_input_tokens = count_tokens_in_messages(messages_dict, system_dict, tools_dict)
+
+                # Calculate output tokens from accumulated content
+                calculated_output_tokens = count_tokens_in_response(
+                    response_content=accumulated_text,
+                    thinking_content=accumulated_thinking,
+                    tool_calls=None  # Tool calls are handled separately in streaming
+                )
+
+                # Update session stats with calculated values
+                update_session_stats(
+                    model=original_request.model,
+                    input_tokens=calculated_input_tokens,
+                    output_tokens=calculated_output_tokens
+                )
+                logger.debug(f"Updated session stats from manual streaming calculation: input={calculated_input_tokens}, output={calculated_output_tokens}")
+
+            except Exception as e:
+                logger.error(f"Error in manual streaming token calculation: {e}")
+                # Use conservative estimates as last resort
+                update_session_stats(
+                    model=original_request.model,
+                    input_tokens=0,  # Stream fallback: input already counted elsewhere
+                    output_tokens=len(accumulated_text.split()) if accumulated_text else 50  # Word-based estimate
+                )
+                logger.debug("Updated session stats with fallback streaming estimates")
+
 
 @app.post("/v1/messages")
-async def create_message(
-    request: MessagesRequest,
-    raw_request: Request
-):
+async def create_message(request: MessagesRequest, raw_request: Request):
     try:
-        # print the body here
-        body = await raw_request.body()
-
         # Parse the raw body as JSON since it's bytes
-        body_json = json.loads(body.decode('utf-8'))
+        body = await raw_request.body()
+        body_json = json.loads(body.decode("utf-8"))
         original_model = body_json.get("model", "unknown")
+
+        # Calculate token count for routing decisions
+        messages_dict = [
+            msg.dict() if hasattr(msg, "dict") else msg for msg in request.messages
+        ]
+        system_dict = request.system
+        if isinstance(system_dict, list):
+            system_dict = [s.model_dump() for s in system_dict]
+        tools_dict = (
+            [tool.dict() if hasattr(tool, "dict") else tool for tool in request.tools]
+            if request.tools
+            else None
+        )
+
+        token_count = count_tokens_in_messages(messages_dict, system_dict, tools_dict)
+
+        # Check if thinking is enabled
+        has_thinking = False
+        if request.thinking is not None:
+            logger.debug(
+                f"🧠 Thinking config detected: {request.thinking}, type: {type(request.thinking)}"
+            )
+            if isinstance(request.thinking, ThinkingConfigEnabled):
+                has_thinking = True
+                logger.debug("🧠 Thinking enabled via ThinkingConfigEnabled")
+            elif hasattr(request.thinking, "type"):
+                has_thinking = request.thinking.type == "enabled"
+                logger.debug(
+                    f"🧠 Thinking type check: {request.thinking.type}, enabled: {has_thinking}"
+                )
+            elif hasattr(request.thinking, "enabled"):
+                # Legacy support
+                has_thinking = request.thinking.enabled
+                logger.debug(f"🧠 Thinking legacy check: {has_thinking}")
+
+        logger.info(f"🧠 Final thinking decision: has_thinking={has_thinking}")
+
+        # Use router to determine the actual model to use
+        routed_model = determine_model_by_router(
+            original_model, token_count, has_thinking
+        )
+
+        # Update the request model with routed model
+        request.model = routed_model
 
         # Get the display name for logging, just the model name without provider prefix
         display_model = original_model
         if "/" in display_model:
             display_model = display_model.split("/")[-1]
 
-        # Clean model name for capability check
-        clean_model = request.model
-        if clean_model.startswith("anthropic/"):
-            clean_model = clean_model[len("anthropic/"):]
-        elif clean_model.startswith("openai/"):
-            clean_model = clean_model[len("openai/"):]
+        # Get the routed display name
+        routed_display_model = routed_model
+        if "/" in routed_display_model:
+            routed_display_model = routed_display_model.split("/")[-1]
 
-        logger.debug(f"📊 PROCESSING REQUEST: Model={request.model}, Stream={request.stream}")
+        logger.info(
+            f"📊 PROCESSING REQUEST: Original={original_model} → Routed={routed_model}, Tokens={token_count}, Stream={request.stream}"
+        )
 
         # Convert Anthropic request to LiteLLM format
         litellm_request = convert_anthropic_to_litellm(request)
@@ -1613,7 +2579,9 @@ async def create_message(
         process_openai_message_format(litellm_request)
 
         # Only log basic info about the request, not the full details
-        logger.debug(f"Request for model: {litellm_request.get('model')}, stream: {litellm_request.get('stream', False)}")
+        logger.debug(
+            f"Request for model: {litellm_request.get('model')}, stream: {litellm_request.get('stream', False)}"
+        )
 
         # Handle streaming mode
         if request.stream:
@@ -1623,18 +2591,18 @@ async def create_message(
             log_request_beautifully(
                 "POST",
                 raw_request.url.path,
-                display_model,
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                f"{display_model} → {routed_display_model}",
+                litellm_request.get("model"),
+                len(litellm_request["messages"]),
                 num_tools,
-                200  # Assuming success at this point
+                200,  # Assuming success at this point
             )
             # Ensure we use the async version for streaming
             response_generator = await litellm.acompletion(**litellm_request)
 
             return StreamingResponse(
                 handle_streaming(response_generator, request),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
             )
         else:
             # Use LiteLLM for regular completion
@@ -1643,34 +2611,97 @@ async def create_message(
             log_request_beautifully(
                 "POST",
                 raw_request.url.path,
-                display_model,
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                f"{display_model} → {routed_display_model}",
+                litellm_request.get("model"),
+                len(litellm_request["messages"]),
                 num_tools,
-                200  # Assuming success at this point
+                200,  # Assuming success at this point
             )
             start_time = time.time()
             litellm_response = litellm.completion(**litellm_request)
-            logger.debug(f"✅ RESPONSE RECEIVED: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s")
+
+            logger.debug(
+                f"✅ RESPONSE RECEIVED: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s"
+            )
 
             # Convert LiteLLM response to Anthropic format
             anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
+
+            # Extract usage to update session stats
+            if hasattr(litellm_response, 'usage'):
+                prompt_tokens = litellm_response.usage.prompt_tokens
+                completion_tokens = litellm_response.usage.completion_tokens
+                update_session_stats(
+                    model=litellm_request.get("model"),
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens
+                )
+                logger.debug(f"Updated session stats from LiteLLM usage: input={prompt_tokens}, output={completion_tokens}")
+            else:
+                # Fallback: Calculate tokens manually using tiktoken
+                logger.debug("No usage info from LiteLLM, calculating tokens manually")
+                try:
+                    # Calculate input tokens from original request
+                    messages_dict = request.messages or []
+                    system_dict = request.system
+                    tools_dict = request.tools
+                    input_tokens = count_tokens_in_messages(messages_dict, system_dict, tools_dict)
+
+                    # Calculate output tokens from response
+                    response_content = ""
+                    thinking_content = ""
+                    tool_calls = None
+
+                    # Extract content from anthropic_response
+                    if hasattr(anthropic_response, 'content') and anthropic_response.content:
+                        for content_block in anthropic_response.content:
+                            if hasattr(content_block, 'text'):
+                                response_content += content_block.text
+                            elif hasattr(content_block, 'type') and content_block.type == 'tool_use':
+                                if tool_calls is None:
+                                    tool_calls = []
+                                tool_calls.append({
+                                    'name': getattr(content_block, 'name', ''),
+                                    'input': getattr(content_block, 'input', {})
+                                })
+
+                    # Extract thinking content if present
+                    if hasattr(anthropic_response, 'thinking') and anthropic_response.thinking:
+                        thinking_content = anthropic_response.thinking
+
+                    output_tokens = count_tokens_in_response(response_content, thinking_content, tool_calls)
+
+                    # Update session stats with calculated values
+                    update_session_stats(
+                        model=litellm_request.get("model"),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens
+                    )
+                    logger.debug(f"Updated session stats from manual calculation: input={input_tokens}, output={output_tokens}")
+
+                except Exception as e:
+                    logger.error(f"Error in manual token calculation: {e}")
+                    # Use conservative estimates as last resort
+                    update_session_stats(
+                        model=litellm_request.get("model"),
+                        input_tokens=token_count,  # We already calculated this earlier
+                        output_tokens=100  # Conservative estimate
+                    )
+                    logger.debug(f"Updated session stats with fallback estimates: input={token_count}, output=100")
 
             return anthropic_response
 
     except Exception as e:
         error_details = _extract_error_details(e)
         logger.error(f"Error processing request: {json.dumps(error_details, indent=2)}")
-        
+
         error_message = _format_error_message(e, error_details)
-        status_code = error_details.get('status_code', 500)
+        status_code = error_details.get("status_code", 500)
         raise HTTPException(status_code=status_code, detail=error_message)
 
+
 @app.post("/v1/messages/count_tokens")
-async def count_tokens(
-    request: TokenCountRequest,
-    raw_request: Request
-):
+async def count_tokens(request: TokenCountRequest, raw_request: Request):
     try:
         # Log the incoming token count request
         original_model = request.original_model or request.model
@@ -1683,57 +2714,138 @@ async def count_tokens(
         # Clean model name for capability check
         clean_model = request.model
         if clean_model.startswith("anthropic/"):
-            clean_model = clean_model[len("anthropic/"):]
+            clean_model = clean_model[len("anthropic/") :]
         elif clean_model.startswith("openai/"):
-            clean_model = clean_model[len("openai/"):]
+            clean_model = clean_model[len("openai/") :]
 
-        # Convert the messages to a format LiteLLM can understand
-        converted_request = convert_anthropic_to_litellm(
-            MessagesRequest(
-                model=request.model,
-                max_tokens=100,  # Arbitrary value not used for token counting
-                messages=request.messages,
-                system=request.system,
-                tools=request.tools,
-                tool_choice=request.tool_choice,
-                thinking=request.thinking
-            )
-        )
-
-        # Use LiteLLM's token_counter function
+        # Use the local tiktoken-based function for counting
         try:
+            # Convert messages, system, and tools to dictionaries for counting
+            messages_dict = [
+                msg.dict() if hasattr(msg, "dict") else msg for msg in request.messages
+            ]
+            system_content = request.system
+            if isinstance(system_content, list):
+                system_content = [s.dict() for s in system_content]
+            tools_dict = (
+                [
+                    tool.dict() if hasattr(tool, "dict") else tool
+                    for tool in request.tools
+                ]
+                if request.tools
+                else None
+            )
+
             # Log the request beautifully
             num_tools = len(request.tools) if request.tools else 0
-
             log_request_beautifully(
                 "POST",
                 raw_request.url.path,
                 display_model,
-                converted_request.get('model'),
-                len(converted_request['messages']),
+                request.model,
+                len(request.messages),
                 num_tools,
-                200  # Assuming success at this point
+                200,  # Assuming success at this point
             )
 
-            # Count tokens
-            token_count = litellm.token_counter(
-                model=converted_request["model"],
-                messages=converted_request["messages"],
+            # Count tokens using the local tiktoken-based function
+            token_count = count_tokens_in_messages(
+                messages=messages_dict, system=system_content, tools=tools_dict
             )
 
             # Return Anthropic-style response
             return TokenCountResponse(input_tokens=token_count)
 
-        except ImportError:
-            logger.error("Could not import token_counter from litellm")
+        except Exception as e:
+            logger.error(f"Error in local token counting: {e}")
             # Fallback to a simple approximation
             return TokenCountResponse(input_tokens=1000)  # Default fallback
 
     except Exception as e:
         import traceback
+
         error_traceback = traceback.format_exc()
         logger.error(f"Error counting tokens: {str(e)}\n{error_traceback}")
         raise HTTPException(status_code=500, detail=f"Error counting tokens: {str(e)}")
+
+
+@app.get("/v1/stats", response_model=SessionStats)
+async def get_stats():
+    """Returns the token usage statistics for the current session."""
+    return session_stats
+
+
+@app.post("/v1/messages/test_conversion")
+async def test_message_conversion(request: MessagesRequest, raw_request: Request):
+    """
+    Test endpoint for direct message format conversion without routing.
+
+    This endpoint converts Anthropic format to LiteLLM format and sends the request
+    directly to the specified model without going through the intelligent routing system.
+    Useful for testing specific model integrations and message format conversion.
+    """
+    try:
+        # Parse the raw body to get the original model
+        body = await raw_request.body()
+        body_json = json.loads(body.decode("utf-8"))
+        original_model = body_json.get("model", "unknown")
+
+        logger.info(f"🧪 TEST CONVERSION: Direct test for model {original_model}")
+
+        # Convert Anthropic request to LiteLLM format
+        litellm_request = convert_anthropic_to_litellm(request)
+
+        # Set up API keys for the specific model (no routing)
+        setup_api_key_for_request(litellm_request, original_model)
+
+        # Process OpenAI message format if needed
+        process_openai_message_format(litellm_request)
+
+        logger.debug(
+            f"🧪 Converted request for {original_model}: {json.dumps({k: v for k, v in litellm_request.items() if k != 'messages'}, indent=2)}"
+        )
+
+        # Log the request
+        num_tools = len(request.tools) if request.tools else 0
+        log_request_beautifully(
+            "POST",
+            "/v1/messages/test_conversion",
+            f"{original_model} (DIRECT TEST)",
+            litellm_request.get("model"),
+            len(litellm_request["messages"]),
+            num_tools,
+            200,
+        )
+
+        # Handle streaming mode
+        if request.stream:
+            logger.info(f"🧪 Starting direct streaming test for {original_model}")
+            response_generator = await litellm.acompletion(**litellm_request)
+            return StreamingResponse(
+                handle_streaming(response_generator, request),
+                media_type="text/event-stream",
+            )
+        else:
+            # Regular completion
+            logger.info(f"🧪 Starting direct completion test for {original_model}")
+            start_time = time.time()
+            litellm_response = litellm.completion(**litellm_request)
+            logger.info(f"🧪 Direct test completed in {time.time() - start_time:.2f}s")
+
+            # Convert LiteLLM response to Anthropic format
+            anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
+            return anthropic_response
+
+    except Exception as e:
+        error_details = _extract_error_details(e)
+        logger.error(
+            f"🧪 Error in test conversion: {json.dumps(error_details, indent=2)}"
+        )
+
+        error_message = _format_error_message(e, error_details)
+        status_code = error_details.get("status_code", 500)
+        raise HTTPException(status_code=status_code, detail=error_message)
+
 
 @app.get("/health")
 async def health_check():
@@ -1744,7 +2856,7 @@ async def health_check():
             "anthropic": bool(config.anthropic_api_key),
             "openai": bool(config.openai_api_key),
             "gemini": bool(config.gemini_api_key),
-            "custom_models": len(CUSTOM_OPENAI_MODELS)
+            "custom_models": len(CUSTOM_OPENAI_MODELS),
         }
 
         health_status = {
@@ -1755,34 +2867,38 @@ async def health_check():
             "supported_providers": {
                 "anthropic": {
                     "configured": api_status["anthropic"],
-                    "models": ["claude-3-haiku", "claude-3-sonnet", "claude-3-opus"] if api_status["anthropic"] else []
+                    "models": [
+                        "claude-3-haiku-20240307",
+                        "'claude-sonnet-4-2025051",
+                        "claude-opus-4-20250514",
+                    ]
+                    if api_status["anthropic"]
+                    else [],
                 },
                 "openai": {
                     "configured": api_status["openai"],
-                    "models": OPENAI_MODELS[:3] if api_status["openai"] else []
+                    "models": OPENAI_MODELS[:3] if api_status["openai"] else [],
                 },
                 "gemini": {
                     "configured": api_status["gemini"],
-                    "models": GEMINI_MODELS if api_status["gemini"] else []
+                    "models": GEMINI_MODELS if api_status["gemini"] else [],
                 },
                 "custom": {
                     "configured": api_status["custom_models"] > 0,
                     "count": api_status["custom_models"],
-                    "models": list(CUSTOM_OPENAI_MODELS.keys())[:3] if api_status["custom_models"] > 0 else []
-                }
+                    "models": list(CUSTOM_OPENAI_MODELS.keys())[:3]
+                    if api_status["custom_models"] > 0
+                    else [],
+                },
             },
-            "model_mapping": {
-                "big_model": config.big_model,
-                "small_model": config.small_model,
-                "preferred_provider": config.preferred_provider
-            },
+            "router_config": config.router_config,
             "features": {
                 "streaming": True,
                 "tool_use": True,
                 "image_support": True,
                 "cost_tracking": True,
-                "model_mapping": True
-            }
+                "model_mapping": True,
+            },
         }
 
         return health_status
@@ -1795,9 +2911,10 @@ async def health_check():
                 "status": "unhealthy",
                 "timestamp": datetime.now().isoformat(),
                 "error": "Health check failed",
-                "message": str(e)
-            }
+                "message": str(e),
+            },
         )
+
 
 @app.get("/test-connection")
 async def test_connection():
@@ -1812,19 +2929,19 @@ async def test_connection():
             test_results["anthropic"] = {
                 "status": "configured",
                 "message": "API key configured",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
             test_results["anthropic"] = {
                 "status": "failed",
                 "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
             overall_status = "partial"
     else:
         test_results["anthropic"] = {
             "status": "not_configured",
-            "message": "ANTHROPIC_API_KEY not set"
+            "message": "ANTHROPIC_API_KEY not set",
         }
 
     # Test Gemini API if configured
@@ -1835,7 +2952,7 @@ async def test_connection():
                 model="gemini/gemini-2.0-flash",
                 messages=[{"role": "user", "content": "Hi"}],
                 max_tokens=5,
-                api_key=config.gemini_api_key
+                api_key=config.gemini_api_key,
             )
 
             test_results["gemini"] = {
@@ -1843,7 +2960,7 @@ async def test_connection():
                 "message": "Successfully connected to Gemini API",
                 "model_used": "gemini-2.0-flash",
                 "timestamp": datetime.now().isoformat(),
-                "response_id": getattr(test_response, 'id', 'unknown')
+                "response_id": getattr(test_response, "id", "unknown"),
             }
         except Exception as e:
             test_results["gemini"] = {
@@ -1853,14 +2970,14 @@ async def test_connection():
                 "suggestions": [
                     "Check your GEMINI_API_KEY is valid",
                     "Verify API key permissions",
-                    "Check rate limits"
-                ]
+                    "Check rate limits",
+                ],
             }
             overall_status = "partial"
     else:
         test_results["gemini"] = {
             "status": "not_configured",
-            "message": "GEMINI_API_KEY not set"
+            "message": "GEMINI_API_KEY not set",
         }
 
     # Test OpenAI API if configured
@@ -1870,19 +2987,19 @@ async def test_connection():
                 "status": "configured",
                 "message": "API key configured",
                 "available_models": OPENAI_MODELS[:3],
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
             test_results["openai"] = {
                 "status": "failed",
                 "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
             overall_status = "partial"
     else:
         test_results["openai"] = {
             "status": "not_configured",
-            "message": "OPENAI_API_KEY not set"
+            "message": "OPENAI_API_KEY not set",
         }
 
     # Test custom models
@@ -1891,12 +3008,12 @@ async def test_connection():
             "status": "configured",
             "count": len(CUSTOM_OPENAI_MODELS),
             "models": list(CUSTOM_OPENAI_MODELS.keys()),
-            "message": f"{len(CUSTOM_OPENAI_MODELS)} custom models configured"
+            "message": f"{len(CUSTOM_OPENAI_MODELS)} custom models configured",
         }
     else:
         test_results["custom_models"] = {
             "status": "not_configured",
-            "message": "No custom models configured"
+            "message": "No custom models configured",
         }
 
     # Return appropriate status code
@@ -1905,7 +3022,7 @@ async def test_connection():
             "status": overall_status,
             "message": "API connectivity test completed",
             "timestamp": datetime.now().isoformat(),
-            "results": test_results
+            "results": test_results,
         }
     else:
         return JSONResponse(
@@ -1914,9 +3031,10 @@ async def test_connection():
                 "status": overall_status,
                 "message": "Some API tests failed or not configured",
                 "timestamp": datetime.now().isoformat(),
-                "results": test_results
-            }
+                "results": test_results,
+            },
         )
+
 
 @app.get("/")
 async def root():
@@ -1928,27 +3046,32 @@ async def root():
         "status": "running",
         "capabilities": {
             "providers": ["anthropic", "openai", "gemini", "custom"],
-            "features": ["streaming", "tool_use", "image_support", "cost_tracking", "model_mapping"]
+            "features": [
+                "streaming",
+                "tool_use",
+                "image_support",
+                "cost_tracking",
+                "model_mapping",
+            ],
         },
         "configuration": {
-            "preferred_provider": config.preferred_provider,
-            "big_model": config.big_model,
-            "small_model": config.small_model,
-            "custom_models_count": len(CUSTOM_OPENAI_MODELS)
+            "router_config": config.router_config,
+            "custom_models_count": len(CUSTOM_OPENAI_MODELS),
         },
         "endpoints": {
             "messages": "/v1/messages",
             "count_tokens": "/v1/messages/count_tokens",
             "health": "/health",
-            "test_connection": "/test-connection"
+            "test_connection": "/test-connection",
         },
         "documentation": {
             "anthropic_format": "Uses Anthropic Claude API format",
-            "model_mapping": "Automatically maps claude-3-haiku → small_model, claude-3-sonnet/opus → big_model",
+            "intelligent_routing": "Automatically routes models based on token count, 'thinking' flag, and model name.",
             "streaming": "Supports streaming responses with proper SSE format",
-            "tools": "Full tool use support with proper formatting"
-        }
+            "tools": "Full tool use support with proper formatting",
+        },
     }
+
 
 # Define ANSI color codes for terminal output
 class Colors:
@@ -1962,7 +3085,11 @@ class Colors:
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
     DIM = "\033[2m"
-def log_request_beautifully(method, path, claude_model, openai_model, num_messages, num_tools, status_code):
+
+
+def log_request_beautifully(
+    method, path, claude_model, openai_model, num_messages, num_tools, status_code
+):
     """Log requests in a beautiful, twitter-friendly format showing Claude to OpenAI mapping."""
     # Format the Claude model name nicely
     claude_display = f"{Colors.CYAN}{claude_model}{Colors.RESET}"
@@ -1983,8 +3110,11 @@ def log_request_beautifully(method, path, claude_model, openai_model, num_messag
     messages_str = f"{Colors.BLUE}{num_messages} messages{Colors.RESET}"
 
     # Format status code
-    status_str = f"{Colors.GREEN}✓ {status_code} OK{Colors.RESET}" if status_code == 200 else f"{Colors.RED}✗ {status_code}{Colors.RESET}"
-
+    status_str = (
+        f"{Colors.GREEN}✓ {status_code} OK{Colors.RESET}"
+        if status_code == 200
+        else f"{Colors.RED}✗ {status_code}{Colors.RESET}"
+    )
 
     # Put it all together in a clear, beautiful format
     log_line = f"{Colors.BOLD}{method} {endpoint}{Colors.RESET} {status_str}"
@@ -1995,12 +3125,15 @@ def log_request_beautifully(method, path, claude_model, openai_model, num_messag
     print(model_line)
     sys.stdout.flush()
 
+
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
 
     # Configure uvicorn to run with minimal logs
-    uvicorn.run(app, host=config.host, port=config.port,
-                log_level=config.log_level.lower())
+    uvicorn.run(
+        app, host=config.host, port=config.port, log_level=config.log_level.lower()
+    )
