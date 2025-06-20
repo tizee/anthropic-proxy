@@ -1,6 +1,6 @@
 # Anthropic API Proxy for Multiple Model Providers 🔄
 
-**Claude Code version: 1.0.25**
+**Claude Code version: 1.0.27**
 
 **Use Anthropic clients (like Claude Code) with multiple model providers.** 🤝
 
