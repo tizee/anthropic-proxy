@@ -938,34 +938,7 @@ def _extract_system_content(system) -> str:
     return ""
 
 
-def _extract_message_content(content) -> str:
-    """Extract message content and convert to text format."""
-    if isinstance(content, str):
-        return content
-    elif isinstance(content, list):
-        content_text = ""
-        for block in content:
-            if hasattr(block, "text"):
-                content_text += block.text
-            elif isinstance(block, dict):
-                if block.get("type") == "text" and "text" in block:
-                    content_text += block["text"]
-                elif block.get("type") == "tool_result":
-                    # Convert tool result to text representation
-                    if "content" in block:
-                        if isinstance(block["content"], str):
-                            content_text += f"Tool result: {block['content']}"
-                        elif isinstance(block["content"], list):
-                            for result_block in block["content"]:
-                                if (
-                                    isinstance(result_block, dict)
-                                    and "text" in result_block
-                                ):
-                                    content_text += (
-                                        f"Tool result: {result_block['text']}"
-                                    )
-        return content_text or "..."
-    return "..."
+# The above functions have been refactored into models.py for better organization
 
 
 def _compare_request_data(claude_request: MessagesRequest, openai_request: Dict[str, Any]) -> None:
@@ -1084,6 +1057,27 @@ def convert_anthropic_to_openai_request(
     request: MessagesRequest, model: str
 ) -> Dict[str, Any]:
     """Convert Anthropic API request to OpenAI API format using OpenAI SDK types for validation."""
+    
+    logger.debug(f"🔄 Converting Claude request to OpenAI format for model: {model}")
+    logger.debug(f"🔄 Input messages count: {len(request.messages)}")
+    
+    # Log message types for debugging
+    for i, msg in enumerate(request.messages):
+        has_tool_use = False
+        has_tool_result = False
+        if isinstance(msg.content, list):
+            for block in msg.content:
+                if hasattr(block, "type"):
+                    if block.type == "tool_use":
+                        has_tool_use = True
+                    elif block.type == "tool_result":
+                        has_tool_result = True
+                elif isinstance(block, dict):
+                    if block.get("type") == "tool_use":
+                        has_tool_use = True
+                    elif block.get("type") == "tool_result":
+                        has_tool_result = True
+        logger.debug(f"🔄 Message {i} ({msg.role}): tool_use={has_tool_use}, tool_result={has_tool_result}")
 
     # Build OpenAI messages with type validation
     openai_messages = []
@@ -1099,25 +1093,81 @@ def convert_anthropic_to_openai_request(
             }
             openai_messages.append(system_msg)
 
-    # Convert messages
+    # Convert messages using the elegant model-based approach
     for msg in request.messages:
-        content_text = _extract_message_content(msg.content)
-
         if msg.role == "user":
-            openai_msg = {
-                "role": "user",
-                "content": content_text,
-            }
+            # Extract tool results and text content separately
+            tool_messages = msg.extract_tool_results()
+            text_content = msg.extract_text_content()
+            
+            # Add user message with text content (excluding tool results)
+            if text_content and text_content not in ("...", ""):
+                # Filter out tool result indicators since they'll be separate messages
+                filtered_content = text_content
+                if "Tool result:" in text_content and tool_messages:
+                    lines = text_content.split('\n')
+                    user_lines = [line for line in lines if not line.startswith("Tool result:")]
+                    filtered_content = '\n'.join(user_lines).strip()
+                
+                if filtered_content:
+                    openai_msg = {
+                        "role": "user",
+                        "content": filtered_content,
+                    }
+                    openai_messages.append(openai_msg)
+                    logger.debug(f"🔧 User message with text content, content_len={len(filtered_content)}")
+            
+            # Add tool result messages
+            if tool_messages:
+                openai_messages.extend(tool_messages)
+                logger.debug(f"🔧 Added {len(tool_messages)} tool result messages")
+            
+            # Handle edge case: empty user message
+            if not text_content or text_content == "..." and not tool_messages:
+                logger.warning("User message has no content and no tool results")
+                openai_msg = {
+                    "role": "user",
+                    "content": "",
+                }
+                openai_messages.append(openai_msg)
+                
         elif msg.role == "assistant":
-            openai_msg = {
-                "role": "assistant",
-                "content": content_text,
-            }
+            # Extract tool calls and text content
+            tool_calls = msg.extract_tool_calls()
+            text_content = msg.extract_text_content()
+            
+            # Build assistant message
+            if tool_calls:
+                # Assistant message with tool calls
+                if text_content and text_content not in ("...", "[Tool usage only]"):
+                    # Has both text content and tool calls
+                    openai_msg = {
+                        "role": "assistant",
+                        "content": text_content,
+                        "tool_calls": tool_calls
+                    }
+                else:
+                    # Tool calls only, no text content (common case)
+                    openai_msg = {
+                        "role": "assistant",
+                        "content": None,  # OpenAI allows null content when tool_calls present
+                        "tool_calls": tool_calls
+                    }
+                logger.debug(f"🔧 Assistant message with {len(tool_calls)} tool calls, content_present={bool(text_content and text_content not in ('...', '[Tool usage only]'))}")
+            else:
+                # Assistant message without tool calls (text only)
+                openai_msg = {
+                    "role": "assistant",
+                    "content": text_content if text_content != "..." else "",
+                }
+                logger.debug(f"🔧 Assistant message with text only, content_len={len(text_content)}")
+            
+            openai_messages.append(openai_msg)
         else:
             # Fallback for other roles
-            openai_msg = {"role": msg.role, "content": content_text}
-
-        openai_messages.append(openai_msg)
+            text_content = msg.extract_text_content()
+            openai_msg = {"role": msg.role, "content": text_content}
+            openai_messages.append(openai_msg)
 
     # Build tools with type validation
     openai_tools = None
@@ -1183,12 +1233,20 @@ def convert_anthropic_to_openai_request(
     if tool_choice:
         request_params["tool_choice"] = tool_choice
 
-    logger.debug(
-        f"original request: {request}"
-    )
-    logger.debug(
-        f"openai request: {request_params}"
-    )
+    logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
+    
+    # Log output message details for debugging
+    for i, msg in enumerate(openai_messages):
+        role = msg.get("role", "unknown")
+        has_tool_calls = "tool_calls" in msg
+        content_len = len(str(msg.get("content", ""))) if msg.get("content") else 0
+        logger.debug(f"🔄 Output message {i} ({role}): content_len={content_len}, has_tool_calls={has_tool_calls}")
+        if has_tool_calls:
+            tool_calls_count = len(msg.get("tool_calls", []))
+            logger.debug(f"🔄   Tool calls count: {tool_calls_count}")
+
+    logger.debug(f"🔄 Original request: {request}")
+    logger.debug(f"🔄 OpenAI request: {request_params}")
 
     # Compare request data and log any mismatches
     _compare_request_data(request, request_params)

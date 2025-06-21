@@ -39,12 +39,112 @@ class ContentBlockToolUse(BaseModel):
     id: str
     name: str
     input: Dict[str, Any]
+    
+    def to_openai(self) -> Dict[str, Any]:
+        """
+        Convert Claude tool_use to OpenAI tool_call format.
+        
+        Claude format:
+        {
+            "type": "tool_use",
+            "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+            "name": "get_stock_price",
+            "input": { "ticker": "^GSPC" }
+        }
+        
+        OpenAI format:
+        {
+            "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+            "type": "function",
+            "function": {
+                "name": "get_stock_price",
+                "arguments": "{\"ticker\":\"^GSPC\"}"
+            }
+        }
+        """
+        import json
+        
+        try:
+            arguments_str = json.dumps(self.input, ensure_ascii=False, separators=(',', ':'))
+        except (TypeError, ValueError):
+            arguments_str = "{}"
+            
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": arguments_str
+            }
+        }
 
 
 class ContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: Union[str, List[Dict[str, Any]], Dict[str, Any], List[Any], Any]
+    
+    def process_content(self) -> str:
+        """
+        Process Claude tool_result content into a string format.
+        
+        Claude supports various content formats:
+        - Simple string: "259.75 USD"
+        - List with text blocks: [{"type": "text", "text": "result"}]
+        - Complex nested structures
+        """
+        import json
+        
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            # Handle list content by extracting all text
+            content_parts = []
+            for item in self.content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text" and "text" in item:
+                        content_parts.append(item["text"])
+                    elif "text" in item:
+                        content_parts.append(item["text"])
+                    else:
+                        # Fallback: serialize non-text items
+                        content_parts.append(json.dumps(item))
+                else:
+                    content_parts.append(str(item))
+            return "\n".join(content_parts) if content_parts else ""
+        elif isinstance(self.content, dict):
+            # Handle single dict content
+            if self.content.get("type") == "text" and "text" in self.content:
+                return self.content["text"]
+            else:
+                return json.dumps(self.content)
+        else:
+            # Fallback: serialize anything else
+            return json.dumps(self.content) if self.content is not None else ""
+    
+    def to_openai(self) -> Dict[str, Any]:
+        """
+        Convert Claude tool_result to OpenAI tool role message format.
+        
+        Claude format:
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+            "content": "259.75 USD"
+        }
+        
+        OpenAI format:
+        {
+            "role": "tool",
+            "tool_call_id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+            "content": "259.75 USD"
+        }
+        """
+        return {
+            "role": "tool",
+            "tool_call_id": self.tool_use_id,
+            "content": self.process_content()
+        }
 
 
 class ContentBlockThinking(BaseModel):
@@ -72,6 +172,79 @@ class Message(BaseModel):
             ]
         ],
     ]
+    
+    def extract_tool_calls(self) -> List[Dict[str, Any]]:
+        """
+        Extract tool calls from Claude message content for OpenAI format.
+        Returns a list of OpenAI tool_call objects.
+        """
+        tool_calls = []
+        
+        if isinstance(self.content, list):
+            for block in self.content:
+                if isinstance(block, ContentBlockToolUse):
+                    tool_calls.append(block.to_openai())
+                elif isinstance(block, dict) and block.get("type") == "tool_use":
+                    # Fallback for dict format
+                    tool_use = ContentBlockToolUse.model_validate(block)
+                    tool_calls.append(tool_use.to_openai())
+                    
+        return tool_calls
+    
+    def extract_tool_results(self) -> List[Dict[str, Any]]:
+        """
+        Extract tool result messages from Claude message content for OpenAI format.
+        Returns a list of OpenAI tool role message objects.
+        """
+        tool_messages = []
+        
+        if isinstance(self.content, list):
+            for block in self.content:
+                if isinstance(block, ContentBlockToolResult):
+                    tool_messages.append(block.to_openai())
+                elif isinstance(block, dict) and block.get("type") == "tool_result":
+                    # Fallback for dict format
+                    tool_result = ContentBlockToolResult.model_validate(block)
+                    tool_messages.append(tool_result.to_openai())
+                    
+        return tool_messages
+    
+    def extract_text_content(self) -> str:
+        """
+        Extract text content from message, excluding tool-related blocks.
+        Returns a string with just the text content.
+        """
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, list):
+            content_parts = []
+            has_tool_use = False
+            
+            for block in self.content:
+                if isinstance(block, ContentBlockText):
+                    content_parts.append(block.text)
+                elif isinstance(block, ContentBlockToolUse):
+                    has_tool_use = True
+                    # Add placeholder for tool use
+                    content_parts.append(f"[Used tool: {block.name}]")
+                elif isinstance(block, dict):
+                    if block.get("type") == "text" and "text" in block:
+                        content_parts.append(block["text"])
+                    elif block.get("type") == "tool_use":
+                        has_tool_use = True
+                        content_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
+            
+            content_text = "".join(content_parts)
+            
+            # Return meaningful content, avoid empty strings when there are tool uses
+            if content_text.strip():
+                return content_text
+            elif has_tool_use:
+                return "[Tool usage only]"
+            else:
+                return "..."
+        
+        return "..."
 
 
 class Tool(BaseModel):

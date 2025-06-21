@@ -11,8 +11,7 @@ from typing import Any, Dict
 from server import (
     convert_anthropic_to_openai_request,
     convert_openai_to_anthropic,
-    _extract_system_content,
-    _extract_message_content
+    _extract_system_content
 )
 from models import (
     MessagesRequest,
@@ -81,13 +80,13 @@ def test_basic_anthropic_to_openai():
         ]
     )
 
-    result = convert_anthropic_to_openai_request(test_request, 'gpt-4')
+    result = convert_anthropic_to_openai_request(test_request, 'deepseek-v3-250324')
 
     # Validate structure
     assert 'model' in result
     assert 'messages' in result
     assert 'max_tokens' in result
-    assert result['model'] == 'gpt-4'
+    assert result['model'] == 'deepseek-v3-250324'
     assert len(result['messages']) == 1
     assert result['messages'][0]['role'] == 'user'
     assert result['messages'][0]['content'] == 'Hello, world!'
@@ -107,7 +106,7 @@ def test_system_message_conversion():
         system='You are a helpful assistant.'
     )
 
-    result = convert_anthropic_to_openai_request(test_request, 'gpt-4')
+    result = convert_anthropic_to_openai_request(test_request, 'deepseek-v3-250324')
 
     # Should have system message first
     assert len(result['messages']) == 2
@@ -147,7 +146,7 @@ def test_tool_conversion():
         tool_choice={"type": "auto"}
     )
 
-    result = convert_anthropic_to_openai_request(test_request, 'gpt-4')
+    result = convert_anthropic_to_openai_request(test_request, 'deepseek-v3-250324')
 
     # Validate tools conversion
     assert 'tools' in result
@@ -248,8 +247,9 @@ def test_content_extraction_helpers():
     system_result_list = _extract_system_content(system_list)
     assert system_result_list == 'Hello World'
 
-    # Test message content extraction
-    content_result = _extract_message_content('User message')
+    # Test message content extraction using new Message methods
+    test_message_str = Message(role='user', content='User message')
+    content_result = test_message_str.extract_text_content()
     assert content_result == 'User message'
 
     # Test list content
@@ -257,7 +257,8 @@ def test_content_extraction_helpers():
         {'type': 'text', 'text': 'Calculate this: '},
         {'type': 'text', 'text': '2+2'}
     ]
-    content_result_list = _extract_message_content(content_list)
+    test_message_list = Message(role='user', content=content_list)
+    content_result_list = test_message_list.extract_text_content()
     assert content_result_list == 'Calculate this: 2+2'
 
     print("✅ Content extraction helpers test passed")
@@ -276,7 +277,7 @@ def test_thinking_integration():
     )
 
     # Test that thinking request converts properly
-    result = convert_anthropic_to_openai_request(test_request, 'gpt-4')
+    result = convert_anthropic_to_openai_request(test_request, 'deepseek-v3-250324')
 
     # Should still convert normally (thinking is handled separately)
     assert 'messages' in result
@@ -333,6 +334,126 @@ def test_reasoning_content_to_thinking():
     return True
 
 
+def test_official_docs_tool_use_scenario():
+    """Test multi-turn conversation with tool use based on official documentation examples."""
+    print("🧪 Testing official docs tool use scenario...")
+    
+    from models import ContentBlockText, ContentBlockToolUse, ContentBlockToolResult
+    
+    # Test scenario based on Claude docs:
+    # 1. User asks: "What's the S&P 500 at today?"
+    # 2. Assistant responds with tool_use
+    # 3. User provides tool_result
+    # 4. Assistant responds with final answer
+    
+    test_request = MessagesRequest(
+        model='test-model',
+        max_tokens=100,
+        messages=[
+            # Initial user question
+            Message(role='user', content="What's the S&P 500 at today?"),
+            
+            # Assistant response with tool use (Claude format)
+            Message(role='assistant', content=[
+                ContentBlockToolUse(
+                    type="tool_use",
+                    id="toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+                    name="get_stock_price",
+                    input={"ticker": "^GSPC"}
+                )
+            ]),
+            
+            # User message with tool result (Claude format)
+            Message(role='user', content=[
+                ContentBlockToolResult(
+                    type="tool_result",
+                    tool_use_id="toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+                    content="259.75 USD"
+                )
+            ]),
+            
+            # Assistant final response
+            Message(role='assistant', content="The S&P 500 is currently at 259.75 USD.")
+        ],
+        tools=[
+            Tool(
+                name="get_stock_price",
+                description="Get the current stock price for a given ticker symbol.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "ticker": {
+                            "type": "string",
+                            "description": "The stock ticker symbol, e.g. AAPL for Apple Inc."
+                        }
+                    },
+                    "required": ["ticker"]
+                }
+            )
+        ]
+    )
+    
+    # Convert to OpenAI format
+    result = convert_anthropic_to_openai_request(test_request, 'deepseek-v3-250324')
+    
+    # Validate conversion
+    assert 'messages' in result
+    assert 'tools' in result
+    
+    messages = result['messages']
+    
+    # Should have: user, assistant with tool_calls, tool with result, assistant final
+    # Expected structure:
+    # 1. user: "What's the S&P 500 at today?"
+    # 2. assistant: tool_calls=[{...}], content=None
+    # 3. tool: tool_call_id="toolu_01D7FLrfh4GYq7yT1ULFeyMV", content="259.75 USD" 
+    # 4. assistant: "The S&P 500 is currently at 259.75 USD."
+    
+    # Find messages by role and characteristics
+    user_messages = [msg for msg in messages if msg['role'] == 'user']
+    assistant_messages = [msg for msg in messages if msg['role'] == 'assistant']
+    tool_messages = [msg for msg in messages if msg['role'] == 'tool']
+    
+    # Validate user messages
+    assert len(user_messages) == 1, f"Expected 1 user message, got {len(user_messages)}"
+    assert user_messages[0]['content'] == "What's the S&P 500 at today?"
+    
+    # Validate assistant messages
+    assert len(assistant_messages) == 2, f"Expected 2 assistant messages, got {len(assistant_messages)}"
+    
+    # First assistant message should have tool_calls
+    first_assistant = assistant_messages[0]
+    assert 'tool_calls' in first_assistant, "First assistant message should have tool_calls"
+    assert len(first_assistant['tool_calls']) == 1, "Should have exactly 1 tool call"
+    
+    tool_call = first_assistant['tool_calls'][0]
+    assert tool_call['id'] == "toolu_01D7FLrfh4GYq7yT1ULFeyMV", "Tool call ID should be preserved"
+    assert tool_call['type'] == "function", "Tool call type should be function"
+    assert tool_call['function']['name'] == "get_stock_price", "Function name should match"
+    assert '"ticker":"^GSPC"' in tool_call['function']['arguments'], "Arguments should be JSON string with ticker"
+    
+    # Second assistant message should have final response
+    second_assistant = assistant_messages[1]
+    assert second_assistant['content'] == "The S&P 500 is currently at 259.75 USD."
+    assert 'tool_calls' not in second_assistant, "Second assistant message should not have tool_calls"
+    
+    # Validate tool messages
+    assert len(tool_messages) == 1, f"Expected 1 tool message, got {len(tool_messages)}"
+    tool_message = tool_messages[0]
+    assert tool_message['tool_call_id'] == "toolu_01D7FLrfh4GYq7yT1ULFeyMV", "Tool call ID should match"
+    assert tool_message['content'] == "259.75 USD", "Tool result content should match"
+    
+    # Validate tools
+    tools = result['tools']
+    assert len(tools) == 1, f"Expected 1 tool, got {len(tools)}"
+    tool = tools[0]
+    assert tool['function']['name'] == "get_stock_price", "Tool name should match"
+    assert 'ticker' in tool['function']['parameters']['properties'], "Tool should have ticker parameter"
+    
+    print("✅ Official docs tool use scenario test passed")
+    return True
+
+
 def run_all_conversion_tests():
     """Run all conversion tests."""
     print("🚀 Running OpenAI SDK type integration tests...\n")
@@ -346,6 +467,7 @@ def run_all_conversion_tests():
         test_content_extraction_helpers,
         test_thinking_integration,
         test_reasoning_content_to_thinking,
+        test_official_docs_tool_use_scenario,
     ]
 
     passed = 0
