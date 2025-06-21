@@ -1057,10 +1057,10 @@ def convert_anthropic_to_openai_request(
     request: MessagesRequest, model: str
 ) -> Dict[str, Any]:
     """Convert Anthropic API request to OpenAI API format using OpenAI SDK types for validation."""
-    
+
     logger.debug(f"🔄 Converting Claude request to OpenAI format for model: {model}")
     logger.debug(f"🔄 Input messages count: {len(request.messages)}")
-    
+
     # Log message types for debugging
     for i, msg in enumerate(request.messages):
         has_tool_use = False
@@ -1099,7 +1099,7 @@ def convert_anthropic_to_openai_request(
             # Extract tool results and text content separately
             tool_messages = msg.extract_tool_results()
             text_content = msg.extract_text_content()
-            
+
             # Add user message with text content (excluding tool results)
             if text_content and text_content not in ("...", ""):
                 # Filter out tool result indicators since they'll be separate messages
@@ -1108,7 +1108,7 @@ def convert_anthropic_to_openai_request(
                     lines = text_content.split('\n')
                     user_lines = [line for line in lines if not line.startswith("Tool result:")]
                     filtered_content = '\n'.join(user_lines).strip()
-                
+
                 if filtered_content:
                     openai_msg = {
                         "role": "user",
@@ -1116,12 +1116,12 @@ def convert_anthropic_to_openai_request(
                     }
                     openai_messages.append(openai_msg)
                     logger.debug(f"🔧 User message with text content, content_len={len(filtered_content)}")
-            
+
             # Add tool result messages
             if tool_messages:
                 openai_messages.extend(tool_messages)
                 logger.debug(f"🔧 Added {len(tool_messages)} tool result messages")
-            
+
             # Handle edge case: empty user message
             if not text_content or text_content == "..." and not tool_messages:
                 logger.warning("User message has no content and no tool results")
@@ -1130,12 +1130,12 @@ def convert_anthropic_to_openai_request(
                     "content": "",
                 }
                 openai_messages.append(openai_msg)
-                
+
         elif msg.role == "assistant":
             # Extract tool calls and text content
             tool_calls = msg.extract_tool_calls()
             text_content = msg.extract_text_content()
-            
+
             # Build assistant message
             if tool_calls:
                 # Assistant message with tool calls
@@ -1161,7 +1161,7 @@ def convert_anthropic_to_openai_request(
                     "content": text_content if text_content != "..." else "",
                 }
                 logger.debug(f"🔧 Assistant message with text only, content_len={len(text_content)}")
-            
+
             openai_messages.append(openai_msg)
         else:
             # Fallback for other roles
@@ -1234,7 +1234,7 @@ def convert_anthropic_to_openai_request(
         request_params["tool_choice"] = tool_choice
 
     logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
-    
+
     # Log output message details for debugging
     for i, msg in enumerate(openai_messages):
         role = msg.get("role", "unknown")
@@ -1719,8 +1719,8 @@ def convert_openai_to_anthropic(
                     logger.warning(f"Error processing tool call: {e}")
                     continue
 
-        # Ensure at least one content block
-        if not content_blocks:
+        # Only add empty content block if there are no tool calls (to avoid Claude Code loops)
+        if not content_blocks and not tool_calls:
             content_blocks.append(
                 ContentBlockText(type=Constants.CONTENT_TEXT, text="")
             )
@@ -1754,7 +1754,7 @@ def convert_openai_to_anthropic(
         # Create Claude response
         claude_response = MessagesResponse(
             id=response_id,
-            model=original_request.original_model or original_request.model,
+            model=original_request.model,
             role=Constants.ROLE_ASSISTANT,
             content=content_blocks,
             stop_reason=stop_reason,
@@ -1771,7 +1771,7 @@ def convert_openai_to_anthropic(
         logger.error(f"Error converting response: {e}")
         return MessagesResponse(
             id=f"msg_error_{uuid.uuid4()}",
-            model=original_request.original_model or original_request.model,
+            model=original_request.model,
             role=Constants.ROLE_ASSISTANT,
             content=[
                 ContentBlockText(
@@ -2567,7 +2567,7 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 async def count_tokens(request: TokenCountRequest, raw_request: Request):
     try:
         # Log the incoming token count request
-        original_model = request.original_model or request.model
+        original_model = request.model
 
         # Get the display name for logging, just the model name without provider prefix
         display_model = original_model

@@ -679,7 +679,7 @@ TEST_SCENARIOS = {
         tool_choice={"type": "any"},
     ),
     # Claude Code tools tests - Grep tool
-    "claude_code_grep_test": MessagesRequest(
+    "claude_code_grep_test_stream": MessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
@@ -693,7 +693,7 @@ TEST_SCENARIOS = {
         tool_choice={"type": "any"},
     ),
     # Claude Code tools tests - Glob tool
-    "claude_code_glob_test": MessagesRequest(
+    "claude_code_glob_test_stream": MessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
