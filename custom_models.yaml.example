@@ -1,17 +1,18 @@
+# Example custom OpenAI-compatible model configurations
+
 - model_id: my-large-model
-  model_name: my-large-model-for-sending-request
-  api_base: "https://api.example.com/api/v3"
-  can_stream: true
+  model_name: actual-model-name  # Optional if different from model_id
+  api_base: "https://api.example.com/v1"
   api_key_name: MY_API_KEY
+  can_stream: true
   max_tokens: 16384
   input_cost_per_token: 0.0000025  # $ per token
-  output_cost_per_token: 0.0000075  # $ per token
+  output_cost_per_token: 0.0000075
 
 - model_id: my-small-model
-  model_name: my-small-model-for-sending-request
-  api_base: "https://api.example.com/api/v3"
-  can_stream: true
+  api_base: "https://api.example.com/v1"
   api_key_name: MY_API_KEY
+  can_stream: true
   max_tokens: 8192
-  input_cost_per_token: 0.0000015  # $ per token
-  output_cost_per_token: 0.0000045  # $ per token
+  input_cost_per_token: 0.0000015
+  output_cost_per_token: 0.0000045

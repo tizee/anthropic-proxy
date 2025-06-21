@@ -89,6 +89,56 @@ calculator_tool = Tool(
     },
 )
 
+# Gemini-incompatible tool - contains fields that Gemini doesn't support
+gemini_incompatible_tool = Tool(
+    name="complex_data_processor",
+    description="Process complex data with advanced validation",
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,  # Gemini doesn't support this
+        "title": "Complex Data Processor Input",  # Gemini doesn't support this
+        "$schema": "http://json-schema.org/draft-07/schema#",  # Gemini doesn't support this
+        "properties": {
+            "data": {
+                "type": "string",
+                "description": "The data to process",
+                "default": "empty",  # Gemini doesn't support default values
+                "examples": ["sample data", "test input"],  # Gemini doesn't support examples
+            },
+            "validation_level": {
+                "type": "string",
+                "enum": ["strict", "normal", "lenient"],
+                "description": "Validation strictness level",
+            },
+            "config": {
+                "type": "object",
+                "additionalProperties": True,  # Gemini doesn't support this
+                "properties": {
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "multipleOf": 5,  # This should be kept as it's simple
+                    },
+                    "advanced_options": {
+                        "allOf": [  # Gemini doesn't support allOf
+                            {"type": "object"},
+                            {"properties": {"debug": {"type": "boolean"}}}
+                        ]
+                    }
+                },
+                "patternProperties": {  # Gemini doesn't support this
+                    "^opt_": {"type": "string"}
+                }
+            }
+        },
+        "required": ["data", "validation_level"],
+        "dependencies": {  # Gemini doesn't support this
+            "validation_level": ["config"]
+        }
+    },
+)
+
 weather_tool = Tool(
     name="weather",
     description="Get weather information for a location",
@@ -170,7 +220,9 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "todo_write_stream",
     "todo_read_stream",
     "gemini_tool_test",
-    "gemini_tool_test_stream"
+    "gemini_tool_test_stream",
+    "gemini_incompatible_schema_test",
+    "gemini_incompatible_schema_test_stream"
 }
 
 # Test scenarios using MessagesRequest Pydantic models
@@ -387,9 +439,10 @@ TEST_SCENARIOS = {
             )
         ],
     ),
-    "thinking_complex": MessagesRequest(
+    "thinking_complex_stream": MessagesRequest(
         model=MODEL,
         max_tokens=1536,
+        stream=True,
         thinking=ThinkingConfigEnabled(
             type="enabled",
             budget_tokens=1024
@@ -427,6 +480,33 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[weather_tool],
+        tool_choice={"type": "auto"},
+    ),
+    # Gemini incompatible schema test - non-streaming
+    "gemini_incompatible_schema_test": MessagesRequest(
+        model="custom/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
+        max_tokens=1025,
+        messages=[
+            Message(
+                role="user",
+                content="Process this data: 'hello world' with strict validation level and configure timeout to 30 seconds."
+            )
+        ],
+        tools=[gemini_incompatible_tool],
+        tool_choice={"type": "auto"},
+    ),
+    # Gemini incompatible schema test - streaming
+    "gemini_incompatible_schema_test_stream": MessagesRequest(
+        model="custom/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
+        max_tokens=1025,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Process this sample data: 'test input' with normal validation and set timeout to 60 seconds."
+            )
+        ],
+        tools=[gemini_incompatible_tool],
         tool_choice={"type": "auto"},
     ),
     # Streaming thinking tests
@@ -1720,9 +1800,9 @@ async def run_tests(args):
                 result, warning = await test_streaming(
                     test_name, streaming_data, compare_with_anthropic=compare_with_anthropic
                 )
-                results[f"{test_name}_streaming"] = result
+                results[f"{test_name}"] = result
                 if warning:
-                    warnings[f"{test_name}_streaming"] = warning
+                    warnings[f"{test_name}"] = warning
 
     else:
         # Run all tests based on filters
@@ -1783,9 +1863,9 @@ async def run_tests(args):
                 result, warning = await test_streaming(
                     test_name, test_data, compare_with_anthropic=compare_with_anthropic
                 )
-                results[f"{test_name}_streaming"] = result
+                results[f"{test_name}"] = result
                 if warning:
-                    warnings[f"{test_name}_streaming"] = warning
+                    warnings[f"{test_name}"] = warning
 
     # Print summary
     print("\n\n=========== TEST SUMMARY ===========\n")

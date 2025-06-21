@@ -85,7 +85,7 @@ class MessagesRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     tools: Optional[List[Tool]] = None
     tool_choice: Optional[Dict[str, Any]] = None
-    thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled, dict]] = None
+    thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled]] = None
     original_model: Optional[str] = None  # Will store the original model name
 
     @field_validator("thinking")
