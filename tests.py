@@ -44,7 +44,7 @@ from models import (
     ContentBlockText,
     ContentBlockToolUse,
     Message,
-    SystemContent
+    SystemContent,
 )
 
 # Load environment variables
@@ -57,7 +57,7 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 PROXY_API_URL = "http://127.0.0.1:8082/v1/messages"
 PROXY_TEST_API_URL = "http://127.0.0.1:8082/v1/messages/test_conversion"
 ANTHROPIC_VERSION = "2023-06-01"
-#MODEL = "claude-3-7-sonnet-20250219"
+# MODEL = "claude-3-7-sonnet-20250219"
 MODEL = "claude-3-haiku-20240307"  # Change to your preferred model
 
 # Headers
@@ -103,7 +103,10 @@ gemini_incompatible_tool = Tool(
                 "type": "string",
                 "description": "The data to process",
                 "default": "empty",  # Gemini doesn't support default values
-                "examples": ["sample data", "test input"],  # Gemini doesn't support examples
+                "examples": [
+                    "sample data",
+                    "test input",
+                ],  # Gemini doesn't support examples
             },
             "validation_level": {
                 "type": "string",
@@ -123,19 +126,19 @@ gemini_incompatible_tool = Tool(
                     "advanced_options": {
                         "allOf": [  # Gemini doesn't support allOf
                             {"type": "object"},
-                            {"properties": {"debug": {"type": "boolean"}}}
+                            {"properties": {"debug": {"type": "boolean"}}},
                         ]
-                    }
+                    },
                 },
                 "patternProperties": {  # Gemini doesn't support this
                     "^opt_": {"type": "string"}
-                }
-            }
+                },
+            },
         },
         "required": ["data", "validation_level"],
         "dependencies": {  # Gemini doesn't support this
             "validation_level": ["config"]
-        }
+        },
     },
 )
 
@@ -178,11 +181,11 @@ read_tool = Tool(
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "The absolute path to the file to read"
+                "description": "The absolute path to the file to read",
             }
         },
-        "required": ["file_path"]
-    }
+        "required": ["file_path"],
+    },
 )
 
 bash_tool = Tool(
@@ -191,17 +194,14 @@ bash_tool = Tool(
     input_schema={
         "type": "object",
         "properties": {
-            "command": {
-                "type": "string",
-                "description": "The command to execute"
-            },
+            "command": {"type": "string", "description": "The command to execute"},
             "description": {
                 "type": "string",
-                "description": "Clear description of what this command does"
-            }
+                "description": "Clear description of what this command does",
+            },
         },
-        "required": ["command"]
-    }
+        "required": ["command"],
+    },
 )
 
 ls_tool = Tool(
@@ -212,11 +212,11 @@ ls_tool = Tool(
         "properties": {
             "path": {
                 "type": "string",
-                "description": "The absolute path to the directory to list"
+                "description": "The absolute path to the directory to list",
             }
         },
-        "required": ["path"]
-    }
+        "required": ["path"],
+    },
 )
 
 grep_tool = Tool(
@@ -227,15 +227,12 @@ grep_tool = Tool(
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "The regular expression pattern to search for"
+                "description": "The regular expression pattern to search for",
             },
-            "path": {
-                "type": "string",
-                "description": "The directory to search in"
-            }
+            "path": {"type": "string", "description": "The directory to search in"},
         },
-        "required": ["pattern"]
-    }
+        "required": ["pattern"],
+    },
 )
 
 glob_tool = Tool(
@@ -246,11 +243,11 @@ glob_tool = Tool(
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "The glob pattern to match files against"
+                "description": "The glob pattern to match files against",
             }
         },
-        "required": ["pattern"]
-    }
+        "required": ["pattern"],
+    },
 )
 
 todo_write_tool = Tool(
@@ -315,7 +312,7 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "claude_code_grep_test_stream",
     "claude_code_glob_test_stream",
     "claude_code_todowrite_test_stream",
-    "claude_code_todoread_test_stream"
+    "claude_code_todoread_test_stream",
 }
 
 # Test scenarios using MessagesRequest Pydantic models
@@ -335,12 +332,7 @@ TEST_SCENARIOS = {
     "calculator": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        messages=[
-            Message(
-                role="user",
-                content="What is 135 + 7.5 divided by 2.5?"
-            )
-        ],
+        messages=[Message(role="user", content="What is 135 + 7.5 divided by 2.5?")],
         tools=[calculator_tool],
         tool_choice={"type": "any"},
     ),
@@ -360,12 +352,7 @@ TEST_SCENARIOS = {
     "todo_read": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        messages=[
-            Message(
-                role="user",
-                content="What's on my todo list?"
-            )
-        ],
+        messages=[Message(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
         tool_choice={"type": "any"},
     ),
@@ -430,10 +417,7 @@ TEST_SCENARIOS = {
         max_tokens=100,
         stream=True,
         messages=[
-            Message(
-                role="user",
-                content="Count from 1 to 5, with one number per line."
-            )
+            Message(role="user", content="Count from 1 to 5, with one number per line.")
         ],
     ),
     # Tool use with streaming
@@ -441,12 +425,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        messages=[
-            Message(
-                role="user",
-                content="What is 135 + 17.5 divided by 2.5?"
-            )
-        ],
+        messages=[Message(role="user", content="What is 135 + 17.5 divided by 2.5?")],
         tools=[calculator_tool],
         tool_choice={"type": "any"},
     ),
@@ -468,12 +447,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        messages=[
-            Message(
-                role="user",
-                content="What's on my todo list?"
-            )
-        ],
+        messages=[Message(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
         tool_choice={"type": "any"},
     ),
@@ -481,10 +455,7 @@ TEST_SCENARIOS = {
     "thinking_simple": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -495,10 +466,7 @@ TEST_SCENARIOS = {
     "thinking_math": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -509,10 +477,7 @@ TEST_SCENARIOS = {
     "thinking_with_tools": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -536,10 +501,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1536,
         stream=True,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         system="You are an expert analyst. Think carefully through each problem before responding.",
         messages=[
             Message(
@@ -553,10 +515,7 @@ TEST_SCENARIOS = {
         model="gemini-2.5-pro",
         max_tokens=1025,
         messages=[
-            Message(
-                role="user",
-                content="Calculate 25 * 8 using the calculator tool."
-            )
+            Message(role="user", content="Calculate 25 * 8 using the calculator tool.")
         ],
         tools=[calculator_tool],
         tool_choice={"type": "any"},
@@ -569,7 +528,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the weather tool to check the weather in Tokyo."
+                content="Use the weather tool to check the weather in Tokyo.",
             )
         ],
         tools=[weather_tool],
@@ -582,7 +541,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Process this data: 'hello world' with strict validation level and configure timeout to 30 seconds."
+                content="Process this data: 'hello world' with strict validation level and configure timeout to 30 seconds.",
             )
         ],
         tools=[gemini_incompatible_tool],
@@ -596,7 +555,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Process this sample data: 'test input' with normal validation and set timeout to 60 seconds."
+                content="Process this sample data: 'test input' with normal validation and set timeout to 60 seconds.",
             )
         ],
         tools=[gemini_incompatible_tool],
@@ -606,14 +565,11 @@ TEST_SCENARIOS = {
     "deepseek_thinking_tools": MessagesRequest(
         model="deepseek-r1-250528",
         max_tokens=1024,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
-                content="What is 25 * 8? Think about it and use the calculator."
+                content="What is 25 * 8? Think about it and use the calculator.",
             )
         ],
         tools=[calculator_tool],
@@ -624,14 +580,11 @@ TEST_SCENARIOS = {
         model="deepseek-41-250528",
         max_tokens=1024,
         stream=True,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
-                content="Calculate 12 + 34. Think about it first, then use the calculator tool."
+                content="Calculate 12 + 34. Think about it first, then use the calculator tool.",
             )
         ],
         tools=[calculator_tool],
@@ -643,10 +596,7 @@ TEST_SCENARIOS = {
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
-                role="user",
-                content="Use the Read tool to read the tests.py file."
-            )
+            Message(role="user", content="Use the Read tool to read the tests.py file.")
         ],
         tools=[read_tool],
         tool_choice={"type": "any"},
@@ -658,7 +608,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the Bash tool to list files in the current directory."
+                content="Use the Bash tool to list files in the current directory.",
             )
         ],
         tools=[bash_tool],
@@ -672,7 +622,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the LS tool to list the contents of the current directory."
+                content="Use the LS tool to list the contents of the current directory.",
             )
         ],
         tools=[ls_tool],
@@ -686,7 +636,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the Grep tool to search for 'def' in the current directory."
+                content="Use the Grep tool to search for 'def' in the current directory.",
             )
         ],
         tools=[grep_tool],
@@ -698,10 +648,7 @@ TEST_SCENARIOS = {
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
-                role="user",
-                content="Use the Glob tool to find all Python files."
-            )
+            Message(role="user", content="Use the Glob tool to find all Python files.")
         ],
         tools=[glob_tool],
         tool_choice={"type": "any"},
@@ -714,7 +661,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the TodoWrite tool to create a simple todo list."
+                content="Use the TodoWrite tool to create a simple todo list.",
             )
         ],
         tools=[todo_write_tool],
@@ -728,7 +675,7 @@ TEST_SCENARIOS = {
         messages=[
             Message(
                 role="user",
-                content="Use the TodoRead tool to show the current todo list."
+                content="Use the TodoRead tool to show the current todo list.",
             )
         ],
         tools=[todo_read_tool],
@@ -739,10 +686,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -754,10 +698,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -769,10 +710,7 @@ TEST_SCENARIOS = {
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(
-            type="enabled",
-            budget_tokens=1024
-        ),
+        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
             Message(
                 role="user",
@@ -829,6 +767,7 @@ def serialize_request_data(data) -> Dict[str, Any]:
     else:
         return data
 
+
 # ================= NON-STREAMING TESTS =================
 
 
@@ -837,7 +776,7 @@ def get_response(url, headers, data):
     start_time = time.time()
 
     # Use longer timeout for thinking requests
-    timeout = 180 if data.get('thinking') else 30
+    timeout = 180 if data.get("thinking") else 30
 
     response = httpx.post(url, headers=headers, json=data, timeout=timeout)
     elapsed = time.time() - start_time
@@ -847,7 +786,12 @@ def get_response(url, headers, data):
 
 
 def compare_responses(
-    anthropic_response, proxy_response, check_tools=False, compare_content=False, test_name=None, has_thinking=False
+    anthropic_response,
+    proxy_response,
+    check_tools=False,
+    compare_content=False,
+    test_name=None,
+    has_thinking=False,
 ):
     """
     Compare the two responses using Anthropic as ground truth.
@@ -951,11 +895,15 @@ def compare_responses(
                         "\n❌ FAILURE: Proxy response does not contain tool use, but Anthropic does"
                     )
                     test_passed = False
-                    failure_reasons.append("Missing tool use (Anthropic has tool use but proxy doesn't)")
+                    failure_reasons.append(
+                        "Missing tool use (Anthropic has tool use but proxy doesn't)"
+                    )
         elif proxy_tool is not None:
             print("\n---------- PROXY TOOL USE ----------")
             print(json.dumps(proxy_tool, indent=2))
-            print("\n✅ Proxy response contains tool use, but Anthropic does not (acceptable - extra functionality)")
+            print(
+                "\n✅ Proxy response contains tool use, but Anthropic does not (acceptable - extra functionality)"
+            )
         else:
             new_warning = "Neither response contains tool use"
             print(f"\n⚠️ WARNING: {new_warning}")
@@ -1001,22 +949,38 @@ def compare_responses(
         # Display ground truth thinking content from Anthropic
         if anthropic_thinking:
             anthropic_thinking_length = len(anthropic_thinking)
-            print(f"\n📚 Anthropic (ground truth) thinking block ({anthropic_thinking_length} characters)")
+            print(
+                f"\n📚 Anthropic (ground truth) thinking block ({anthropic_thinking_length} characters)"
+            )
             if anthropic_thinking_length > 0:
-                anthropic_thinking_preview = anthropic_thinking[:200] + "..." if len(anthropic_thinking) > 200 else anthropic_thinking
+                anthropic_thinking_preview = (
+                    anthropic_thinking[:200] + "..."
+                    if len(anthropic_thinking) > 200
+                    else anthropic_thinking
+                )
                 print(f"Anthropic thinking preview: {anthropic_thinking_preview}")
         else:
             print("\n📚 Anthropic (ground truth) response has no thinking block")
 
         if proxy_thinking is None:
-            print("\n❌ FAILURE: Thinking test but proxy response does not contain thinking block")
+            print(
+                "\n❌ FAILURE: Thinking test but proxy response does not contain thinking block"
+            )
             test_passed = False
-            failure_reasons.append("Missing thinking block (thinking enabled but proxy doesn't provide thinking content)")
+            failure_reasons.append(
+                "Missing thinking block (thinking enabled but proxy doesn't provide thinking content)"
+            )
         else:
             thinking_length = len(proxy_thinking) if proxy_thinking else 0
-            print(f"\n✅ Proxy response contains thinking block ({thinking_length} characters)")
+            print(
+                f"\n✅ Proxy response contains thinking block ({thinking_length} characters)"
+            )
             if thinking_length > 0:
-                thinking_preview = proxy_thinking[:200] + "..." if len(proxy_thinking) > 200 else proxy_thinking
+                thinking_preview = (
+                    proxy_thinking[:200] + "..."
+                    if len(proxy_thinking) > 200
+                    else proxy_thinking
+                )
                 print(f"Proxy thinking preview: {thinking_preview}")
 
     # Check if content has text
@@ -1045,7 +1009,9 @@ def compare_responses(
                 warning_reason = new_warning
         elif is_behavioral_test:
             # For behavioral difference tests: missing text is acceptable if proxy provides good content
-            new_warning = "Proxy missing text content but this is a behavioral difference test"
+            new_warning = (
+                "Proxy missing text content but this is a behavioral difference test"
+            )
             print(f"\n⚠️ WARNING: {new_warning}")
             if warning_reason:
                 warning_reason += f"; {new_warning}"
@@ -1055,11 +1021,17 @@ def compare_responses(
             # For non-tool tests or when proxy lacks tool use: missing text is a failure
             print("\n❌ FAILURE: Anthropic has text content but proxy does not")
             test_passed = False
-            failure_reasons.append("Missing text content (Anthropic has text but proxy doesn't)")
+            failure_reasons.append(
+                "Missing text content (Anthropic has text but proxy doesn't)"
+            )
     elif anthropic_text is None and proxy_text is not None:
-        print("\n✅ Proxy has text content but Anthropic does not (acceptable - extra functionality)")
+        print(
+            "\n✅ Proxy has text content but Anthropic does not (acceptable - extra functionality)"
+        )
     elif anthropic_text is None and proxy_text is None:
-        new_warning = "Neither response has text content (expected for tool-only responses)"
+        new_warning = (
+            "Neither response has text content (expected for tool-only responses)"
+        )
         print(f"\n⚠️ WARNING: {new_warning}")
         if warning_reason:
             warning_reason += f"; {new_warning}"
@@ -1111,45 +1083,51 @@ def test_direct_conversion(
     )
 
     # Log the actual prompts/messages for debugging
-    if 'messages' in serialized_data:
+    if "messages" in serialized_data:
         print("\n--- PROMPTS/MESSAGES ---")
-        for i, message in enumerate(serialized_data['messages']):
-            role = message.get('role', 'unknown')
-            content = message.get('content', '')
+        for i, message in enumerate(serialized_data["messages"]):
+            role = message.get("role", "unknown")
+            content = message.get("content", "")
 
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i+1} ({role}):")
+                print(f"Message {i + 1} ({role}):")
                 for j, block in enumerate(content):
-                    if block.get('type') == 'text':
-                        text_content = block.get('text', '')[:200]  # Limit to first 200 chars
-                        if len(block.get('text', '')) > 200:
+                    if block.get("type") == "text":
+                        text_content = block.get("text", "")[
+                            :200
+                        ]  # Limit to first 200 chars
+                        if len(block.get("text", "")) > 200:
                             text_content += "..."
-                        print(f"  Block {j+1} (text): {text_content}")
+                        print(f"  Block {j + 1} (text): {text_content}")
                     else:
-                        print(f"  Block {j+1} ({block.get('type', 'unknown')}): {str(block)[:100]}...")
+                        print(
+                            f"  Block {j + 1} ({block.get('type', 'unknown')}): {str(block)[:100]}..."
+                        )
             elif isinstance(content, str):
                 # Simple string content
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i+1} ({role}): {text_preview}")
+                print(f"Message {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i+1} ({role}): {str(content)[:100]}...")
+                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
-    if 'system' in serialized_data:
-        system_preview = str(serialized_data['system'])[:200]
-        if len(str(serialized_data['system'])) > 200:
+    if "system" in serialized_data:
+        system_preview = str(serialized_data["system"])[:200]
+        if len(str(serialized_data["system"])) > 200:
             system_preview += "..."
         print(f"\nSystem message: {system_preview}")
 
     proxy_data = serialized_data.copy()
 
     try:
-        print(f"\nSending to Proxy Test Conversion API ({serialized_data.get('model', 'unknown')})...")
+        print(
+            f"\nSending to Proxy Test Conversion API ({serialized_data.get('model', 'unknown')})..."
+        )
         proxy_response = get_response(PROXY_TEST_API_URL, proxy_headers, proxy_data)
         print(f"Proxy status code: {proxy_response.status_code}")
         if proxy_response.status_code != 200:
@@ -1160,7 +1138,9 @@ def test_direct_conversion(
             # For direct conversion tests, always use Claude model for Anthropic comparison
             anthropic_data = serialized_data.copy()
             anthropic_data["model"] = MODEL
-            print(f"Direct conversion test: Proxy will use {serialized_data.get('model')}, Anthropic will use {MODEL}")
+            print(
+                f"Direct conversion test: Proxy will use {serialized_data.get('model')}, Anthropic will use {MODEL}"
+            )
 
             print("\nSending to Anthropic API...")
             anthropic_response = get_response(
@@ -1172,7 +1152,11 @@ def test_direct_conversion(
                 return False, None
 
             # Check if this is a thinking test
-            has_thinking = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            has_thinking = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
             # Compare the responses
             result, warning = compare_responses(
@@ -1222,11 +1206,17 @@ def test_direct_conversion(
             has_thinking = any(item.get("type") == "thinking" for item in proxy_content)
 
             # Check if this is a thinking test
-            is_thinking_test = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            is_thinking_test = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
             if is_thinking_test:
                 if not has_thinking:
-                    assert False, "Thinking test but proxy response does not contain thinking block"
+                    assert False, (
+                        "Thinking test but proxy response does not contain thinking block"
+                    )
                 else:
                     # Find thinking content
                     thinking_content = None
@@ -1235,7 +1225,9 @@ def test_direct_conversion(
                             thinking_content = item.get("thinking")
                             break
                     thinking_length = len(thinking_content) if thinking_content else 0
-                    print(f"\n✅ Proxy response contains thinking block ({thinking_length} characters)")
+                    print(
+                        f"\n✅ Proxy response contains thinking block ({thinking_length} characters)"
+                    )
 
             if check_tools:
                 if not has_tool_use and not has_text:
@@ -1277,10 +1269,16 @@ def test_request(
     print(f"\n{'=' * 20} RUNNING TEST: {test_name} {'=' * 20}")
 
     # Check if this is a third-party model (not the default MODEL)
-    model_name = getattr(request_data, 'model', '') if hasattr(request_data, 'model') else ''
+    model_name = (
+        getattr(request_data, "model", "") if hasattr(request_data, "model") else ""
+    )
     if model_name != MODEL:
-        print(f"Third-party model ({model_name}) detected, using direct conversion test endpoint")
-        return test_direct_conversion(test_name, request_data, check_tools, compare_with_anthropic=False)
+        print(
+            f"Third-party model ({model_name}) detected, using direct conversion test endpoint"
+        )
+        return test_direct_conversion(
+            test_name, request_data, check_tools, compare_with_anthropic=False
+        )
 
     # Convert Pydantic models to dictionaries for serialization
     serialized_data = serialize_request_data(request_data)
@@ -1291,38 +1289,42 @@ def test_request(
     )
 
     # Log the actual prompts/messages for debugging
-    if 'messages' in serialized_data:
+    if "messages" in serialized_data:
         print("\n--- PROMPTS/MESSAGES ---")
-        for i, message in enumerate(serialized_data['messages']):
-            role = message.get('role', 'unknown')
-            content = message.get('content', '')
+        for i, message in enumerate(serialized_data["messages"]):
+            role = message.get("role", "unknown")
+            content = message.get("content", "")
 
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i+1} ({role}):")
+                print(f"Message {i + 1} ({role}):")
                 for j, block in enumerate(content):
-                    if block.get('type') == 'text':
-                        text_content = block.get('text', '')[:200]  # Limit to first 200 chars
-                        if len(block.get('text', '')) > 200:
+                    if block.get("type") == "text":
+                        text_content = block.get("text", "")[
+                            :200
+                        ]  # Limit to first 200 chars
+                        if len(block.get("text", "")) > 200:
                             text_content += "..."
-                        print(f"  Block {j+1} (text): {text_content}")
+                        print(f"  Block {j + 1} (text): {text_content}")
                     else:
-                        print(f"  Block {j+1} ({block.get('type', 'unknown')}): {str(block)[:100]}...")
+                        print(
+                            f"  Block {j + 1} ({block.get('type', 'unknown')}): {str(block)[:100]}..."
+                        )
             elif isinstance(content, str):
                 # Simple string content
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i+1} ({role}): {text_preview}")
+                print(f"Message {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i+1} ({role}): {str(content)[:100]}...")
+                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
-    if 'system' in serialized_data:
-        system_preview = str(serialized_data['system'])[:200]
-        if len(str(serialized_data['system'])) > 200:
+    if "system" in serialized_data:
+        system_preview = str(serialized_data["system"])[:200]
+        if len(str(serialized_data["system"])) > 200:
             system_preview += "..."
         print(f"\nSystem message: {system_preview}")
 
@@ -1349,7 +1351,11 @@ def test_request(
                 return False, None
 
             # Check if this is a thinking test
-            has_thinking = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            has_thinking = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
             # Compare the responses
             result, warning = compare_responses(
@@ -1399,11 +1405,17 @@ def test_request(
             has_thinking = any(item.get("type") == "thinking" for item in proxy_content)
 
             # Check if this is a thinking test
-            is_thinking_test = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            is_thinking_test = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
             if is_thinking_test:
                 if not has_thinking:
-                    assert False, "Thinking test but proxy response does not contain thinking block"
+                    assert False, (
+                        "Thinking test but proxy response does not contain thinking block"
+                    )
                 else:
                     # Find thinking content
                     thinking_content = None
@@ -1412,7 +1424,9 @@ def test_request(
                             thinking_content = item.get("thinking")
                             break
                     thinking_length = len(thinking_content) if thinking_content else 0
-                    print(f"\n✅ Proxy response contains thinking block ({thinking_length} characters)")
+                    print(
+                        f"\n✅ Proxy response contains thinking block ({thinking_length} characters)"
+                    )
 
             if check_tools:
                 if not has_tool_use and not has_text:
@@ -1538,7 +1552,9 @@ class StreamStats:
             thinking_preview = "\n".join(
                 self.thinking_content.strip().split("\n")[:max_preview_lines]
             )
-            print(f"Thinking preview ({len(self.thinking_content)} chars):\n{thinking_preview}")
+            print(
+                f"Thinking preview ({len(self.thinking_content)} chars):\n{thinking_preview}"
+            )
         elif self.has_thinking:
             print("Thinking detected but no content extracted")
 
@@ -1569,7 +1585,7 @@ async def stream_response(url, headers, data, stream_name):
             request_data["stream"] = True
 
             # Use longer timeout for thinking requests
-            timeout = 180 if request_data.get('thinking') else 30
+            timeout = 180 if request_data.get("thinking") else 30
 
             start_time = time.time()
             async with client.stream(
@@ -1654,7 +1670,9 @@ async def stream_response(url, headers, data, stream_name):
     return stats, error
 
 
-def compare_stream_stats(anthropic_stats, proxy_stats, test_name=None, has_thinking=False):
+def compare_stream_stats(
+    anthropic_stats, proxy_stats, test_name=None, has_thinking=False
+):
     """
     Compare the streaming statistics using Anthropic as ground truth.
 
@@ -1693,22 +1711,42 @@ def compare_stream_stats(anthropic_stats, proxy_stats, test_name=None, has_think
         # Display ground truth thinking content from Anthropic stream
         if anthropic_stats.has_thinking and anthropic_stats.thinking_content:
             anthropic_thinking_length = len(anthropic_stats.thinking_content)
-            print(f"\n📚 Anthropic (ground truth) stream thinking blocks ({anthropic_thinking_length} characters)")
+            print(
+                f"\n📚 Anthropic (ground truth) stream thinking blocks ({anthropic_thinking_length} characters)"
+            )
             if anthropic_thinking_length > 0:
-                anthropic_thinking_preview = anthropic_stats.thinking_content[:200] + "..." if len(anthropic_stats.thinking_content) > 200 else anthropic_stats.thinking_content
-                print(f"Anthropic stream thinking preview: {anthropic_thinking_preview}")
+                anthropic_thinking_preview = (
+                    anthropic_stats.thinking_content[:200] + "..."
+                    if len(anthropic_stats.thinking_content) > 200
+                    else anthropic_stats.thinking_content
+                )
+                print(
+                    f"Anthropic stream thinking preview: {anthropic_thinking_preview}"
+                )
         else:
             print("\n📚 Anthropic (ground truth) stream has no thinking blocks")
 
         if not proxy_stats.has_thinking:
-            print("❌ FAILURE: Thinking test but proxy stream does not contain thinking blocks")
+            print(
+                "❌ FAILURE: Thinking test but proxy stream does not contain thinking blocks"
+            )
             test_passed = False
-            failure_reasons.append("Missing thinking blocks (thinking enabled but proxy doesn't provide thinking content)")
+            failure_reasons.append(
+                "Missing thinking blocks (thinking enabled but proxy doesn't provide thinking content)"
+            )
         else:
-            thinking_length = len(proxy_stats.thinking_content) if proxy_stats.thinking_content else 0
-            print(f"✅ Proxy stream contains thinking blocks ({thinking_length} characters)")
+            thinking_length = (
+                len(proxy_stats.thinking_content) if proxy_stats.thinking_content else 0
+            )
+            print(
+                f"✅ Proxy stream contains thinking blocks ({thinking_length} characters)"
+            )
             if thinking_length > 0 and proxy_stats.thinking_content:
-                thinking_preview = proxy_stats.thinking_content[:200] + "..." if len(proxy_stats.thinking_content) > 200 else proxy_stats.thinking_content
+                thinking_preview = (
+                    proxy_stats.thinking_content[:200] + "..."
+                    if len(proxy_stats.thinking_content) > 200
+                    else proxy_stats.thinking_content
+                )
                 print(f"Proxy stream thinking preview: {thinking_preview}")
 
     # Compare content using ground truth logic (with tolerance for tool-focused tests)
@@ -1735,23 +1773,33 @@ def compare_stream_stats(anthropic_stats, proxy_stats, test_name=None, has_think
         else:
             print("\n❌ FAILURE: Anthropic has text content but proxy does not")
             test_passed = False
-            failure_reasons.append("Missing text content (Anthropic has text but proxy doesn't)")
+            failure_reasons.append(
+                "Missing text content (Anthropic has text but proxy doesn't)"
+            )
     elif not anthropic_stats.text_content and proxy_stats.text_content:
-        print("\n✅ Proxy has text content but Anthropic does not (acceptable - extra functionality)")
+        print(
+            "\n✅ Proxy has text content but Anthropic does not (acceptable - extra functionality)"
+        )
 
     # Compare tool use using ground truth logic
     if anthropic_stats.has_tool_use and proxy_stats.has_tool_use:
         print("✅ Both have tool use")
     elif anthropic_stats.has_tool_use and not proxy_stats.has_tool_use:
         if is_behavioral_test:
-            print("⚠️ WARNING: Anthropic has tool use but proxy does not (behavioral difference)")
+            print(
+                "⚠️ WARNING: Anthropic has tool use but proxy does not (behavioral difference)"
+            )
             warning_reason = "Different tool usage pattern: Anthropic uses tools but proxy calculates directly"
         else:
             print("❌ FAILURE: Anthropic has tool use but proxy does not")
             test_passed = False
-            failure_reasons.append("Missing tool use (Anthropic has tool use but proxy doesn't)")
+            failure_reasons.append(
+                "Missing tool use (Anthropic has tool use but proxy doesn't)"
+            )
     elif not anthropic_stats.has_tool_use and proxy_stats.has_tool_use:
-        print("✅ Proxy has tool use but Anthropic does not (acceptable - extra functionality)")
+        print(
+            "✅ Proxy has tool use but Anthropic does not (acceptable - extra functionality)"
+        )
 
     # Check for errors
     if proxy_stats.has_error:
@@ -1783,38 +1831,42 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
     )
 
     # Log the actual prompts/messages for debugging
-    if 'messages' in serialized_data:
+    if "messages" in serialized_data:
         print("\n--- PROMPTS/MESSAGES ---")
-        for i, message in enumerate(serialized_data['messages']):
-            role = message.get('role', 'unknown')
-            content = message.get('content', '')
+        for i, message in enumerate(serialized_data["messages"]):
+            role = message.get("role", "unknown")
+            content = message.get("content", "")
 
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i+1} ({role}):")
+                print(f"Message {i + 1} ({role}):")
                 for j, block in enumerate(content):
-                    if block.get('type') == 'text':
-                        text_content = block.get('text', '')[:200]  # Limit to first 200 chars
-                        if len(block.get('text', '')) > 200:
+                    if block.get("type") == "text":
+                        text_content = block.get("text", "")[
+                            :200
+                        ]  # Limit to first 200 chars
+                        if len(block.get("text", "")) > 200:
                             text_content += "..."
-                        print(f"  Block {j+1} (text): {text_content}")
+                        print(f"  Block {j + 1} (text): {text_content}")
                     else:
-                        print(f"  Block {j+1} ({block.get('type', 'unknown')}): {str(block)[:100]}...")
+                        print(
+                            f"  Block {j + 1} ({block.get('type', 'unknown')}): {str(block)[:100]}..."
+                        )
             elif isinstance(content, str):
                 # Simple string content
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i+1} ({role}): {text_preview}")
+                print(f"Message {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i+1} ({role}): {str(content)[:100]}...")
+                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
-    if 'system' in serialized_data:
-        system_preview = str(serialized_data['system'])[:200]
-        if len(str(serialized_data['system'])) > 200:
+    if "system" in serialized_data:
+        system_preview = str(serialized_data["system"])[:200]
+        if len(str(serialized_data["system"])) > 200:
             system_preview += "..."
         print(f"\nSystem message: {system_preview}")
 
@@ -1841,9 +1893,11 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
         # Check if this is a third-party model (not the default MODEL)
         model_name = serialized_data.get("model", "")
         if model_name != MODEL:
-            print(f"Third-party model streaming test ({model_name}): Skipping comparison with Anthropic API")
+            print(
+                f"Third-party model streaming test ({model_name}): Skipping comparison with Anthropic API"
+            )
             compare_with_anthropic = False
-        
+
         if compare_with_anthropic:
             anthropic_data = serialized_data.copy()
             if not anthropic_data.get("stream"):
@@ -1864,9 +1918,15 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
             anthropic_stats.summarize()
 
             # Check if this is a thinking test
-            has_thinking = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            has_thinking = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
-            result, warning = compare_stream_stats(anthropic_stats, proxy_stats, test_name, has_thinking)
+            result, warning = compare_stream_stats(
+                anthropic_stats, proxy_stats, test_name, has_thinking
+            )
 
         else:  # Custom model, no comparison
             print("\n(Custom model test, skipping comparison with Anthropic stream)")
@@ -1878,15 +1938,27 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
                 return False, None
 
             # Check if this is a thinking test for custom model
-            is_thinking_test = hasattr(request_data, 'thinking') and request_data.thinking is not None and getattr(request_data.thinking, 'type', None) == 'enabled'
+            is_thinking_test = (
+                hasattr(request_data, "thinking")
+                and request_data.thinking is not None
+                and getattr(request_data.thinking, "type", None) == "enabled"
+            )
 
             if is_thinking_test:
                 if not proxy_stats.has_thinking:
-                    print("\n❌ Test failed! Thinking test but proxy stream does not contain thinking blocks")
+                    print(
+                        "\n❌ Test failed! Thinking test but proxy stream does not contain thinking blocks"
+                    )
                     return False, None
                 else:
-                    thinking_length = len(proxy_stats.thinking_content) if proxy_stats.thinking_content else 0
-                    print(f"\n✅ Proxy stream contains thinking blocks ({thinking_length} characters)")
+                    thinking_length = (
+                        len(proxy_stats.thinking_content)
+                        if proxy_stats.thinking_content
+                        else 0
+                    )
+                    print(
+                        f"\n✅ Proxy stream contains thinking blocks ({thinking_length} characters)"
+                    )
 
             result = True
             warning = None
@@ -1920,8 +1992,12 @@ async def run_tests(args):
     if args.list_tests:
         print("Available tests:")
         for test_name, test_data in TEST_SCENARIOS.items():
-            test_type = "streaming" if (hasattr(test_data, 'stream') and test_data.stream) else "non-streaming"
-            has_tools = hasattr(test_data, 'tools') and test_data.tools is not None
+            test_type = (
+                "streaming"
+                if (hasattr(test_data, "stream") and test_data.stream)
+                else "non-streaming"
+            )
+            has_tools = hasattr(test_data, "tools") and test_data.tools is not None
             tools_info = " (with tools)" if has_tools else " (no tools)"
             print(f"  {test_name:<20} - {test_type}{tools_info}")
         return True
@@ -1942,9 +2018,13 @@ async def run_tests(args):
             # Override model in test scenarios (but skip custom models)
             for test_name, test_data in TEST_SCENARIOS.items():
                 # Don't override custom models with --model parameter
-                current_model = getattr(test_data, 'model', '') if hasattr(test_data, 'model') else test_data.get('model', '')
+                current_model = (
+                    getattr(test_data, "model", "")
+                    if hasattr(test_data, "model")
+                    else test_data.get("model", "")
+                )
                 if not current_model.startswith("custom/"):
-                    if hasattr(test_data, 'model'):
+                    if hasattr(test_data, "model"):
                         test_data.model = args.model
                     else:
                         TEST_SCENARIOS[test_name]["model"] = args.model
@@ -1974,7 +2054,11 @@ async def run_tests(args):
 
             test_names = [args.test]
         else:  # --only
-            test_names = [name for name in TEST_SCENARIOS.keys() if args.only.lower() in name.lower()]
+            test_names = [
+                name
+                for name in TEST_SCENARIOS.keys()
+                if args.only.lower() in name.lower()
+            ]
             if not test_names:
                 print(f"Error: No tests found containing keyword '{args.only}'")
                 print("Available tests:")
@@ -1991,7 +2075,9 @@ async def run_tests(args):
             # Run non-streaming version if not streaming-only
             if not args.streaming_only and not test_name.endswith("_stream"):
                 print(f"\n\n=========== RUNNING TEST: {test_name} ===========\n")
-                check_tools = hasattr(test_data, 'tools') and test_data.tools is not None
+                check_tools = (
+                    hasattr(test_data, "tools") and test_data.tools is not None
+                )
                 result, warning = test_request(
                     test_name,
                     test_data,
@@ -2004,7 +2090,9 @@ async def run_tests(args):
 
             # Run streaming version if not no-streaming
             if not args.no_streaming and test_name.endswith("_stream"):
-                print(f"\n\n=========== RUNNING STREAMING TEST: {test_name} ===========\n")
+                print(
+                    f"\n\n=========== RUNNING STREAMING TEST: {test_name} ===========\n"
+                )
                 # Create streaming version of test data
                 if isinstance(test_data, MessagesRequest):
                     streaming_data = test_data.model_copy(update={"stream": True})
@@ -2012,7 +2100,9 @@ async def run_tests(args):
                     streaming_data = test_data.copy()
                     streaming_data["stream"] = True
                 result, warning = await test_streaming(
-                    test_name, streaming_data, compare_with_anthropic=compare_with_anthropic
+                    test_name,
+                    streaming_data,
+                    compare_with_anthropic=compare_with_anthropic,
                 )
                 results[f"{test_name}"] = result
                 if warning:
@@ -2026,23 +2116,29 @@ async def run_tests(args):
             print("\n\n=========== RUNNING NON-STREAMING TESTS ===========\n")
             for test_name, test_data in TEST_SCENARIOS.items():
                 # Skip streaming tests
-                if hasattr(test_data, 'stream') and test_data.stream:
+                if hasattr(test_data, "stream") and test_data.stream:
                     continue
 
                 # Skip tool tests if requested
-                if args.simple and hasattr(test_data, 'tools') and test_data.tools:
+                if args.simple and hasattr(test_data, "tools") and test_data.tools:
                     continue
 
                 # Skip non-tool tests if tools_only
-                if args.tools_only and (not hasattr(test_data, 'tools') or not test_data.tools):
+                if args.tools_only and (
+                    not hasattr(test_data, "tools") or not test_data.tools
+                ):
                     continue
 
                 # Skip non-thinking tests if thinking_only
-                if args.thinking_only and (not hasattr(test_data, 'thinking') or not test_data.thinking):
+                if args.thinking_only and (
+                    not hasattr(test_data, "thinking") or not test_data.thinking
+                ):
                     continue
 
                 # Run the test
-                check_tools = hasattr(test_data, 'tools') and test_data.tools is not None
+                check_tools = (
+                    hasattr(test_data, "tools") and test_data.tools is not None
+                )
                 result, warning = test_request(
                     test_name,
                     test_data,
@@ -2058,19 +2154,25 @@ async def run_tests(args):
             print("\n\n=========== RUNNING STREAMING TESTS ===========\n")
             for test_name, test_data in TEST_SCENARIOS.items():
                 # Only select streaming tests, or force streaming
-                if not (hasattr(test_data, 'stream') and test_data.stream) and not test_name.endswith("_stream"):
+                if not (
+                    hasattr(test_data, "stream") and test_data.stream
+                ) and not test_name.endswith("_stream"):
                     continue
 
                 # Skip tool tests if requested
-                if args.simple and hasattr(test_data, 'tools') and test_data.tools:
+                if args.simple and hasattr(test_data, "tools") and test_data.tools:
                     continue
 
                 # Skip non-tool tests if tools_only
-                if args.tools_only and (not hasattr(test_data, 'tools') or not test_data.tools):
+                if args.tools_only and (
+                    not hasattr(test_data, "tools") or not test_data.tools
+                ):
                     continue
 
                 # Skip non-thinking tests if thinking_only
-                if args.thinking_only and (not hasattr(test_data, 'thinking') or not test_data.thinking):
+                if args.thinking_only and (
+                    not hasattr(test_data, "thinking") or not test_data.thinking
+                ):
                     continue
 
                 # Run the streaming test
@@ -2098,17 +2200,23 @@ async def run_tests(args):
     if warnings:
         print(f"\n⚠️ BEHAVIORAL DIFFERENCES DETECTED ({len(warnings)} warnings)")
         print("=" * 60)
-        print("The following tests passed but showed different behavior compared to Claude:")
+        print(
+            "The following tests passed but showed different behavior compared to Claude:"
+        )
         for test_name, warning_msg in warnings.items():
             print(f"  • {test_name}: {warning_msg}")
-        print("\nNote: These warnings indicate that your proxy model handles tool usage")
+        print(
+            "\nNote: These warnings indicate that your proxy model handles tool usage"
+        )
         print("differently than Claude models. This is expected behavior when using")
         print("different underlying models like DeepSeek, which may calculate simple")
         print("math directly instead of using tools.")
 
     if passed == total:
         if warnings:
-            print(f"\n🎉 All tests passed! ({len(warnings)} behavioral differences noted)")
+            print(
+                f"\n🎉 All tests passed! ({len(warnings)} behavioral differences noted)"
+            )
         else:
             print("\n🎉 All tests passed!")
         return True
@@ -2135,7 +2243,9 @@ async def main():
         "--simple", action="store_true", help="Only run simple tests (no tools)"
     )
     parser.add_argument("--tools-only", action="store_true", help="Only run tool tests")
-    parser.add_argument("--thinking-only", action="store_true", help="Only run thinking tests")
+    parser.add_argument(
+        "--thinking-only", action="store_true", help="Only run thinking tests"
+    )
     parser.add_argument(
         "--test",
         type=str,

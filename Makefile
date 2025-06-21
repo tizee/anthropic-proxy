@@ -9,4 +9,4 @@ lint:
 	ruff check server.py --select F,E,W --ignore E501 --fix
 
 format:
-	ruff format server.py
+	ruff format server.py tests.py
