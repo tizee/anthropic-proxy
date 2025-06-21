@@ -943,7 +943,9 @@ def _extract_system_content(system) -> str:
 # The above functions have been refactored into models.py for better organization
 
 
-def _compare_request_data(claude_request: MessagesRequest, openai_request: Dict[str, Any]) -> None:
+def _compare_request_data(
+    claude_request: MessagesRequest, openai_request: Dict[str, Any]
+) -> None:
     """Compare original Claude request with converted OpenAI request and log differences."""
     try:
         # Count Claude request data
@@ -956,25 +958,41 @@ def _compare_request_data(claude_request: MessagesRequest, openai_request: Dict[
         openai_tools_count = len(openai_request.get("tools", []))
         openai_messages_count = len(openai_request.get("messages", []))
         openai_has_tool_choice = "tool_choice" in openai_request
-        openai_has_system = any(msg.get("role") == "system" for msg in openai_request.get("messages", []))
+        openai_has_system = any(
+            msg.get("role") == "system" for msg in openai_request.get("messages", [])
+        )
 
         # Log comparison
-        logger.info(f"REQUEST CONVERSION COMPARISON:")
-        logger.info(f"  Claude -> OpenAI Tools: {claude_tools_count} -> {openai_tools_count}")
-        logger.info(f"  Claude -> OpenAI Messages: {claude_messages_count} -> {openai_messages_count}")
-        logger.info(f"  Claude -> OpenAI Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}")
-        logger.info(f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}")
+        logger.info("REQUEST CONVERSION COMPARISON:")
+        logger.info(
+            f"  Claude -> OpenAI Tools: {claude_tools_count} -> {openai_tools_count}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI Messages: {claude_messages_count} -> {openai_messages_count}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}"
+        )
 
         # Check for mismatches and log errors
         errors = []
         if claude_tools_count != openai_tools_count:
-            errors.append(f"Tools count mismatch: Claude({claude_tools_count}) != OpenAI({openai_tools_count})")
+            errors.append(
+                f"Tools count mismatch: Claude({claude_tools_count}) != OpenAI({openai_tools_count})"
+            )
         if claude_has_tool_choice != openai_has_tool_choice:
-            errors.append(f"Tool choice mismatch: Claude({claude_has_tool_choice}) != OpenAI({openai_has_tool_choice})")
+            errors.append(
+                f"Tool choice mismatch: Claude({claude_has_tool_choice}) != OpenAI({openai_has_tool_choice})"
+            )
 
         # Note: Messages count may differ if system message is extracted/merged
         if claude_messages_count != openai_messages_count and not claude_has_system:
-            errors.append(f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})")
+            errors.append(
+                f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})"
+            )
 
         if errors:
             logger.error(f"REQUEST CONVERSION ERRORS: {'; '.join(errors)}")
@@ -1004,20 +1022,38 @@ def _compare_response_data(openai_response, claude_response: MessagesResponse) -
                 openai_finish_reason = choice.finish_reason
 
         # Count Claude response data
-        claude_content_blocks = len(claude_response.content) if claude_response.content else 0
-        claude_tool_use_blocks = sum(1 for block in claude_response.content if hasattr(block, 'type') and block.type == 'tool_use') if claude_response.content else 0
+        claude_content_blocks = (
+            len(claude_response.content) if claude_response.content else 0
+        )
+        claude_tool_use_blocks = (
+            sum(
+                1
+                for block in claude_response.content
+                if hasattr(block, "type") and block.type == "tool_use"
+            )
+            if claude_response.content
+            else 0
+        )
         claude_stop_reason = claude_response.stop_reason
 
         # Log comparison
-        logger.info(f"RESPONSE CONVERSION COMPARISON:")
-        logger.info(f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}")
-        logger.info(f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}")
-        logger.info(f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}")
+        logger.info("RESPONSE CONVERSION COMPARISON:")
+        logger.info(
+            f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}"
+        )
 
         # Check for mismatches and log errors
         errors = []
         if openai_tool_calls != claude_tool_use_blocks:
-            errors.append(f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})")
+            errors.append(
+                f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})"
+            )
 
         if errors:
             logger.error(f"RESPONSE CONVERSION ERRORS: {'; '.join(errors)}")
@@ -1031,7 +1067,7 @@ def _compare_response_data(openai_response, claude_response: MessagesResponse) -
 def _compare_streaming_data(openai_chunks_count: int, claude_events_count: int) -> None:
     """Compare streaming data counts and log differences."""
     try:
-        logger.info(f"STREAMING CONVERSION COMPARISON:")
+        logger.info("STREAMING CONVERSION COMPARISON:")
         logger.info(f"  OpenAI Chunks Received: {openai_chunks_count}")
         logger.info(f"  Claude Events Estimated: {claude_events_count}")
 
@@ -1039,13 +1075,19 @@ def _compare_streaming_data(openai_chunks_count: int, claude_events_count: int) 
         # Typical ratios: 1 OpenAI chunk -> 2-4 Claude events (start, delta, stop, message_delta)
         if openai_chunks_count > 0:
             ratio = claude_events_count / openai_chunks_count
-            logger.info(f"  Conversion Ratio: {ratio:.1f} Claude events per OpenAI chunk")
+            logger.info(
+                f"  Conversion Ratio: {ratio:.1f} Claude events per OpenAI chunk"
+            )
 
             # Reasonable range: 1.5-6 events per chunk (depending on content complexity)
             if ratio < 1.5:
-                logger.warning("STREAMING CONVERSION WARNING: Low event ratio - may indicate missing events")
+                logger.warning(
+                    "STREAMING CONVERSION WARNING: Low event ratio - may indicate missing events"
+                )
             elif ratio > 6.0:
-                logger.warning("STREAMING CONVERSION WARNING: High event ratio - may indicate duplicate events")
+                logger.warning(
+                    "STREAMING CONVERSION WARNING: High event ratio - may indicate duplicate events"
+                )
             else:
                 logger.info("STREAMING CONVERSION: Event ratio within expected range ✓")
         else:
@@ -1079,7 +1121,9 @@ def convert_anthropic_to_openai_request(
                         has_tool_use = True
                     elif block.get("type") == "tool_result":
                         has_tool_result = True
-        logger.debug(f"🔄 Message {i} ({msg.role}): tool_use={has_tool_use}, tool_result={has_tool_result}")
+        logger.debug(
+            f"🔄 Message {i} ({msg.role}): tool_use={has_tool_use}, tool_result={has_tool_result}"
+        )
 
     # Build OpenAI messages with type validation
     openai_messages = []
@@ -1109,29 +1153,43 @@ def convert_anthropic_to_openai_request(
             pending_tool_messages = []
 
             for block in msg.content:
-                if isinstance(block, ContentBlockText) or (isinstance(block, dict) and block.get("type") == "text"):
-                    text_content = block.text if hasattr(block, 'text') else block.get("text", "")
+                if isinstance(block, ContentBlockText) or (
+                    isinstance(block, dict) and block.get("type") == "text"
+                ):
+                    text_content = (
+                        block.text if hasattr(block, "text") else block.get("text", "")
+                    )
                     text_parts.append(text_content)
-                elif isinstance(block, ContentBlockImage) or (isinstance(block, dict) and block.get("type") == "image"):
+                elif isinstance(block, ContentBlockImage) or (
+                    isinstance(block, dict) and block.get("type") == "image"
+                ):
                     # Handle image blocks if needed
-                    if isinstance(block, ContentBlockImage) and hasattr(block, 'source'):
+                    if isinstance(block, ContentBlockImage) and hasattr(
+                        block, "source"
+                    ):
                         source = block.source
                     elif isinstance(block, dict) and "source" in block:
                         source = block["source"]
                     else:
                         continue
-                    
-                    if (isinstance(source, dict) and 
-                        source.get("type") == "base64" and
-                        "media_type" in source and "data" in source):
-                        image_parts.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{source['media_type']};base64,{source['data']}"
+
+                    if (
+                        isinstance(source, dict)
+                        and source.get("type") == "base64"
+                        and "media_type" in source
+                        and "data" in source
+                    ):
+                        image_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{source['media_type']};base64,{source['data']}"
+                                },
                             }
-                        })
-                elif (isinstance(block, ContentBlockToolResult) or 
-                      (isinstance(block, dict) and block.get("type") == "tool_result")):
+                        )
+                elif isinstance(block, ContentBlockToolResult) or (
+                    isinstance(block, dict) and block.get("type") == "tool_result"
+                ):
                     # CRITICAL: Split user message when tool_result is encountered
                     if text_parts or image_parts:
                         content_parts = []
@@ -1139,35 +1197,41 @@ def convert_anthropic_to_openai_request(
                         if text_content:
                             content_parts.append({"type": "text", "text": text_content})
                         content_parts.extend(image_parts)
-                        
+
                         if content_parts:
-                            if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                                openai_messages.append({
-                                    "role": "user",
-                                    "content": content_parts[0]["text"]
-                                })
+                            if (
+                                len(content_parts) == 1
+                                and content_parts[0]["type"] == "text"
+                            ):
+                                openai_messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": content_parts[0]["text"],
+                                    }
+                                )
                             else:
-                                openai_messages.append({
-                                    "role": "user", 
-                                    "content": content_parts
-                                })
+                                openai_messages.append(
+                                    {"role": "user", "content": content_parts}
+                                )
                         text_parts.clear()
                         image_parts.clear()
 
-                    # Add tool result as separate "tool" role message  
+                    # Add tool result as separate "tool" role message
                     if isinstance(block, ContentBlockToolResult):
                         tool_use_id = block.tool_use_id
                         content = block.content
                     else:
                         tool_use_id = block.get("tool_use_id", "")
                         content = block.get("content", "")
-                    
+
                     parsed_content = _parse_tool_result_content(content)
-                    pending_tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_use_id,
-                        "content": parsed_content
-                    })
+                    pending_tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_use_id,
+                            "content": parsed_content,
+                        }
+                    )
 
             # Add any remaining text/image content
             if text_parts or image_parts:
@@ -1176,42 +1240,42 @@ def convert_anthropic_to_openai_request(
                 if text_content:
                     content_parts.append({"type": "text", "text": text_content})
                 content_parts.extend(image_parts)
-                
+
                 if content_parts:
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                        openai_messages.append({
-                            "role": "user",
-                            "content": content_parts[0]["text"]
-                        })
+                        openai_messages.append(
+                            {"role": "user", "content": content_parts[0]["text"]}
+                        )
                     else:
-                        openai_messages.append({
-                            "role": "user",
-                            "content": content_parts
-                        })
-            
+                        openai_messages.append(
+                            {"role": "user", "content": content_parts}
+                        )
+
             # Add any pending tool messages
             openai_messages.extend(pending_tool_messages)
-            
+
         elif msg.role == "assistant":
             # Extract tool calls and text content
             tool_calls = msg.extract_tool_calls()
             text_content = msg.extract_text_content()
 
             assistant_msg = {"role": "assistant"}
-            
+
             # Handle content for assistant messages
             if text_content:
                 assistant_msg["content"] = text_content
             else:
                 assistant_msg["content"] = None
-                
+
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
-                
+
             # Only add message if it has actual content or tool calls
             if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
                 openai_messages.append(assistant_msg)
-                logger.debug(f"🔧 Assistant message: content={bool(text_content)}, tool_calls={len(tool_calls) if tool_calls else 0}")
+                logger.debug(
+                    f"🔧 Assistant message: content={bool(text_content)}, tool_calls={len(tool_calls) if tool_calls else 0}"
+                )
         else:
             # Fallback for other roles
             text_content = msg.extract_text_content()
@@ -1243,27 +1307,20 @@ def convert_anthropic_to_openai_request(
                         tool_params["function"]["parameters"] = tool.input_schema
 
                 # Validate using OpenAI SDK type
-                logger.debug(
-                    f"original Claude Tool format: {tool}"
-                )
-                logger.debug(
-                    f"before validate tool params: {tool_params}"
-                )
+                logger.debug(f"original Claude Tool format: {tool}")
+                logger.debug(f"before validate tool params: {tool_params}")
                 validated_tool = ChatCompletionTool.model_validate(tool_params)
-                logger.debug(
-                    f"after validate tool params: {validated_tool}"
-                )
+                logger.debug(f"after validate tool params: {validated_tool}")
                 openai_tools.append(validated_tool.model_dump(exclude_none=True))
-                logger.debug(
-                    f"openai_tools append: {validated_tool}"
-                )
+                logger.debug(f"openai_tools append: {validated_tool}")
 
     # Handle tool_choice with type validation
     tool_choice = None
     if request.tool_choice:
         tool_choice = request.tool_choice.to_openai()
         logger.debug(
-            f"openai tool choice param: {tool_choice} <- {request.tool_choice}")
+            f"openai tool choice param: {tool_choice} <- {request.tool_choice}"
+        )
 
     # Build complete request with OpenAI SDK type validation
     request_params = {
@@ -1289,7 +1346,9 @@ def convert_anthropic_to_openai_request(
         role = msg.get("role", "unknown")
         has_tool_calls = "tool_calls" in msg
         content_len = len(str(msg.get("content", ""))) if msg.get("content") else 0
-        logger.debug(f"🔄 Output message {i} ({role}): content_len={content_len}, has_tool_calls={has_tool_calls}")
+        logger.debug(
+            f"🔄 Output message {i} ({role}): content_len={content_len}, has_tool_calls={has_tool_calls}"
+        )
         if has_tool_calls:
             tool_calls_count = len(msg.get("tool_calls", []))
             logger.debug(f"🔄   Tool calls count: {tool_calls_count}")
@@ -1440,6 +1499,7 @@ def _process_image_content_block(block, image_parts: List[Dict]) -> None:
             }
         )
 
+
 def clean_tool_markers(content: str) -> str:
     """Clean up tool call markers and malformed content (DeepSeek-R1 style)."""
     if not content:
@@ -1551,6 +1611,7 @@ def parse_tool_calls_from_content(content: str) -> list:
         logger.debug("No tool calls found using standard patterns")
 
     return tool_calls
+
 
 def _extract_tool_call_data(tool_call) -> tuple:
     """Extract tool call data from different formats."""
@@ -1825,18 +1886,20 @@ def convert_openai_to_anthropic(
 
         # Final debug info for Claude message creation
         if logger.isEnabledFor(10):  # DEBUG level
-            logger.debug(f"Creating Claude response with {len(content_blocks)} content blocks:")
+            logger.debug(
+                f"Creating Claude response with {len(content_blocks)} content blocks:"
+            )
             for i, block in enumerate(content_blocks):
-                block_type = getattr(block, 'type', 'unknown')
+                block_type = getattr(block, "type", "unknown")
                 logger.debug(f"  Block {i}: {block_type}")
-                if block_type == 'thinking':
-                    thinking_text = getattr(block, 'thinking', '')
+                if block_type == "thinking":
+                    thinking_text = getattr(block, "thinking", "")
                     logger.debug(f"    Thinking length: {len(thinking_text)}")
-                elif block_type == 'text':
-                    text = getattr(block, 'text', '')
+                elif block_type == "text":
+                    text = getattr(block, "text", "")
                     logger.debug(f"    Text: {repr(text[:200])}...")
-                elif block_type == 'tool_use':
-                    name = getattr(block, 'name', 'unknown')
+                elif block_type == "tool_use":
+                    name = getattr(block, "name", "unknown")
                     logger.debug(f"    Tool: {name}")
 
         # Create Claude response
@@ -2277,7 +2340,11 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                         delta_content = delta["content"]
 
                     # If we have text content and we're currently in tool use mode, end the tool use first
-                    if delta_content is not None and delta_content != "" and is_tool_use:
+                    if (
+                        delta_content is not None
+                        and delta_content != ""
+                        and is_tool_use
+                    ):
                         # End current tool call block
                         yield _send_content_block_stop_event(content_block_index)
                         content_block_index += 1
@@ -2288,7 +2355,11 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                         current_tool_name = None
 
                     # Handle text content
-                    if delta_content is not None and delta_content != "" and not is_tool_use:
+                    if (
+                        delta_content is not None
+                        and delta_content != ""
+                        and not is_tool_use
+                    ):
                         accumulated_text += delta_content
 
                         # Start text block if not started
