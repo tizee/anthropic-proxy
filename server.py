@@ -1144,7 +1144,22 @@ def convert_anthropic_to_openai_request(
         if msg.role == "user":
             # Process content blocks with proper tool_result splitting
             if isinstance(msg.content, str):
-                openai_messages.append({"role": "user", "content": msg.content})
+                # Handle special case: Claude Code interrupted messages
+                if msg.content.startswith("[Request interrupted by user for tool use]"):
+                    # Split the interrupted message
+                    interrupted_prefix = "[Request interrupted by user for tool use]"
+                    remaining_content = msg.content[len(interrupted_prefix) :].strip()
+
+                    if remaining_content:
+                        # Add the real user message after interruption
+                        openai_messages.append(
+                            {"role": "user", "content": remaining_content}
+                        )
+                    else:
+                        # If no remaining content, treat the interruption itself as the user message
+                        openai_messages.append({"role": "user", "content": msg.content})
+                else:
+                    openai_messages.append({"role": "user", "content": msg.content})
                 continue
 
             # Accumulate different types and split on tool_result
@@ -2581,6 +2596,12 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         # Create OpenAI client for the model
         client, model_name = create_openai_client(request.model, is_async=True)
         openai_request["model"] = model_name
+
+        # extra_header
+        openai_request["extra_headers"] = {
+            "HTTP-Referer": "https://localhost:8082",  # Optional. Site URL for rankings on openrouter.ai.
+            "X-Title": "Claude Code",  # Optional. Site title for rankings on openrouter.ai.
+        }
 
         # Only log basic info about the request, not the full details
         logger.debug(

@@ -3,25 +3,54 @@ Pydantic models for Claude proxy API requests and responses.
 This module contains only the model definitions without any server startup code.
 """
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from typing import Dict, List, Optional, Union, Literal, Any
 
-class ClaudeToolChoice(BaseModel):
-    type: Literal["auto", "any", "tool", "none"] = "auto"
-    function_name: str | None = None
+class ToolChoiceAuto(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
+    type: Literal["auto"] = "auto"
+    disable_parallel_tool_use: Optional[bool] = None
 
-    def to_openai(self) -> Union[Literal["auto", "required"], dict, None]:
-        if self.type == "any":
-            return "required"
-        if self.type == "function" and self.function_name:
-            return {
-                "type": "function",
-                "function": {"name": self.function_name}
-            }
-        if self.type == "auto":
-            return "auto"
-        if self.type == "none":
-            return None
+    def to_openai(self) -> Literal["auto"]:
+        return "auto"
+
+
+class ToolChoiceAny(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
+    type: Literal["any"] = "any"
+    disable_parallel_tool_use: Optional[bool] = None
+
+    def to_openai(self) -> Literal["required"]:
+        return "required"
+
+
+class ToolChoiceTool(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
+    type: Literal["tool"] = "tool"
+    name: str
+    disable_parallel_tool_use: Optional[bool] = None
+
+    def to_openai(self) -> dict:
+        return {
+            "type": "function",
+            "function": {"name": self.name}
+        }
+
+
+class ToolChoiceNone(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
+    type: Literal["none"] = "none"
+
+    def to_openai(self) -> None:
+        return None
+
+
+# Union type for all tool choice options
+ClaudeToolChoice = Union[ToolChoiceAuto, ToolChoiceAny, ToolChoiceTool, ToolChoiceNone]
 
 
 class ContentBlockText(BaseModel):

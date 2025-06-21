@@ -313,6 +313,8 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "claude_code_glob_test_stream",
     "claude_code_todowrite_test_stream",
     "claude_code_todoread_test_stream",
+    "claude_code_interruption_test",
+    "claude_code_interruption_only_test",
 }
 
 # Test scenarios using MessagesRequest Pydantic models
@@ -681,6 +683,28 @@ TEST_SCENARIOS = {
         tools=[todo_read_tool],
         tool_choice={"type": "any"},
     ),
+    # Claude Code interruption test - simulates tool use interruption
+    "claude_code_interruption_test": MessagesRequest(
+        model=MODEL,
+        max_tokens=1024,
+        messages=[
+            Message(
+                role="user",
+                content="[Request interrupted by user for tool use]我记得我没有添加install命令啊，为什么要无中生有？",
+            )
+        ],
+    ),
+    # Claude Code interruption test - interruption only (no user message)
+    "claude_code_interruption_only_test": MessagesRequest(
+        model=MODEL,
+        max_tokens=1024,
+        messages=[
+            Message(
+                role="user",
+                content="[Request interrupted by user for tool use]",
+            )
+        ],
+    ),
     # Streaming thinking tests
     "thinking_simple_stream": MessagesRequest(
         model=MODEL,
@@ -747,17 +771,16 @@ REQUIRED_EVENT_TYPES = {
 def serialize_request_data(data) -> Dict[str, Any]:
     """Convert Pydantic models to dictionaries for JSON serialization."""
     if isinstance(data, BaseModel):
-        serialized = data.model_dump()
-        # Remove None values to avoid sending unnecessary fields
-        return {k: v for k, v in serialized.items() if v is not None}
+        serialized = data.model_dump(exclude_none=True)
+        return serialized
     elif isinstance(data, dict):
         serialized = {}
         for key, value in data.items():
             if isinstance(value, BaseModel):
-                serialized[key] = value.model_dump()
+                serialized[key] = value.model_dump(exclude_none=True)
             elif isinstance(value, list):
                 serialized[key] = [
-                    item.model_dump() if isinstance(item, BaseModel) else item
+                    item.model_dump(exclude_none=True) if isinstance(item, BaseModel) else item
                     for item in value
                 ]
             else:
