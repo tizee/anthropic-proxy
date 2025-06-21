@@ -1122,15 +1122,6 @@ def convert_anthropic_to_openai_request(
                 openai_messages.extend(tool_messages)
                 logger.debug(f"🔧 Added {len(tool_messages)} tool result messages")
 
-            # Handle edge case: empty user message
-            if not text_content or text_content == "..." and not tool_messages:
-                logger.warning("User message has no content and no tool results")
-                openai_msg = {
-                    "role": "user",
-                    "content": "",
-                }
-                openai_messages.append(openai_msg)
-
         elif msg.role == "assistant":
             # Extract tool calls and text content
             tool_calls = msg.extract_tool_calls()
