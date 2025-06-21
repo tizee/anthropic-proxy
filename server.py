@@ -20,9 +20,7 @@ from openai import (
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionTool,
-    ChatCompletionUserMessageParam,
     ChatCompletionSystemMessageParam,
-    ChatCompletionAssistantMessageParam,
 )
 import uuid
 import time
@@ -88,24 +86,12 @@ class Config:
     """Universal proxy server configuration with intelligent routing"""
 
     def __init__(self):
-        # API Keys
-        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
-
-        # BIG_MODEL and SMALL_MODEL are deprecated in favor of intelligent routing.
-        # See router_config below.
-
         # Router configuration for intelligent model selection
         self.router_config = {
-            "background": os.environ.get(
-                "ROUTER_BACKGROUND", "custom/deepseek-v3-250324"
-            ),
-            "think": os.environ.get("ROUTER_THINK", "custom/deepseek-r1-250528"),
-            "long_context": os.environ.get(
-                "ROUTER_LONG_CONTEXT", "custom/gemini-2.5-pro"
-            ),
-            "default": os.environ.get("ROUTER_DEFAULT", "custom/deepseek-v3-250324"),
+            "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3-250324"),
+            "think": os.environ.get("ROUTER_THINK", "deepseek-r1-250528"),
+            "long_context": os.environ.get("ROUTER_LONG_CONTEXT", "gemini-2.5-pro"),
+            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3-250324"),
         }
 
         # Token thresholds
@@ -140,16 +126,6 @@ class Config:
     def validate_api_keys(self):
         """Validate that at least one provider API key is configured"""
         providers_configured = []
-
-        if self.anthropic_api_key:
-            providers_configured.append("anthropic")
-
-        if self.openai_api_key:
-            providers_configured.append("openai")
-
-        if self.gemini_api_key:
-            providers_configured.append("gemini")
-
         if self.custom_api_keys:
             providers_configured.append("custom")
 
@@ -161,13 +137,7 @@ class Config:
 
     def get_api_key_for_provider(self, provider: str) -> Optional[str]:
         """Get API key for a specific provider"""
-        if provider == "anthropic":
-            return self.anthropic_api_key
-        elif provider == "openai":
-            return self.openai_api_key
-        elif provider == "gemini":
-            return self.gemini_api_key
-        elif provider in self.custom_api_keys:
+        if provider in self.custom_api_keys:
             return self.custom_api_keys[provider]
         return None
 
@@ -394,6 +364,7 @@ for model_config in CUSTOM_OPENAI_MODELS.values():
         else:
             logger.warning(f"Missing API key for {api_key_name}")
 
+
 def generate_thinking_signature(thinking_content: str) -> str:
     """Generate a signature for thinking content using SHA-256 hash."""
     if not thinking_content:
@@ -409,31 +380,15 @@ def create_openai_client(model: str, is_async: bool = True) -> tuple:
     """Create OpenAI client for the given model and return client and request parameters."""
     api_key = None
     base_url = None
-
-    if model.startswith("openai/"):
-        # Standard OpenAI models
-        api_key = config.openai_api_key
-        model_name = model.replace("openai/", "")
-    elif model.startswith("gemini/"):
-        # Gemini models via OpenAI-compatible API
-        api_key = config.gemini_api_key
-        base_url = "https://generativelanguage.googleapis.com/v1beta/"
-        model_name = model.replace("gemini/", "")
-    elif model.startswith("custom/"):
-        # Custom OpenAI-compatible models
-        custom_model_id = model.replace("custom/", "")
-        if custom_model_id in CUSTOM_OPENAI_MODELS:
-            model_config = CUSTOM_OPENAI_MODELS[custom_model_id]
-            api_key_name = model_config.get("api_key_name", "OPENAI_API_KEY")
-            api_key = config.custom_api_keys.get(api_key_name) or config.openai_api_key
-            base_url = model_config["api_base"]
-            model_name = model_config.get("model_name", custom_model_id)
-        else:
-            raise ValueError(f"Unknown custom model: {custom_model_id}")
+    # Custom OpenAI-compatible models
+    if model in CUSTOM_OPENAI_MODELS:
+        model_config = CUSTOM_OPENAI_MODELS[model]
+        api_key_name = model_config.get("api_key_name", "OPENAI_API_KEY")
+        api_key = config.custom_api_keys.get(api_key_name)
+        base_url = model_config["api_base"]
+        model_name = model_config.get("model_name", model)
     else:
-        # Default to OpenAI
-        api_key = config.openai_api_key
-        model_name = model
+        raise ValueError(f"Unknown custom model: {model}")
 
     if not api_key:
         raise ValueError(f"No API key available for model: {model}")
@@ -454,9 +409,6 @@ def create_openai_client(model: str, is_async: bool = True) -> tuple:
 # Helper function to clean schema for Gemini
 def _remove_gemini_incompatible_uri_format(schema: dict) -> dict:
     """Fix only the specific URI format issue that causes MALFORMED_FUNCTION_CALL in Gemini."""
-    if not isinstance(schema, dict):
-        return schema
-
     # Create a copy to avoid modifying the original
     fixed_schema = {}
 
@@ -888,11 +840,6 @@ def determine_model_by_router(
         f"🔀 Router input: model={original_model}, tokens={token_count}, thinking={has_thinking}"
     )
 
-    # If model is explicitly specified with provider, use it directly
-    if "," in original_model:
-        provider, model = original_model.split(",", 1)
-        return f"{provider.strip()}/{model.strip()}"
-
     # If token count is greater than threshold, use long context model (highest priority)
     if token_count > config.long_context_threshold:
         result = config.router_config["long_context"]
@@ -1045,7 +992,7 @@ def convert_anthropic_to_openai_request(
         content_text = _extract_message_content(msg.content)
 
         if msg.role == "user":
-            openai_msg  = {
+            openai_msg = {
                 "role": "user",
                 "content": content_text,
             }
@@ -1064,48 +1011,57 @@ def convert_anthropic_to_openai_request(
     openai_tools = None
     if request.tools:
         openai_tools = []
-        for _tool in request.tools:
-            tool = _tool.model_dump()
+        for tool in request.tools:
             # Handle both Anthropic tool format and function-based format
             if hasattr(tool, "name"):
                 # Anthropic tool format (our models.py Tool class)
                 tool_params = {
                     "type": "function",
                     "function": {
-                        "name": tool.get("name"),
-                        "description": tool.get("description") or "",
+                        "name": tool.name,
+                        "description": tool.description or "",
                     },
                 }
-                if tool.get("input_schema"):
+                if hasattr(tool, "input_schema"):
                     # Apply Gemini schema cleaning if model contains 'gemini'
                     if "gemini" in model.lower():
-                        tool_params["function"]["parameters"] = clean_gemini_schema(tool.get("input_schema"))
+                        tool_params["function"]["parameters"] = clean_gemini_schema(
+                            tool.input_schema
+                        )
                     else:
-                        tool_params["function"]["parameters"] = tool.get("input_schema")
+                        tool_params["function"]["parameters"] = tool.input_schema
 
                 # Validate using OpenAI SDK type
+                logger.debug(
+                    f"original Claude Tool format: {tool}"
+                )
+                logger.debug(
+                    f"before validate tool params: {tool_params}"
+                )
                 validated_tool = ChatCompletionTool.model_validate(tool_params)
+                logger.debug(
+                    f"after validate tool params: {validated_tool}"
+                )
                 openai_tools.append(validated_tool.model_dump(exclude_none=True))
+                logger.debug(
+                    f"openai_tools append: {validated_tool}"
+                )
 
     # Handle tool_choice with type validation
     tool_choice = None
-    if hasattr(request, "tool_choice") and request.tool_choice:
-        if request.tool_choice == "auto":
-            tool_choice = "auto"
-        elif request.tool_choice == "any":
-            tool_choice = "required"
-        elif isinstance(request.tool_choice, dict) and "name" in request.tool_choice:
-            tool_choice = {
-                "type": "function",
-                "function": {"name": request.tool_choice["name"]},
-            }
+    if request.tool_choice:
+        tool_choice = request.tool_choice.to_openai()
+        logger.debug(
+            f"openai tool choice param: {tool_choice} <- {request.tool_choice}")
 
     # Build complete request with OpenAI SDK type validation
     request_params = {
         "model": model,
         "messages": openai_messages,
         "stream": request.stream,
-        "max_tokens": request.max_tokens or ModelDefaults.DEFAULT_MAX_TOKENS,
+        "max_tokens": min(
+            CUSTOM_OPENAI_MODELS[model].get("max_tokens"), request.max_tokens
+        ),
         "temperature": request.temperature,
         "top_p": request.top_p,
     }
@@ -1115,6 +1071,12 @@ def convert_anthropic_to_openai_request(
     if tool_choice:
         request_params["tool_choice"] = tool_choice
 
+    logger.debug(
+        f"original request: {request}"
+    )
+    logger.debug(
+        f"openai request: {request_params}"
+    )
     # Return the request with validated components
     # Individual components (messages, tools) are already validated using OpenAI SDK types
     return request_params
@@ -1604,6 +1566,15 @@ def convert_openai_to_anthropic(
         logger.debug(f"Raw content extracted: {len(content_text)} characters")
         logger.debug(f"Tool calls from response: {tool_calls}")
 
+        # Enhanced debugging for Claude Code tool testing
+        if logger.isEnabledFor(10):  # DEBUG level
+            logger.debug("=== ENHANCED DEBUG INFO ===")
+            if thinking_content:
+                logger.debug(f"Thinking content preview: {thinking_content[:500]}...")
+            if content_text:
+                logger.debug(f"Raw content text: {repr(content_text)}")
+            logger.debug("=== END DEBUG INFO ===")
+
         # Clean up content text - remove tool call markers if present
         content_text = clean_tool_markers(content_text) if content_text else ""
 
@@ -1698,6 +1669,22 @@ def convert_openai_to_anthropic(
             stop_reason = Constants.STOP_TOOL_USE
         else:
             stop_reason = Constants.STOP_END_TURN
+
+        # Final debug info for Claude message creation
+        if logger.isEnabledFor(10):  # DEBUG level
+            logger.debug(f"Creating Claude response with {len(content_blocks)} content blocks:")
+            for i, block in enumerate(content_blocks):
+                block_type = getattr(block, 'type', 'unknown')
+                logger.debug(f"  Block {i}: {block_type}")
+                if block_type == 'thinking':
+                    thinking_text = getattr(block, 'thinking', '')
+                    logger.debug(f"    Thinking length: {len(thinking_text)}")
+                elif block_type == 'text':
+                    text = getattr(block, 'text', '')
+                    logger.debug(f"    Text: {repr(text[:200])}...")
+                elif block_type == 'tool_use':
+                    name = getattr(block, 'name', 'unknown')
+                    logger.debug(f"    Tool: {name}")
 
         return MessagesResponse(
             id=response_id,
@@ -1913,14 +1900,14 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                     if hasattr(choice, "finish_reason"):
                         finish_reason = choice.finish_reason
                     elif isinstance(choice, dict):
-                        finish_reason = choice.get("finish_reason")
+                        finish_reason = choice.finish_reason
                     else:
                         finish_reason = None
 
                     # Handle tool calls first (they take priority)
                     delta_tool_calls = None
                     if hasattr(delta, "tool_calls"):
-                        delta_tool_calls = delta.get("tool_calls")
+                        delta_tool_calls = delta.tool_calls
                     elif isinstance(delta, dict) and "tool_calls" in delta:
                         delta_tool_calls = delta["tool_calls"]
 
@@ -2062,7 +2049,7 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                     # Handle reasoning/thinking content first (from deepseek reasoning models)
                     delta_reasoning = None
                     if hasattr(delta, "reasoning_content"):
-                        delta_reasoning = delta.get("reasoning_content")
+                        delta_reasoning = delta.reasoning_content
                     elif isinstance(delta, dict) and "reasoning_content" in delta:
                         delta_reasoning = delta["reasoning_content"]
 
@@ -2118,36 +2105,47 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                             thinking_block_closed = True
                             content_block_index += 1
 
-                    # Handle text content (only if not in tool mode)
-                    elif not is_tool_use:
-                        delta_content = None
-                        if hasattr(delta, "content"):
-                            delta_content = delta.content
-                        elif isinstance(delta, dict) and "content" in delta:
-                            delta_content = delta["content"]
+                    # Handle text content - check for text content first
+                    delta_content = None
+                    if hasattr(delta, "content"):
+                        delta_content = delta.content
+                    elif isinstance(delta, dict) and "content" in delta:
+                        delta_content = delta["content"]
 
-                        if delta_content is not None and delta_content != "":
-                            accumulated_text += delta_content
+                    # If we have text content and we're currently in tool use mode, end the tool use first
+                    if delta_content is not None and delta_content != "" and is_tool_use:
+                        # End current tool call block
+                        yield _send_content_block_stop_event(content_block_index)
+                        content_block_index += 1
+                        is_tool_use = False
+                        # Reset tool state
+                        tool_json = ""
+                        current_tool_id = None
+                        current_tool_name = None
 
-                            # Start text block if not started
-                            if not text_block_started:
-                                text_block = {"type": "text", "text": ""}
-                                current_content_blocks.append(text_block)
-                                yield _send_content_block_start_event(
-                                    content_block_index, "text"
-                                )
-                                text_block_started = True
+                    # Handle text content
+                    if delta_content is not None and delta_content != "" and not is_tool_use:
+                        accumulated_text += delta_content
 
-                            # Send text delta
-                            yield _send_content_block_delta_event(
-                                content_block_index, "text_delta", delta_content
+                        # Start text block if not started
+                        if not text_block_started:
+                            text_block = {"type": "text", "text": ""}
+                            current_content_blocks.append(text_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "text"
                             )
+                            text_block_started = True
 
-                            # Update content block
-                            if content_block_index < len(current_content_blocks):
-                                current_content_blocks[content_block_index]["text"] = (
-                                    accumulated_text
-                                )
+                        # Send text delta
+                        yield _send_content_block_delta_event(
+                            content_block_index, "text_delta", delta_content
+                        )
+
+                        # Update content block
+                        if content_block_index < len(current_content_blocks):
+                            current_content_blocks[content_block_index]["text"] = (
+                                accumulated_text
+                            )
 
                     # Process finish_reason - end the streaming response
                     if finish_reason and not has_sent_stop_reason:
@@ -2666,88 +2664,6 @@ async def test_connection():
     test_results = {}
     overall_status = "success"
 
-    # Test Anthropic API if configured
-    if config.anthropic_api_key:
-        try:
-            # Use a simple test - we'll just check if we can make a request structure
-            test_results["anthropic"] = {
-                "status": "configured",
-                "message": "API key configured",
-                "timestamp": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            test_results["anthropic"] = {
-                "status": "failed",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-            }
-            overall_status = "partial"
-    else:
-        test_results["anthropic"] = {
-            "status": "not_configured",
-            "message": "ANTHROPIC_API_KEY not set",
-        }
-
-    # Test Gemini API if configured
-    if config.gemini_api_key:
-        try:
-            # Simple test request to verify API connectivity using OpenAI SDK
-            client, model_name = create_openai_client(
-                "gemini/gemini-2.0-flash", is_async=True
-            )
-            test_response = await client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=5,
-            )
-
-            test_results["gemini"] = {
-                "status": "success",
-                "message": "Successfully connected to Gemini API",
-                "model_used": "gemini-2.0-flash",
-                "timestamp": datetime.now().isoformat(),
-                "response_id": getattr(test_response, "id", "unknown"),
-            }
-        except Exception as e:
-            test_results["gemini"] = {
-                "status": "failed",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-                "suggestions": [
-                    "Check your GEMINI_API_KEY is valid",
-                    "Verify API key permissions",
-                    "Check rate limits",
-                ],
-            }
-            overall_status = "partial"
-    else:
-        test_results["gemini"] = {
-            "status": "not_configured",
-            "message": "GEMINI_API_KEY not set",
-        }
-
-    # Test OpenAI API if configured
-    if config.openai_api_key:
-        try:
-            test_results["openai"] = {
-                "status": "configured",
-                "message": "API key configured",
-                "available_models": OPENAI_MODELS[:3],
-                "timestamp": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            test_results["openai"] = {
-                "status": "failed",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-            }
-            overall_status = "partial"
-    else:
-        test_results["openai"] = {
-            "status": "not_configured",
-            "message": "OPENAI_API_KEY not set",
-        }
-
     # Test custom models
     if CUSTOM_OPENAI_MODELS:
         test_results["custom_models"] = {
@@ -2791,7 +2707,7 @@ async def root():
         "version": "2.0.0",
         "status": "running",
         "capabilities": {
-            "providers": ["anthropic", "openai", "gemini", "custom"],
+            "providers": ["custom"],
             "features": [
                 "streaming",
                 "tool_use",

@@ -6,6 +6,23 @@ This module contains only the model definitions without any server startup code.
 from pydantic import BaseModel, field_validator
 from typing import Dict, List, Optional, Union, Literal, Any
 
+class ClaudeToolChoice(BaseModel):
+    type: Literal["auto", "any", "tool", "none"] = "auto"
+    function_name: str | None = None
+
+    def to_openai(self) -> Union[Literal["auto", "required"], dict, None]:
+        if self.type == "any":
+            return "required"
+        if self.type == "function" and self.function_name:
+            return {
+                "type": "function",
+                "function": {"name": self.function_name}
+            }
+        if self.type == "auto":
+            return "auto"
+        if self.type == "none":
+            return None
+
 
 class ContentBlockText(BaseModel):
     type: Literal["text"]
@@ -62,7 +79,6 @@ class Tool(BaseModel):
     description: Optional[str] = None
     input_schema: Dict[str, Any]
 
-
 class ThinkingConfigEnabled(BaseModel):
     type: Literal["enabled"] = "enabled"
     budget_tokens: Optional[int] = None
@@ -84,9 +100,8 @@ class MessagesRequest(BaseModel):
     top_k: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     tools: Optional[List[Tool]] = None
-    tool_choice: Optional[Dict[str, Any]] = None
+    tool_choice: Optional[ClaudeToolChoice] = None
     thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled]] = None
-    original_model: Optional[str] = None  # Will store the original model name
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
@@ -113,7 +128,6 @@ class TokenCountRequest(BaseModel):
     tools: Optional[List[Tool]] = None
     thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled, dict]] = None
     tool_choice: Optional[Dict[str, Any]] = None
-    original_model: Optional[str] = None  # Will store the original model name
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):

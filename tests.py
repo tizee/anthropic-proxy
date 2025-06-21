@@ -57,8 +57,8 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 PROXY_API_URL = "http://127.0.0.1:8082/v1/messages"
 PROXY_TEST_API_URL = "http://127.0.0.1:8082/v1/messages/test_conversion"
 ANTHROPIC_VERSION = "2023-06-01"
-MODEL = "claude-3-7-sonnet-20250219"
-#MODEL = "claude-3-haiku-20240307"  # Change to your preferred model
+#MODEL = "claude-3-7-sonnet-20250219"
+MODEL = "claude-3-haiku-20240307"  # Change to your preferred model
 
 # Headers
 anthropic_headers = {
@@ -169,6 +169,90 @@ search_tool = Tool(
     },
 )
 
+# Claude Code tools for testing
+read_tool = Tool(
+    name="Read",
+    description="Reads a file from the local filesystem",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": "The absolute path to the file to read"
+            }
+        },
+        "required": ["file_path"]
+    }
+)
+
+bash_tool = Tool(
+    name="Bash",
+    description="Executes a bash command",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The command to execute"
+            },
+            "description": {
+                "type": "string",
+                "description": "Clear description of what this command does"
+            }
+        },
+        "required": ["command"]
+    }
+)
+
+ls_tool = Tool(
+    name="LS",
+    description="Lists files and directories in a given path",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "The absolute path to the directory to list"
+            }
+        },
+        "required": ["path"]
+    }
+)
+
+grep_tool = Tool(
+    name="Grep",
+    description="Fast content search tool using regular expressions",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": "The regular expression pattern to search for"
+            },
+            "path": {
+                "type": "string",
+                "description": "The directory to search in"
+            }
+        },
+        "required": ["pattern"]
+    }
+)
+
+glob_tool = Tool(
+    name="Glob",
+    description="Fast file pattern matching tool",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": "The glob pattern to match files against"
+            }
+        },
+        "required": ["pattern"]
+    }
+)
+
 todo_write_tool = Tool(
     name="TodoWrite",
     description="Writes todo items to the todo list",
@@ -222,7 +306,16 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "gemini_tool_test",
     "gemini_tool_test_stream",
     "gemini_incompatible_schema_test",
-    "gemini_incompatible_schema_test_stream"
+    "gemini_incompatible_schema_test_stream",
+    "deepseek_thinking_tools",
+    "deepseek_thinking_tools_stream",
+    "claude_code_read_test_stream",
+    "claude_code_bash_test_stream",
+    "claude_code_ls_test_stream",
+    "claude_code_grep_test_stream",
+    "claude_code_glob_test_stream",
+    "claude_code_todowrite_test_stream",
+    "claude_code_todoread_test_stream"
 }
 
 # Test scenarios using MessagesRequest Pydantic models
@@ -249,7 +342,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Todo tools
     "todo_write": MessagesRequest(
@@ -262,7 +355,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_write_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     "todo_read": MessagesRequest(
         model=MODEL,
@@ -274,7 +367,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_read_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Multiple tools
     "multi_tool": MessagesRequest(
@@ -290,7 +383,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[weather_tool, search_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Multi-turn conversation
     "multi_turn": MessagesRequest(
@@ -311,7 +404,7 @@ TEST_SCENARIOS = {
             ),
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Content blocks
     "content_blocks": MessagesRequest(
@@ -329,7 +422,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool, weather_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Simple streaming test
     "simple_stream": MessagesRequest(
@@ -355,7 +448,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Todo tools with streaming
     "todo_write_stream": MessagesRequest(
@@ -369,7 +462,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_write_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     "todo_read_stream": MessagesRequest(
         model=MODEL,
@@ -382,7 +475,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_read_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Thinking capability tests
     "thinking_simple": MessagesRequest(
@@ -427,7 +520,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     "thinking_keyword": MessagesRequest(
         model=MODEL,
@@ -457,7 +550,7 @@ TEST_SCENARIOS = {
     ),
     # Gemini tool use test - simple math function call
     "gemini_tool_test": MessagesRequest(
-        model="custom/gemini-2.5-pro",
+        model="gemini-2.5-pro",
         max_tokens=1025,
         messages=[
             Message(
@@ -466,11 +559,11 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Gemini tool use streaming test
     "gemini_tool_test_stream": MessagesRequest(
-        model="custom/gemini-2.5-pro",
+        model="gemini-2.5-pro",
         max_tokens=1025,
         stream=True,
         messages=[
@@ -480,11 +573,11 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[weather_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Gemini incompatible schema test - non-streaming
     "gemini_incompatible_schema_test": MessagesRequest(
-        model="custom/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
+        model="gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
         max_tokens=1025,
         messages=[
             Message(
@@ -493,11 +586,11 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[gemini_incompatible_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     # Gemini incompatible schema test - streaming
     "gemini_incompatible_schema_test_stream": MessagesRequest(
-        model="custom/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
+        model="/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
         max_tokens=1025,
         stream=True,
         messages=[
@@ -507,7 +600,139 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[gemini_incompatible_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
+    ),
+    # DeepSeek R1 thinking + tool use test
+    "deepseek_thinking_tools": MessagesRequest(
+        model="deepseek-r1-250528",
+        max_tokens=1024,
+        thinking=ThinkingConfigEnabled(
+            type="enabled",
+            budget_tokens=1024
+        ),
+        messages=[
+            Message(
+                role="user",
+                content="What is 25 * 8? Think about it and use the calculator."
+            )
+        ],
+        tools=[calculator_tool],
+        tool_choice={"type": "any"},
+    ),
+    # DeepSeek R1 thinking + tool use streaming test
+    "deepseek_thinking_tools_stream": MessagesRequest(
+        model="deepseek-41-250528",
+        max_tokens=1024,
+        stream=True,
+        thinking=ThinkingConfigEnabled(
+            type="enabled",
+            budget_tokens=1024
+        ),
+        messages=[
+            Message(
+                role="user",
+                content="Calculate 12 + 34. Think about it first, then use the calculator tool."
+            )
+        ],
+        tools=[calculator_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - Read tool
+    "claude_code_read_test_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the Read tool to read the tests.py file."
+            )
+        ],
+        tools=[read_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - Bash tool
+    "claude_code_bash_test_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        messages=[
+            Message(
+                role="user",
+                content="Use the Bash tool to list files in the current directory."
+            )
+        ],
+        tools=[bash_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - LS tool
+    "claude_code_ls_test_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the LS tool to list the contents of the current directory."
+            )
+        ],
+        tools=[ls_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - Grep tool
+    "claude_code_grep_test": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the Grep tool to search for 'def' in the current directory."
+            )
+        ],
+        tools=[grep_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - Glob tool
+    "claude_code_glob_test": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the Glob tool to find all Python files."
+            )
+        ],
+        tools=[glob_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - TodoWrite tool
+    "claude_code_todowrite_test_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the TodoWrite tool to create a simple todo list."
+            )
+        ],
+        tools=[todo_write_tool],
+        tool_choice={"type": "any"},
+    ),
+    # Claude Code tools tests - TodoRead tool
+    "claude_code_todoread_test_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=1024,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Use the TodoRead tool to show the current todo list."
+            )
+        ],
+        tools=[todo_read_tool],
+        tool_choice={"type": "any"},
     ),
     # Streaming thinking tests
     "thinking_simple_stream": MessagesRequest(
@@ -555,7 +780,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},
     ),
     "thinking_keyword_stream": MessagesRequest(
         model=MODEL,
@@ -612,7 +837,7 @@ def get_response(url, headers, data):
     start_time = time.time()
 
     # Use longer timeout for thinking requests
-    timeout = 120 if data.get('thinking') else 30
+    timeout = 180 if data.get('thinking') else 30
 
     response = httpx.post(url, headers=headers, json=data, timeout=timeout)
     elapsed = time.time() - start_time
@@ -1053,7 +1278,7 @@ def test_request(
 
     # Check if this is a direct conversion test (Gemini model or specific test cases)
     model_name = getattr(request_data, 'model', '') if hasattr(request_data, 'model') else ''
-    if model_name.startswith("gemini/") or "gemini" in test_name:
+    if not model_name.startswith("claude") or "gemini" in test_name:
         print("Gemini model/test detected, using direct conversion test endpoint")
         return test_direct_conversion(test_name, request_data, check_tools, compare_with_anthropic)
 
@@ -1116,9 +1341,7 @@ def test_request(
             anthropic_data = serialized_data.copy()
             # Don't replace model name for custom models - keep original for proxy, use Claude model for Anthropic
             model_name = serialized_data.get("model", "")
-            if not model_name.startswith("custom/"):
-                anthropic_data["model"] = MODEL
-            else:
+            if not model_name.startswith("claude"):
                 # For custom models, use Claude model for Anthropic comparison
                 anthropic_data["model"] = MODEL
                 print(f"Custom model test: Proxy will use {model_name}, Anthropic will use {MODEL}")
@@ -1353,7 +1576,7 @@ async def stream_response(url, headers, data, stream_name):
             request_data["stream"] = True
 
             # Use longer timeout for thinking requests
-            timeout = 120 if request_data.get('thinking') else 30
+            timeout = 180 if request_data.get('thinking') else 30
 
             start_time = time.time()
             async with client.stream(
