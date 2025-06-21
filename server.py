@@ -36,7 +36,9 @@ from models import (
     MessagesResponse,
     Usage,
     ContentBlockText,
+    ContentBlockImage,
     ContentBlockToolUse,
+    ContentBlockToolResult,
     ContentBlockThinking,
     TokenCountRequest,
     TokenCountResponse,
@@ -1093,67 +1095,123 @@ def convert_anthropic_to_openai_request(
             }
             openai_messages.append(system_msg)
 
-    # Convert messages using the elegant model-based approach
+    # Convert messages using proper message splitting approach (based on Gemini proxy)
     for msg in request.messages:
         if msg.role == "user":
-            # Extract tool results and text content separately
-            tool_messages = msg.extract_tool_results()
-            text_content = msg.extract_text_content()
+            # Process content blocks with proper tool_result splitting
+            if isinstance(msg.content, str):
+                openai_messages.append({"role": "user", "content": msg.content})
+                continue
 
-            # Add user message with text content (excluding tool results)
-            if text_content and text_content not in ("...", ""):
-                # Filter out tool result indicators since they'll be separate messages
-                filtered_content = text_content
-                if "Tool result:" in text_content and tool_messages:
-                    lines = text_content.split('\n')
-                    user_lines = [line for line in lines if not line.startswith("Tool result:")]
-                    filtered_content = '\n'.join(user_lines).strip()
+            # Accumulate different types and split on tool_result
+            text_parts = []
+            image_parts = []
+            pending_tool_messages = []
 
-                if filtered_content:
-                    openai_msg = {
-                        "role": "user",
-                        "content": filtered_content,
-                    }
-                    openai_messages.append(openai_msg)
-                    logger.debug(f"🔧 User message with text content, content_len={len(filtered_content)}")
+            for block in msg.content:
+                if isinstance(block, ContentBlockText) or (isinstance(block, dict) and block.get("type") == "text"):
+                    text_content = block.text if hasattr(block, 'text') else block.get("text", "")
+                    text_parts.append(text_content)
+                elif isinstance(block, ContentBlockImage) or (isinstance(block, dict) and block.get("type") == "image"):
+                    # Handle image blocks if needed
+                    if isinstance(block, ContentBlockImage) and hasattr(block, 'source'):
+                        source = block.source
+                    elif isinstance(block, dict) and "source" in block:
+                        source = block["source"]
+                    else:
+                        continue
+                    
+                    if (isinstance(source, dict) and 
+                        source.get("type") == "base64" and
+                        "media_type" in source and "data" in source):
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{source['media_type']};base64,{source['data']}"
+                            }
+                        })
+                elif (isinstance(block, ContentBlockToolResult) or 
+                      (isinstance(block, dict) and block.get("type") == "tool_result")):
+                    # CRITICAL: Split user message when tool_result is encountered
+                    if text_parts or image_parts:
+                        content_parts = []
+                        text_content = "".join(text_parts).strip()
+                        if text_content:
+                            content_parts.append({"type": "text", "text": text_content})
+                        content_parts.extend(image_parts)
+                        
+                        if content_parts:
+                            if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                                openai_messages.append({
+                                    "role": "user",
+                                    "content": content_parts[0]["text"]
+                                })
+                            else:
+                                openai_messages.append({
+                                    "role": "user", 
+                                    "content": content_parts
+                                })
+                        text_parts.clear()
+                        image_parts.clear()
 
-            # Add tool result messages
-            if tool_messages:
-                openai_messages.extend(tool_messages)
-                logger.debug(f"🔧 Added {len(tool_messages)} tool result messages")
+                    # Add tool result as separate "tool" role message  
+                    if isinstance(block, ContentBlockToolResult):
+                        tool_use_id = block.tool_use_id
+                        content = block.content
+                    else:
+                        tool_use_id = block.get("tool_use_id", "")
+                        content = block.get("content", "")
+                    
+                    parsed_content = _parse_tool_result_content(content)
+                    pending_tool_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_use_id,
+                        "content": parsed_content
+                    })
 
+            # Add any remaining text/image content
+            if text_parts or image_parts:
+                content_parts = []
+                text_content = "".join(text_parts).strip()
+                if text_content:
+                    content_parts.append({"type": "text", "text": text_content})
+                content_parts.extend(image_parts)
+                
+                if content_parts:
+                    if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                        openai_messages.append({
+                            "role": "user",
+                            "content": content_parts[0]["text"]
+                        })
+                    else:
+                        openai_messages.append({
+                            "role": "user",
+                            "content": content_parts
+                        })
+            
+            # Add any pending tool messages
+            openai_messages.extend(pending_tool_messages)
+            
         elif msg.role == "assistant":
             # Extract tool calls and text content
             tool_calls = msg.extract_tool_calls()
             text_content = msg.extract_text_content()
 
-            # Build assistant message
-            if tool_calls:
-                # Assistant message with tool calls
-                if text_content and text_content not in ("...", "[Tool usage only]"):
-                    # Has both text content and tool calls
-                    openai_msg = {
-                        "role": "assistant",
-                        "content": text_content,
-                        "tool_calls": tool_calls
-                    }
-                else:
-                    # Tool calls only, no text content (common case)
-                    openai_msg = {
-                        "role": "assistant",
-                        "content": None,  # OpenAI allows null content when tool_calls present
-                        "tool_calls": tool_calls
-                    }
-                logger.debug(f"🔧 Assistant message with {len(tool_calls)} tool calls, content_present={bool(text_content and text_content not in ('...', '[Tool usage only]'))}")
+            assistant_msg = {"role": "assistant"}
+            
+            # Handle content for assistant messages
+            if text_content:
+                assistant_msg["content"] = text_content
             else:
-                # Assistant message without tool calls (text only)
-                openai_msg = {
-                    "role": "assistant",
-                    "content": text_content if text_content != "..." else "",
-                }
-                logger.debug(f"🔧 Assistant message with text only, content_len={len(text_content)}")
-
-            openai_messages.append(openai_msg)
+                assistant_msg["content"] = None
+                
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+                
+            # Only add message if it has actual content or tool calls
+            if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
+                openai_messages.append(assistant_msg)
+                logger.debug(f"🔧 Assistant message: content={bool(text_content)}, tool_calls={len(tool_calls) if tool_calls else 0}")
         else:
             # Fallback for other roles
             text_content = msg.extract_text_content()
@@ -1520,6 +1578,45 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
         return arguments_dict
     except json.JSONDecodeError:
         return {"raw_arguments": arguments_str}
+
+
+def _parse_tool_result_content(content):
+    """Parse and normalize tool result content into a string format."""
+    if content is None:
+        return "No content provided"
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        result_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                result_parts.append(item.get("text", ""))
+            elif isinstance(item, str):
+                result_parts.append(item)
+            elif isinstance(item, dict):
+                if "text" in item:
+                    result_parts.append(item.get("text", ""))
+                else:
+                    try:
+                        result_parts.append(json.dumps(item))
+                    except:
+                        result_parts.append(str(item))
+        return "\n".join(result_parts).strip()
+
+    if isinstance(content, dict):
+        if content.get("type") == "text":
+            return content.get("text", "")
+        try:
+            return json.dumps(content)
+        except:
+            return str(content)
+
+    try:
+        return str(content)
+    except:
+        return "Unparseable content"
 
 
 def convert_openai_to_anthropic(

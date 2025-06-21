@@ -1,6 +1,6 @@
 # Anthropic API Proxy for Multiple Model Providers 🔄
 
-**Claude COde Version: 1.0.31**
+**Claude Code Version: 1.0.31**
 
 A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using LiteLLM. Features intelligent routing based on token count, thinking flag, and model name.
 
@@ -78,3 +78,30 @@ Set `LOG_LEVEL=DEBUG` in `.env` for detailed logs.
 | OpenAI   | gpt-4o, gpt-4o-mini |
 | Gemini   | gemini-2.5-pro, gemini-2.0-flash |
 | Custom   | Any OpenAI-compatible API |
+
+## API Endpoints
+- `/v1/messages`: Main endpoint for message requests
+- `/v1/messages/count_tokens`: Count tokens in messages
+- `/v1/stats`: Get session statistics
+- `/health`: Health check endpoint
+- `/test-connection`: Test API connectivity
+
+## Error Handling
+- Centralized error extraction and formatting
+- Detailed logging for debugging
+
+## Performance
+- Batch operations for efficiency
+- Chunked reading for large files
+- Concurrent processing where possible
+
+## Code Quality
+Follows SOLID principles:
+- Single Responsibility Principle (SRP)
+- Open/Closed Principle (OCP)
+- KISS and DRY principles
+
+## Security
+- Input validation
+- Secure API key handling
+- Error handling without exposing sensitive data

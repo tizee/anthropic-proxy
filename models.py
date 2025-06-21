@@ -211,40 +211,26 @@ class Message(BaseModel):
     
     def extract_text_content(self) -> str:
         """
-        Extract text content from message, excluding tool-related blocks.
-        Returns a string with just the text content.
+        Extract only text content from message, completely ignoring tool-related blocks.
+        Returns a string with just the actual text content, no tool placeholders.
         """
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, list):
             content_parts = []
-            has_tool_use = False
             
             for block in self.content:
                 if isinstance(block, ContentBlockText):
                     content_parts.append(block.text)
-                elif isinstance(block, ContentBlockToolUse):
-                    has_tool_use = True
-                    # Add placeholder for tool use
-                    content_parts.append(f"[Used tool: {block.name}]")
                 elif isinstance(block, dict):
                     if block.get("type") == "text" and "text" in block:
                         content_parts.append(block["text"])
-                    elif block.get("type") == "tool_use":
-                        has_tool_use = True
-                        content_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
+                # Completely ignore tool_use and tool_result blocks
             
-            content_text = "".join(content_parts)
-            
-            # Return meaningful content, avoid empty strings when there are tool uses
-            if content_text.strip():
-                return content_text
-            elif has_tool_use:
-                return "[Tool usage only]"
-            else:
-                return "..."
+            content_text = "".join(content_parts).strip()
+            return content_text if content_text else ""
         
-        return "..."
+        return ""
 
 
 class Tool(BaseModel):
