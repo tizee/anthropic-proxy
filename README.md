@@ -2,6 +2,8 @@
 
 **Claude Code Version: 1.0.31**
 
+Tested Models: DeepSeek/Gemini
+
 A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using LiteLLM. Features intelligent routing based on token count, thinking flag, and model name.
 
 ## Key Features
@@ -16,6 +18,7 @@ A proxy server that translates Anthropic API requests to multiple model provider
 ### Prerequisites
 - Python 3.9+
 - [uv](https://github.com/astral-sh/uv) (recommended)
+- [make](https://www.gnu.org/software/make/) (optional but recommended)
 - API keys for desired providers
 
 ### Installation
@@ -43,12 +46,37 @@ ROUTER_DEFAULT="custom/deepseek-v3-250324"     # Fallback
 
 ### Running the Server
 ```bash
+make run
+```
+
+Or manually:
+```bash
 uv run uvicorn server:app --host 0.0.0.0 --port 8082 --reload
 ```
 
 ### Connecting Claude Code
 ```bash
 ANTHROPIC_BASE_URL=http://localhost:8082 claude
+```
+
+### Testing
+```bash
+make test
+```
+
+Or manually:
+```bash
+uv run tests.py
+```
+
+### Linting
+```bash
+make lint
+```
+
+### Formatting
+```bash
+make format
 ```
 
 ## Custom Models
