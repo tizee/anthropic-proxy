@@ -91,7 +91,7 @@ class Config:
             "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3-250324"),
             "think": os.environ.get("ROUTER_THINK", "deepseek-r1-250528"),
             "long_context": os.environ.get("ROUTER_LONG_CONTEXT", "gemini-2.5-pro"),
-            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3-250324"),
+            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-r1-250324"),
         }
 
         # Token thresholds
@@ -968,6 +968,118 @@ def _extract_message_content(content) -> str:
     return "..."
 
 
+def _compare_request_data(claude_request: MessagesRequest, openai_request: Dict[str, Any]) -> None:
+    """Compare original Claude request with converted OpenAI request and log differences."""
+    try:
+        # Count Claude request data
+        claude_tools_count = len(claude_request.tools) if claude_request.tools else 0
+        claude_messages_count = len(claude_request.messages)
+        claude_has_tool_choice = claude_request.tool_choice is not None
+        claude_has_system = claude_request.system is not None
+
+        # Count OpenAI request data
+        openai_tools_count = len(openai_request.get("tools", []))
+        openai_messages_count = len(openai_request.get("messages", []))
+        openai_has_tool_choice = "tool_choice" in openai_request
+        openai_has_system = any(msg.get("role") == "system" for msg in openai_request.get("messages", []))
+
+        # Log comparison
+        logger.info(f"REQUEST CONVERSION COMPARISON:")
+        logger.info(f"  Claude -> OpenAI Tools: {claude_tools_count} -> {openai_tools_count}")
+        logger.info(f"  Claude -> OpenAI Messages: {claude_messages_count} -> {openai_messages_count}")
+        logger.info(f"  Claude -> OpenAI Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}")
+        logger.info(f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}")
+
+        # Check for mismatches and log errors
+        errors = []
+        if claude_tools_count != openai_tools_count:
+            errors.append(f"Tools count mismatch: Claude({claude_tools_count}) != OpenAI({openai_tools_count})")
+        if claude_has_tool_choice != openai_has_tool_choice:
+            errors.append(f"Tool choice mismatch: Claude({claude_has_tool_choice}) != OpenAI({openai_has_tool_choice})")
+
+        # Note: Messages count may differ if system message is extracted/merged
+        if claude_messages_count != openai_messages_count and not claude_has_system:
+            errors.append(f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})")
+
+        if errors:
+            logger.error(f"REQUEST CONVERSION ERRORS: {'; '.join(errors)}")
+        else:
+            logger.info("REQUEST CONVERSION: All counts match ✓")
+
+    except Exception as e:
+        logger.error(f"Error in request comparison: {e}")
+
+
+def _compare_response_data(openai_response, claude_response: MessagesResponse) -> None:
+    """Compare OpenAI response with converted Claude response and log differences."""
+    try:
+        # Count OpenAI response data
+        openai_content_blocks = 0
+        openai_tool_calls = 0
+        openai_finish_reason = None
+
+        if hasattr(openai_response, "choices") and openai_response.choices:
+            choice = openai_response.choices[0]
+            if hasattr(choice, "message") and choice.message:
+                if hasattr(choice.message, "content") and choice.message.content:
+                    openai_content_blocks = 1  # OpenAI has single content field
+                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                    openai_tool_calls = len(choice.message.tool_calls)
+            if hasattr(choice, "finish_reason"):
+                openai_finish_reason = choice.finish_reason
+
+        # Count Claude response data
+        claude_content_blocks = len(claude_response.content) if claude_response.content else 0
+        claude_tool_use_blocks = sum(1 for block in claude_response.content if hasattr(block, 'type') and block.type == 'tool_use') if claude_response.content else 0
+        claude_stop_reason = claude_response.stop_reason
+
+        # Log comparison
+        logger.info(f"RESPONSE CONVERSION COMPARISON:")
+        logger.info(f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}")
+        logger.info(f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}")
+        logger.info(f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}")
+
+        # Check for mismatches and log errors
+        errors = []
+        if openai_tool_calls != claude_tool_use_blocks:
+            errors.append(f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})")
+
+        if errors:
+            logger.error(f"RESPONSE CONVERSION ERRORS: {'; '.join(errors)}")
+        else:
+            logger.info("RESPONSE CONVERSION: Key counts match ✓")
+
+    except Exception as e:
+        logger.error(f"Error in response comparison: {e}")
+
+
+def _compare_streaming_data(openai_chunks_count: int, claude_events_count: int) -> None:
+    """Compare streaming data counts and log differences."""
+    try:
+        logger.info(f"STREAMING CONVERSION COMPARISON:")
+        logger.info(f"  OpenAI Chunks Received: {openai_chunks_count}")
+        logger.info(f"  Claude Events Estimated: {claude_events_count}")
+
+        # Calculate ratio and assess if it's reasonable
+        # Typical ratios: 1 OpenAI chunk -> 2-4 Claude events (start, delta, stop, message_delta)
+        if openai_chunks_count > 0:
+            ratio = claude_events_count / openai_chunks_count
+            logger.info(f"  Conversion Ratio: {ratio:.1f} Claude events per OpenAI chunk")
+
+            # Reasonable range: 1.5-6 events per chunk (depending on content complexity)
+            if ratio < 1.5:
+                logger.warning("STREAMING CONVERSION WARNING: Low event ratio - may indicate missing events")
+            elif ratio > 6.0:
+                logger.warning("STREAMING CONVERSION WARNING: High event ratio - may indicate duplicate events")
+            else:
+                logger.info("STREAMING CONVERSION: Event ratio within expected range ✓")
+        else:
+            logger.warning("STREAMING CONVERSION WARNING: No OpenAI chunks received")
+
+    except Exception as e:
+        logger.error(f"Error in streaming comparison: {e}")
+
+
 def convert_anthropic_to_openai_request(
     request: MessagesRequest, model: str
 ) -> Dict[str, Any]:
@@ -1077,6 +1189,10 @@ def convert_anthropic_to_openai_request(
     logger.debug(
         f"openai request: {request_params}"
     )
+
+    # Compare request data and log any mismatches
+    _compare_request_data(request, request_params)
+
     # Return the request with validated components
     # Individual components (messages, tools) are already validated using OpenAI SDK types
     return request_params
@@ -1217,53 +1333,6 @@ def _process_image_content_block(block, image_parts: List[Dict]) -> None:
             }
         )
 
-
-def _finalize_user_message(
-    text_parts: List[str],
-    image_parts: List[Dict],
-    is_gemini_model: bool,
-    is_openai_model: bool,
-    is_custom_model: bool,
-    litellm_messages: List[Dict],
-    pending_tool_messages: List[Dict],
-) -> None:
-    """Finalize user message based on model type."""
-    if text_parts or image_parts:
-        if is_openai_model or is_custom_model:
-            # OpenAI/Custom: Convert to simple string format
-            text_content = "".join(text_parts).strip()
-            if image_parts:
-                text_content += (
-                    "\n[Note: Image content present but not displayed in text format]"
-                )
-            if text_content:
-                litellm_messages.append(
-                    {"role": Constants.ROLE_USER, "content": text_content}
-                )
-        else:
-            # Gemini: Support structured content
-            content_parts = []
-            text_content = "".join(text_parts).strip()
-            if text_content:
-                content_parts.append(
-                    {"type": Constants.CONTENT_TEXT, "text": text_content}
-                )
-            content_parts.extend(image_parts)
-
-            litellm_messages.append(
-                {
-                    "role": Constants.ROLE_USER,
-                    "content": content_parts[0]["text"]
-                    if len(content_parts) == 1
-                    and content_parts[0]["type"] == Constants.CONTENT_TEXT
-                    else content_parts,
-                }
-            )
-    # Add any pending tool messages (only for Gemini)
-    if is_gemini_model:
-        litellm_messages.extend(pending_tool_messages)
-
-
 def clean_tool_markers(content: str) -> str:
     """Clean up tool call markers and malformed content (DeepSeek-R1 style)."""
     if not content:
@@ -1375,68 +1444,6 @@ def parse_tool_calls_from_content(content: str) -> list:
         logger.debug("No tool calls found using standard patterns")
 
     return tool_calls
-
-
-def _parse_litellm_response_content(litellm_response, default_response_id: str) -> dict:
-    """Extract response data from LiteLLM response in various formats."""
-    response_data = {
-        "response_id": default_response_id,
-        "raw_content": "",
-        "tool_calls": None,
-        "thinking_content": None,
-        "finish_reason": "stop",
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-    }
-
-    # Handle LiteLLM ModelResponse object format
-    if hasattr(litellm_response, "choices") and hasattr(litellm_response, "usage"):
-        choices = litellm_response.choices
-        message = choices[0].message if choices else None
-        response_data["raw_content"] = getattr(message, "content", "") or ""
-        response_data["tool_calls"] = getattr(message, "tool_calls", None)
-
-        # Extract reasoning_content from deepseek reasoning models
-        if hasattr(message, "reasoning_content") and message.reasoning_content:
-            response_data["thinking_content"] = message.reasoning_content
-            logger.debug(
-                f"Extracted reasoning_content: {len(message.reasoning_content)} characters"
-            )
-
-        response_data["finish_reason"] = choices[0].finish_reason if choices else "stop"
-        response_data["response_id"] = getattr(
-            litellm_response, "id", default_response_id
-        )
-
-        if hasattr(litellm_response, "usage"):
-            usage = litellm_response.usage
-            response_data["prompt_tokens"] = getattr(usage, "prompt_tokens", 0)
-            response_data["completion_tokens"] = getattr(usage, "completion_tokens", 0)
-
-    # Handle dictionary response format
-    elif isinstance(litellm_response, dict):
-        choices = litellm_response.get("choices", [])
-        message = choices[0].get("message", {}) if choices else {}
-        response_data["raw_content"] = message.get("content", "") or ""
-        response_data["tool_calls"] = message.get("tool_calls")
-
-        # Extract reasoning_content from deepseek reasoning models (dict format)
-        if message.get("reasoning_content"):
-            response_data["thinking_content"] = message.get("reasoning_content")
-            logger.debug(
-                f"Extracted reasoning_content (dict): {len(message.get('reasoning_content'))} characters"
-            )
-
-        response_data["finish_reason"] = (
-            choices[0].get("finish_reason", "stop") if choices else "stop"
-        )
-        usage = litellm_response.get("usage", {})
-        response_data["prompt_tokens"] = usage.get("prompt_tokens", 0)
-        response_data["completion_tokens"] = usage.get("completion_tokens", 0)
-        response_data["response_id"] = litellm_response.get("id", default_response_id)
-
-    return response_data
-
 
 def _extract_tool_call_data(tool_call) -> tuple:
     """Extract tool call data from different formats."""
@@ -1686,7 +1693,8 @@ def convert_openai_to_anthropic(
                     name = getattr(block, 'name', 'unknown')
                     logger.debug(f"    Tool: {name}")
 
-        return MessagesResponse(
+        # Create Claude response
+        claude_response = MessagesResponse(
             id=response_id,
             model=original_request.original_model or original_request.model,
             role=Constants.ROLE_ASSISTANT,
@@ -1695,6 +1703,11 @@ def convert_openai_to_anthropic(
             stop_sequence=None,
             usage=Usage(input_tokens=prompt_tokens, output_tokens=completion_tokens),
         )
+
+        # Compare response data and log any mismatches
+        _compare_response_data(openai_response, claude_response)
+
+        return claude_response
 
     except Exception as e:
         logger.error(f"Error converting response: {e}")
@@ -1842,11 +1855,16 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         thinking_block_started = False
         thinking_block_closed = False
 
+        # Streaming comparison tracking
+        openai_chunks_received = 0
+
         logger.debug(f"Starting streaming for model: {original_request.model}")
 
         # Process each chunk
         async for chunk in response_generator:
             try:
+                # Count OpenAI chunks received
+                openai_chunks_received += 1
                 # Check if this is the end of the response with usage data
                 if hasattr(chunk, "usage") and chunk.usage is not None:
                     if hasattr(chunk.usage, "prompt_tokens"):
@@ -2290,6 +2308,13 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                 )
                 logger.debug("Updated session stats with fallback streaming estimates")
 
+        # Compare streaming data counts and log any mismatches
+        # For streaming, we estimate Claude events based on typical conversion patterns
+        # Typical patterns: message_start + ping + content_blocks + message_delta + message_stop
+        # Tool use streams: ~3-4 events per chunk, Text streams: ~2-3 events per chunk
+        estimated_claude_events = openai_chunks_received * 3  # More realistic estimate
+        _compare_streaming_data(openai_chunks_received, estimated_claude_events)
+
 
 @app.post("/v1/messages")
 async def create_message(request: MessagesRequest, raw_request: Request):
@@ -2305,7 +2330,7 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         # Check if thinking is enabled
         has_thinking = False
         if request.thinking is not None:
-            has_thinking = request.thinking.model_dump().get("type") == "enabled"
+            has_thinking = request.thinking.type == "enabled"
             logger.debug(
                 f"🧠 Thinking type check: {request.thinking.type}, enabled: {has_thinking}"
             )
@@ -2542,7 +2567,7 @@ async def test_message_conversion(request: MessagesRequest, raw_request: Request
     """
     Test endpoint for direct message format conversion without routing.
 
-    This endpoint converts Anthropic format to LiteLLM format and sends the request
+    This endpoint converts Anthropic format to OpenAI format and sends the request
     directly to the specified model without going through the intelligent routing system.
     Useful for testing specific model integrations and message format conversion.
     """

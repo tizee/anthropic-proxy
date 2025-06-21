@@ -1276,11 +1276,11 @@ def test_request(
     """Run a test with the given request data."""
     print(f"\n{'=' * 20} RUNNING TEST: {test_name} {'=' * 20}")
 
-    # Check if this is a direct conversion test (Gemini model or specific test cases)
+    # Check if this is a third-party model (not the default MODEL)
     model_name = getattr(request_data, 'model', '') if hasattr(request_data, 'model') else ''
-    if not model_name.startswith("claude") or "gemini" in test_name:
-        print("Gemini model/test detected, using direct conversion test endpoint")
-        return test_direct_conversion(test_name, request_data, check_tools, compare_with_anthropic)
+    if model_name != MODEL:
+        print(f"Third-party model ({model_name}) detected, using direct conversion test endpoint")
+        return test_direct_conversion(test_name, request_data, check_tools, compare_with_anthropic=False)
 
     # Convert Pydantic models to dictionaries for serialization
     serialized_data = serialize_request_data(request_data)
@@ -1337,15 +1337,8 @@ def test_request(
             return False, None
 
         if compare_with_anthropic:
-            # When comparing, use the original model for Anthropic API
+            # For Claude models, use the same model for Anthropic API comparison
             anthropic_data = serialized_data.copy()
-            # Don't replace model name for custom models - keep original for proxy, use Claude model for Anthropic
-            model_name = serialized_data.get("model", "")
-            if not model_name.startswith("claude"):
-                # For custom models, use Claude model for Anthropic comparison
-                anthropic_data["model"] = MODEL
-                print(f"Custom model test: Proxy will use {model_name}, Anthropic will use {MODEL}")
-
             print("\nSending to Anthropic API...")
             anthropic_response = get_response(
                 ANTHROPIC_API_URL, anthropic_headers, anthropic_data
@@ -1845,16 +1838,14 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
             print(f"\n❌ Test {test_name} failed! Proxy stream was empty.")
             return False, None
 
+        # Check if this is a third-party model (not the default MODEL)
+        model_name = serialized_data.get("model", "")
+        if model_name != MODEL:
+            print(f"Third-party model streaming test ({model_name}): Skipping comparison with Anthropic API")
+            compare_with_anthropic = False
+        
         if compare_with_anthropic:
             anthropic_data = serialized_data.copy()
-            # Don't replace model name for custom models - keep original for proxy, use Claude model for Anthropic
-            model_name = serialized_data.get("model", "")
-            if not model_name.startswith("custom/"):
-                anthropic_data["model"] = MODEL
-            else:
-                # For custom models, use Claude model for Anthropic comparison
-                anthropic_data["model"] = MODEL
-                print(f"Custom model streaming test: Proxy will use {model_name}, Anthropic will use {MODEL}")
             if not anthropic_data.get("stream"):
                 anthropic_data["stream"] = True
 
