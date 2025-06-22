@@ -61,7 +61,6 @@ session_stats = SessionStats()
 # Load environment variables from .env file
 load_dotenv()
 
-
 class ModelDefaults:
     """Default values and limits for model configurations"""
 
@@ -271,7 +270,6 @@ app = FastAPI()
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
-
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file."""
@@ -358,7 +356,7 @@ def load_custom_models(config_file=None):
 def initialize_custom_models():
     """Initialize custom models and API keys. Called when running as main."""
     load_custom_models()
-    
+
     # Get custom API keys from environment and store in config
     for model_config in CUSTOM_OPENAI_MODELS.values():
         api_key_name = model_config.get("api_key_name")
@@ -369,6 +367,8 @@ def initialize_custom_models():
             else:
                 logger.warning(f"Missing API key for {api_key_name}")
 
+# Initialize custom models and API keys
+initialize_custom_models()
 
 def generate_thinking_signature(thinking_content: str) -> str:
     """Generate a signature for thinking content using SHA-256 hash."""
@@ -1133,7 +1133,7 @@ def convert_anthropic_to_openai_request(
 
     # Convert system message if present
     if request.system:
-        system_content = _extract_system_content(request.system)
+        system_content = request.extract_system_content()
         if system_content:
             # Validate using TypedDict type (returns dict)
             system_msg: ChatCompletionSystemMessageParam = {
@@ -1145,118 +1145,17 @@ def convert_anthropic_to_openai_request(
     # Convert messages using proper message splitting approach (based on Gemini proxy)
     for msg in request.messages:
         if msg.role == "user":
-            # Process content blocks with proper tool_result splitting
-            if isinstance(msg.content, str):
-                # Handle special case: Claude Code interrupted messages
-                if msg.content.startswith("[Request interrupted by user for tool use]"):
-                    # Split the interrupted message
-                    interrupted_prefix = "[Request interrupted by user for tool use]"
-                    remaining_content = msg.content[len(interrupted_prefix) :].strip()
-
-                    if remaining_content:
-                        # Add the real user message after interruption
-                        openai_messages.append(
-                            {"role": "user", "content": remaining_content}
-                        )
-                    else:
-                        # If no remaining content, treat the interruption itself as the user message
-                        openai_messages.append({"role": "user", "content": msg.content})
-                else:
-                    openai_messages.append({"role": "user", "content": msg.content})
-                continue
-
-            # Process content blocks in order, maintaining structure
-            current_text_parts = []
-            content_parts = []
-            pending_tool_messages = []
-
-            for block in msg.content:
-                block_type = block.type if hasattr(block, "type") else block.get("type")
-                
-                if block_type == "text":
-                    text_content = (
-                        block.text if hasattr(block, "text") else block.get("text", "")
-                    )
-                    current_text_parts.append(text_content)
-                    
-                elif block_type in ["image", "thinking"]:
-                    # Process any accumulated text first
-                    if current_text_parts:
-                        text_content = "".join(current_text_parts)
-                        if text_content:
-                            content_parts.append({"type": "text", "text": text_content})
-                        current_text_parts.clear()
-                    
-                    # Convert and add non-text block using utility function
-                    openai_content = convert_content_block_to_openai(block)
-                    if openai_content:  # None for thinking blocks
-                        content_parts.append(openai_content)
-                        
-                elif block_type == "tool_result":
-                    # Process any remaining text first
-                    if current_text_parts:
-                        text_content = "".join(current_text_parts)
-                        if text_content:
-                            content_parts.append({"type": "text", "text": text_content})
-                        current_text_parts.clear()
-                    
-                    # CRITICAL: Split user message when tool_result is encountered
-                    if content_parts:
-                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                            openai_messages.append(
-                                {"role": "user", "content": content_parts[0]["text"]}
-                            )
-                        else:
-                            openai_messages.append(
-                                {"role": "user", "content": content_parts}
-                            )
-                        content_parts.clear()
-
-                    # Add tool result as separate "tool" role message
-                    tool_message = convert_content_block_to_openai(block)
-                    if tool_message:
-                        pending_tool_messages.append(tool_message)
-
-            # Process any remaining content
-            if current_text_parts:
-                text_content = "".join(current_text_parts)
-                if text_content:
-                    content_parts.append({"type": "text", "text": text_content})
-
-            if content_parts:
-                if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                    openai_messages.append(
-                        {"role": "user", "content": content_parts[0]["text"]}
-                    )
-                else:
-                    openai_messages.append(
-                        {"role": "user", "content": content_parts}
-                    )
-
-            # Add any pending tool messages
-            openai_messages.extend(pending_tool_messages)
+            # Use the new method to convert user messages (handles tool_result splitting, etc.)
+            user_messages = msg.to_openai_messages()
+            openai_messages.extend(user_messages)
 
         elif msg.role == "assistant":
-            # Extract tool calls and text content
-            tool_calls = msg.extract_tool_calls()
-            text_content = msg.extract_text_content()
-
-            assistant_msg = {"role": "assistant"}
-
-            # Handle content for assistant messages
-            if text_content:
-                assistant_msg["content"] = text_content
-            else:
-                assistant_msg["content"] = None
-
-            if tool_calls:
-                assistant_msg["tool_calls"] = tool_calls
-
-            # Only add message if it has actual content or tool calls
-            if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
-                openai_messages.append(assistant_msg)
+            # Use the new method to convert assistant messages
+            assistant_message = msg.to_openai_assistant_message()
+            if assistant_message:
+                openai_messages.append(assistant_message)
                 logger.debug(
-                    f"🔧 Assistant message: content={bool(text_content)}, tool_calls={len(tool_calls) if tool_calls else 0}"
+                    f"🔧 Assistant message: content={bool(assistant_message.get('content'))}, tool_calls={len(assistant_message.get('tool_calls', []))}"
                 )
         else:
             # Fallback for other roles
@@ -1308,12 +1207,12 @@ def convert_anthropic_to_openai_request(
     # Handle max_tokens for custom models vs standard models
     if model in CUSTOM_OPENAI_MODELS:
         max_tokens = min(
-            CUSTOM_OPENAI_MODELS[model].get("max_tokens", request.max_tokens), 
+            CUSTOM_OPENAI_MODELS[model].get("max_tokens", request.max_tokens),
             request.max_tokens
         )
     else:
         max_tokens = request.max_tokens
-    
+
     request_params = {
         "model": model,
         "messages": openai_messages,
@@ -3031,9 +2930,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
-
-    # Initialize custom models and API keys
-    initialize_custom_models()
 
     # Configure uvicorn to run with minimal logs
     uvicorn.run(
