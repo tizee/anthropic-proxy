@@ -7,8 +7,6 @@ from pydantic import BaseModel, field_validator, ConfigDict
 from typing import Dict, List, Optional, Union, Literal, Any
 
 class ToolChoiceAuto(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-    
     type: Literal["auto"] = "auto"
     disable_parallel_tool_use: Optional[bool] = None
 
@@ -17,8 +15,6 @@ class ToolChoiceAuto(BaseModel):
 
 
 class ToolChoiceAny(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-    
     type: Literal["any"] = "any"
     disable_parallel_tool_use: Optional[bool] = None
 
@@ -27,8 +23,6 @@ class ToolChoiceAny(BaseModel):
 
 
 class ToolChoiceTool(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-    
     type: Literal["tool"] = "tool"
     name: str
     disable_parallel_tool_use: Optional[bool] = None
@@ -41,8 +35,6 @@ class ToolChoiceTool(BaseModel):
 
 
 class ToolChoiceNone(BaseModel):
-    model_config = ConfigDict(exclude_none=True)
-    
     type: Literal["none"] = "none"
 
     def to_openai(self) -> None:
@@ -57,10 +49,50 @@ class ContentBlockText(BaseModel):
     type: Literal["text"]
     text: str
 
+    def to_openai(self) -> Dict[str, str]:
+        """Convert Claude text block to OpenAI text format."""
+        return {"type": "text", "text": self.text}
+
 
 class ContentBlockImage(BaseModel):
     type: Literal["image"]
     source: Dict[str, Any]
+
+    def to_openai(self) -> Optional[Dict[str, Any]]:
+        """
+        Convert Claude image block to OpenAI image_url format.
+        
+        Claude format:
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAB..."
+            }
+        }
+        
+        OpenAI format:
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAB..."
+            }
+        }
+        """
+        if (
+            isinstance(self.source, dict)
+            and self.source.get("type") == "base64"
+            and "media_type" in self.source
+            and "data" in self.source
+        ):
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{self.source['media_type']};base64,{self.source['data']}"
+                },
+            }
+        return None
 
 
 class ContentBlockToolUse(BaseModel):
@@ -68,11 +100,11 @@ class ContentBlockToolUse(BaseModel):
     id: str
     name: str
     input: Dict[str, Any]
-    
+
     def to_openai(self) -> Dict[str, Any]:
         """
         Convert Claude tool_use to OpenAI tool_call format.
-        
+
         Claude format:
         {
             "type": "tool_use",
@@ -80,7 +112,7 @@ class ContentBlockToolUse(BaseModel):
             "name": "get_stock_price",
             "input": { "ticker": "^GSPC" }
         }
-        
+
         OpenAI format:
         {
             "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
@@ -92,12 +124,12 @@ class ContentBlockToolUse(BaseModel):
         }
         """
         import json
-        
+
         try:
             arguments_str = json.dumps(self.input, ensure_ascii=False, separators=(',', ':'))
         except (TypeError, ValueError):
             arguments_str = "{}"
-            
+
         return {
             "id": self.id,
             "type": "function",
@@ -112,18 +144,18 @@ class ContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: Union[str, List[Dict[str, Any]], Dict[str, Any], List[Any], Any]
-    
+
     def process_content(self) -> str:
         """
         Process Claude tool_result content into a string format.
-        
+
         Claude supports various content formats:
         - Simple string: "259.75 USD"
         - List with text blocks: [{"type": "text", "text": "result"}]
         - Complex nested structures
         """
         import json
-        
+
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, list):
@@ -150,18 +182,18 @@ class ContentBlockToolResult(BaseModel):
         else:
             # Fallback: serialize anything else
             return json.dumps(self.content) if self.content is not None else ""
-    
+
     def to_openai(self) -> Dict[str, Any]:
         """
         Convert Claude tool_result to OpenAI tool role message format.
-        
+
         Claude format:
         {
             "type": "tool_result",
             "tool_use_id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
             "content": "259.75 USD"
         }
-        
+
         OpenAI format:
         {
             "role": "tool",
@@ -180,6 +212,10 @@ class ContentBlockThinking(BaseModel):
     type: Literal["thinking"]
     thinking: str
     signature: Optional[str] = None
+
+    def to_openai(self) -> None:
+        """Thinking blocks should be filtered out for OpenAI format."""
+        return None
 
 
 class SystemContent(BaseModel):
@@ -201,14 +237,14 @@ class Message(BaseModel):
             ]
         ],
     ]
-    
+
     def extract_tool_calls(self) -> List[Dict[str, Any]]:
         """
         Extract tool calls from Claude message content for OpenAI format.
         Returns a list of OpenAI tool_call objects.
         """
         tool_calls = []
-        
+
         if isinstance(self.content, list):
             for block in self.content:
                 if isinstance(block, ContentBlockToolUse):
@@ -217,16 +253,16 @@ class Message(BaseModel):
                     # Fallback for dict format
                     tool_use = ContentBlockToolUse.model_validate(block)
                     tool_calls.append(tool_use.to_openai())
-                    
+
         return tool_calls
-    
+
     def extract_tool_results(self) -> List[Dict[str, Any]]:
         """
         Extract tool result messages from Claude message content for OpenAI format.
         Returns a list of OpenAI tool role message objects.
         """
         tool_messages = []
-        
+
         if isinstance(self.content, list):
             for block in self.content:
                 if isinstance(block, ContentBlockToolResult):
@@ -235,9 +271,9 @@ class Message(BaseModel):
                     # Fallback for dict format
                     tool_result = ContentBlockToolResult.model_validate(block)
                     tool_messages.append(tool_result.to_openai())
-                    
+
         return tool_messages
-    
+
     def extract_text_content(self) -> str:
         """
         Extract only text content from message, completely ignoring tool-related blocks.
@@ -247,7 +283,7 @@ class Message(BaseModel):
             return self.content
         elif isinstance(self.content, list):
             content_parts = []
-            
+
             for block in self.content:
                 if isinstance(block, ContentBlockText):
                     content_parts.append(block.text)
@@ -255,10 +291,10 @@ class Message(BaseModel):
                     if block.get("type") == "text" and "text" in block:
                         content_parts.append(block["text"])
                 # Completely ignore tool_use and tool_result blocks
-            
+
             content_text = "".join(content_parts).strip()
             return content_text if content_text else ""
-        
+
         return ""
 
 
@@ -357,3 +393,75 @@ class MessagesResponse(BaseModel):
     ] = None
     stop_sequence: Optional[str] = None
     usage: Usage
+
+
+# Utility function for converting content blocks to OpenAI format
+def convert_content_block_to_openai(block: Union[ContentBlockText, ContentBlockImage, ContentBlockToolUse, ContentBlockToolResult, ContentBlockThinking, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Convert Claude content block to OpenAI format, handling both Pydantic models and dict formats.
+    
+    Args:
+        block: Content block in either Pydantic model or dict format
+    
+    Returns:
+        OpenAI-formatted content or None if block should be filtered out
+    """
+    # Handle Pydantic model instances
+    if isinstance(block, (ContentBlockText, ContentBlockImage, ContentBlockToolUse, ContentBlockToolResult, ContentBlockThinking)):
+        return block.to_openai()
+    
+    # Handle dict format (legacy/raw API)
+    elif isinstance(block, dict):
+        block_type = block.get("type")
+        
+        if block_type == "text":
+            return {"type": "text", "text": block.get("text", "")}
+        
+        elif block_type == "image":
+            source = block.get("source", {})
+            if (
+                isinstance(source, dict)
+                and source.get("type") == "base64"
+                and "media_type" in source
+                and "data" in source
+            ):
+                return {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{source['media_type']};base64,{source['data']}"
+                    },
+                }
+            return None
+        
+        elif block_type == "tool_use":
+            import json
+            tool_input = block.get("input", {})
+            try:
+                arguments_str = json.dumps(tool_input, ensure_ascii=False, separators=(',', ':'))
+            except (TypeError, ValueError):
+                arguments_str = "{}"
+            
+            return {
+                "id": block.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": block.get("name", ""),
+                    "arguments": arguments_str
+                }
+            }
+        
+        elif block_type == "tool_result":
+            # For tool_result in dict format, create a temporary ContentBlockToolResult to reuse logic
+            temp_block = ContentBlockToolResult(
+                type="tool_result",
+                tool_use_id=block.get("tool_use_id", ""),
+                content=block.get("content", "")
+            )
+            return temp_block.to_openai()
+        
+        elif block_type == "thinking":
+            # Filter out thinking blocks
+            return None
+    
+    # Unknown format
+    return None

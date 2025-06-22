@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 # Import Pydantic models from models.py (separate from server.py to avoid starting the server)
 from models import (
+    ClaudeToolChoice,
     Tool,
     MessagesRequest,
     ThinkingConfigEnabled,
@@ -45,6 +46,8 @@ from models import (
     ContentBlockToolUse,
     Message,
     SystemContent,
+    ToolChoiceAuto,
+    ToolChoiceAny
 )
 
 # Load environment variables
@@ -57,7 +60,7 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 PROXY_API_URL = "http://127.0.0.1:8082/v1/messages"
 PROXY_TEST_API_URL = "http://127.0.0.1:8082/v1/messages/test_conversion"
 ANTHROPIC_VERSION = "2023-06-01"
-# MODEL = "claude-3-7-sonnet-20250219"
+MODEL_THINKING = "claude-3-7-sonnet-20250219"
 MODEL = "claude-3-haiku-20240307"  # Change to your preferred model
 
 # Headers
@@ -66,6 +69,9 @@ anthropic_headers = {
     "anthropic-version": ANTHROPIC_VERSION,
     "content-type": "application/json",
 }
+
+tool_choice_required = ToolChoiceAny(type="any")
+tool_choice_auto= ToolChoiceAuto(type="auto")
 
 proxy_headers = {
     "x-api-key": PROXY_API_KEY,
@@ -336,7 +342,7 @@ TEST_SCENARIOS = {
         max_tokens=1025,
         messages=[Message(role="user", content="What is 135 + 7.5 divided by 2.5?")],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Todo tools
     "todo_write": MessagesRequest(
@@ -349,14 +355,14 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_write_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     "todo_read": MessagesRequest(
         model=MODEL,
         max_tokens=1025,
         messages=[Message(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Multiple tools
     "multi_tool": MessagesRequest(
@@ -372,7 +378,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[weather_tool, search_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Multi-turn conversation
     "multi_turn": MessagesRequest(
@@ -393,7 +399,7 @@ TEST_SCENARIOS = {
             ),
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Content blocks
     "content_blocks": MessagesRequest(
@@ -411,7 +417,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool, weather_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Simple streaming test
     "simple_stream": MessagesRequest(
@@ -429,7 +435,7 @@ TEST_SCENARIOS = {
         stream=True,
         messages=[Message(role="user", content="What is 135 + 17.5 divided by 2.5?")],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Todo tools with streaming
     "todo_write_stream": MessagesRequest(
@@ -443,7 +449,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_write_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     "todo_read_stream": MessagesRequest(
         model=MODEL,
@@ -451,11 +457,11 @@ TEST_SCENARIOS = {
         stream=True,
         messages=[Message(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Thinking capability tests
     "thinking_simple": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
@@ -466,7 +472,7 @@ TEST_SCENARIOS = {
         ],
     ),
     "thinking_math": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
@@ -477,7 +483,7 @@ TEST_SCENARIOS = {
         ],
     ),
     "thinking_with_tools": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
@@ -487,7 +493,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_auto,
     ),
     "thinking_keyword": MessagesRequest(
         model=MODEL,
@@ -500,7 +506,7 @@ TEST_SCENARIOS = {
         ],
     ),
     "thinking_complex_stream": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1536,
         stream=True,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
@@ -520,7 +526,7 @@ TEST_SCENARIOS = {
             Message(role="user", content="Calculate 25 * 8 using the calculator tool.")
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Gemini tool use streaming test
     "gemini_tool_test_stream": MessagesRequest(
@@ -534,7 +540,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[weather_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Gemini incompatible schema test - non-streaming
     "gemini_incompatible_schema_test": MessagesRequest(
@@ -547,7 +553,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[gemini_incompatible_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Gemini incompatible schema test - streaming
     "gemini_incompatible_schema_test_stream": MessagesRequest(
@@ -561,7 +567,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[gemini_incompatible_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # DeepSeek R1 thinking + tool use test
     "deepseek_thinking_tools": MessagesRequest(
@@ -575,7 +581,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # DeepSeek R1 thinking + tool use streaming test
     "deepseek_thinking_tools_stream": MessagesRequest(
@@ -590,7 +596,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Read tool
     "claude_code_read_test_stream": MessagesRequest(
@@ -601,7 +607,7 @@ TEST_SCENARIOS = {
             Message(role="user", content="Use the Read tool to read the tests.py file.")
         ],
         tools=[read_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Bash tool
     "claude_code_bash_test_stream": MessagesRequest(
@@ -614,7 +620,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[bash_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - LS tool
     "claude_code_ls_test_stream": MessagesRequest(
@@ -628,7 +634,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[ls_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Grep tool
     "claude_code_grep_test_stream": MessagesRequest(
@@ -642,7 +648,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[grep_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Glob tool
     "claude_code_glob_test_stream": MessagesRequest(
@@ -653,7 +659,7 @@ TEST_SCENARIOS = {
             Message(role="user", content="Use the Glob tool to find all Python files.")
         ],
         tools=[glob_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - TodoWrite tool
     "claude_code_todowrite_test_stream": MessagesRequest(
@@ -667,7 +673,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_write_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - TodoRead tool
     "claude_code_todoread_test_stream": MessagesRequest(
@@ -681,7 +687,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[todo_read_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_required,
     ),
     # Claude Code interruption test - simulates tool use interruption
     "claude_code_interruption_test": MessagesRequest(
@@ -707,7 +713,7 @@ TEST_SCENARIOS = {
     ),
     # Streaming thinking tests
     "thinking_simple_stream": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
@@ -719,7 +725,7 @@ TEST_SCENARIOS = {
         ],
     ),
     "thinking_math_stream": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
@@ -731,7 +737,7 @@ TEST_SCENARIOS = {
         ],
     ),
     "thinking_with_tools_stream": MessagesRequest(
-        model=MODEL,
+        model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
         thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
@@ -742,7 +748,7 @@ TEST_SCENARIOS = {
             )
         ],
         tools=[calculator_tool],
-        tool_choice={"type": "any"},
+        tool_choice=tool_choice_auto,
     ),
     "thinking_keyword_stream": MessagesRequest(
         model=MODEL,
@@ -1295,7 +1301,7 @@ def test_request(
     model_name = (
         getattr(request_data, "model", "") if hasattr(request_data, "model") else ""
     )
-    if model_name != MODEL:
+    if model_name != MODEL and model_name != MODEL_THINKING:
         print(
             f"Third-party model ({model_name}) detected, using direct conversion test endpoint"
         )

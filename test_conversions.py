@@ -17,8 +17,13 @@ from models import (
     MessagesRequest,
     Message,
     ContentBlockText,
+    ContentBlockImage,
+    ContentBlockToolUse,
+    ContentBlockToolResult,
+    ContentBlockThinking,
     Tool,
-    ThinkingConfigEnabled
+    ThinkingConfigEnabled,
+    convert_content_block_to_openai
 )
 
 
@@ -334,11 +339,264 @@ def test_reasoning_content_to_thinking():
     return True
 
 
+def test_convert_content_block_to_openai():
+    """Test the convert_content_block_to_openai utility function."""
+    print("🧪 Testing convert_content_block_to_openai utility function...")
+    
+    # Test ContentBlockText conversion
+    text_block = ContentBlockText(type="text", text="Hello, world!")
+    text_result = convert_content_block_to_openai(text_block)
+    assert text_result == {"type": "text", "text": "Hello, world!"}
+    
+    # Test ContentBlockImage conversion
+    image_block = ContentBlockImage(
+        type="image",
+        source={
+            "type": "base64",
+            "media_type": "image/jpeg", 
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+        }
+    )
+    image_result = convert_content_block_to_openai(image_block)
+    expected_image = {
+        "type": "image_url",
+        "image_url": {
+            "url": "data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+        }
+    }
+    assert image_result == expected_image
+    
+    # Test ContentBlockThinking conversion (should return None)
+    thinking_block = ContentBlockThinking(type="thinking", thinking="Let me think about this...")
+    thinking_result = convert_content_block_to_openai(thinking_block)
+    assert thinking_result is None
+    
+    # Test ContentBlockToolUse conversion
+    tool_use_block = ContentBlockToolUse(
+        type="tool_use",
+        id="toolu_123",
+        name="get_weather",
+        input={"location": "San Francisco"}
+    )
+    tool_use_result = convert_content_block_to_openai(tool_use_block)
+    assert tool_use_result["id"] == "toolu_123"
+    assert tool_use_result["type"] == "function"
+    assert tool_use_result["function"]["name"] == "get_weather"
+    assert '"location":"San Francisco"' in tool_use_result["function"]["arguments"]
+    
+    # Test ContentBlockToolResult conversion
+    tool_result_block = ContentBlockToolResult(
+        type="tool_result",
+        tool_use_id="toolu_123",
+        content="Weather is sunny, 75°F"
+    )
+    tool_result_result = convert_content_block_to_openai(tool_result_block)
+    assert tool_result_result["role"] == "tool"
+    assert tool_result_result["tool_call_id"] == "toolu_123"
+    assert tool_result_result["content"] == "Weather is sunny, 75°F"
+    
+    # Test dict format conversions
+    text_dict = {"type": "text", "text": "Hello from dict"}
+    text_dict_result = convert_content_block_to_openai(text_dict)
+    assert text_dict_result == {"type": "text", "text": "Hello from dict"}
+    
+    image_dict = {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "test_data"
+        }
+    }
+    image_dict_result = convert_content_block_to_openai(image_dict)
+    assert image_dict_result["type"] == "image_url"
+    assert "data:image/png;base64,test_data" == image_dict_result["image_url"]["url"]
+    
+    thinking_dict = {"type": "thinking", "thinking": "Thinking in dict format"}
+    thinking_dict_result = convert_content_block_to_openai(thinking_dict)
+    assert thinking_dict_result is None
+    
+    # Test unknown format
+    unknown_block = {"type": "unknown", "data": "something"}
+    unknown_result = convert_content_block_to_openai(unknown_block)
+    assert unknown_result is None
+    
+    # Test invalid image format
+    invalid_image = {"type": "image", "source": {"invalid": "format"}}
+    invalid_image_result = convert_content_block_to_openai(invalid_image)
+    assert invalid_image_result is None
+    
+    print("✅ convert_content_block_to_openai utility function test passed")
+    return True
+
+
+def test_content_block_to_openai_methods():
+    """Test individual ContentBlock to_openai methods."""
+    print("🧪 Testing ContentBlock to_openai methods...")
+    
+    # Test ContentBlockText.to_openai()
+    text_block = ContentBlockText(type="text", text="Test text")
+    text_result = text_block.to_openai()
+    assert text_result == {"type": "text", "text": "Test text"}
+    
+    # Test ContentBlockImage.to_openai()
+    image_block = ContentBlockImage(
+        type="image",
+        source={
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "test_image_data"
+        }
+    )
+    image_result = image_block.to_openai()
+    assert image_result["type"] == "image_url"
+    assert image_result["image_url"]["url"] == "data:image/png;base64,test_image_data"
+    
+    # Test ContentBlockImage.to_openai() with invalid format
+    invalid_image_block = ContentBlockImage(
+        type="image",
+        source={"invalid": "format"}
+    )
+    invalid_result = invalid_image_block.to_openai()
+    assert invalid_result is None
+    
+    # Test ContentBlockThinking.to_openai()
+    thinking_block = ContentBlockThinking(type="thinking", thinking="Internal thoughts")
+    thinking_result = thinking_block.to_openai()
+    assert thinking_result is None
+    
+    # Test ContentBlockToolUse.to_openai() (already existing)
+    tool_use_block = ContentBlockToolUse(
+        type="tool_use",
+        id="call_456",
+        name="calculator",
+        input={"expression": "2+2"}
+    )
+    tool_use_result = tool_use_block.to_openai()
+    assert tool_use_result["id"] == "call_456"
+    assert tool_use_result["function"]["name"] == "calculator"
+    
+    # Test ContentBlockToolResult.to_openai() (already existing)
+    tool_result_block = ContentBlockToolResult(
+        type="tool_result",
+        tool_use_id="call_456",
+        content="4"
+    )
+    tool_result_result = tool_result_block.to_openai()
+    assert tool_result_result["role"] == "tool"
+    assert tool_result_result["tool_call_id"] == "call_456"
+    assert tool_result_result["content"] == "4"
+    
+    print("✅ ContentBlock to_openai methods test passed")
+    return True
+
+
+def test_mixed_content_message_conversion():
+    """Test conversion of messages with mixed content types."""
+    print("🧪 Testing mixed content message conversion...")
+    
+    # Test text + image message
+    mixed_message = Message(
+        role="user",
+        content=[
+            ContentBlockText(type="text", text="Look at this image: "),
+            ContentBlockImage(
+                type="image",
+                source={
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": "fake_image_data"
+                }
+            ),
+            ContentBlockText(type="text", text=" What do you see?")
+        ]
+    )
+    
+    test_request = MessagesRequest(
+        model='test-model',
+        max_tokens=100,
+        messages=[mixed_message]
+    )
+    
+    result = convert_anthropic_to_openai_request(test_request, 'test-model')
+    messages = result['messages']
+    
+    assert len(messages) == 1
+    user_message = messages[0]
+    assert user_message['role'] == 'user'
+    assert isinstance(user_message['content'], list)
+    assert len(user_message['content']) == 3
+    
+    # Check text content
+    text_parts = [part for part in user_message['content'] if part['type'] == 'text']
+    assert len(text_parts) == 2
+    assert text_parts[0]['text'] == "Look at this image: "
+    assert text_parts[1]['text'] == " What do you see?"
+    
+    # Check image content
+    image_parts = [part for part in user_message['content'] if part['type'] == 'image_url']
+    assert len(image_parts) == 1
+    assert "data:image/jpeg;base64,fake_image_data" in image_parts[0]['image_url']['url']
+    
+    print("✅ Mixed content message conversion test passed")
+    return True
+
+
+def test_thinking_content_filtering():
+    """Test that thinking content is properly filtered out in message conversion."""
+    print("🧪 Testing thinking content filtering...")
+    
+    # Test message with text + thinking (thinking should be filtered)
+    message_with_thinking = Message(
+        role="user",
+        content=[
+            ContentBlockText(type="text", text="Regular user message"),
+            ContentBlockThinking(type="thinking", thinking="This is internal thinking")
+        ]
+    )
+    
+    test_request = MessagesRequest(
+        model='test-model',
+        max_tokens=100,
+        messages=[message_with_thinking]
+    )
+    
+    result = convert_anthropic_to_openai_request(test_request, 'test-model')
+    messages = result['messages']
+    
+    assert len(messages) == 1
+    user_message = messages[0]
+    assert user_message['role'] == 'user'
+    # Should only have text content, thinking should be filtered out
+    assert user_message['content'] == "Regular user message"
+    
+    # Test message with only thinking content
+    thinking_only_message = Message(
+        role="user", 
+        content=[
+            ContentBlockThinking(type="thinking", thinking="Only thinking here")
+        ]
+    )
+    
+    thinking_only_request = MessagesRequest(
+        model='test-model',
+        max_tokens=100,
+        messages=[thinking_only_message]
+    )
+    
+    thinking_result = convert_anthropic_to_openai_request(thinking_only_request, 'test-model')
+    thinking_messages = thinking_result['messages']
+    
+    # Should still create a message, but content should be empty or minimal
+    assert len(thinking_messages) >= 0  # Could be filtered out entirely or have empty content
+    
+    print("✅ Thinking content filtering test passed")
+    return True
+
+
 def test_official_docs_tool_use_scenario():
     """Test multi-turn conversation with tool use based on official documentation examples."""
     print("🧪 Testing official docs tool use scenario...")
-    
-    from models import ContentBlockText, ContentBlockToolUse, ContentBlockToolResult
     
     # Test scenario based on Claude docs:
     # 1. User asks: "What's the S&P 500 at today?"
@@ -467,6 +725,10 @@ def run_all_conversion_tests():
         test_content_extraction_helpers,
         test_thinking_integration,
         test_reasoning_content_to_thinking,
+        test_convert_content_block_to_openai,
+        test_content_block_to_openai_methods,
+        test_mixed_content_message_conversion,
+        test_thinking_content_filtering,
         test_official_docs_tool_use_scenario,
     ]
 

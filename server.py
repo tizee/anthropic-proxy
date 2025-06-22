@@ -42,6 +42,7 @@ from models import (
     ContentBlockThinking,
     TokenCountRequest,
     TokenCountResponse,
+    convert_content_block_to_openai,
 )
 
 
@@ -354,17 +355,19 @@ def load_custom_models(config_file=None):
         logger.error(f"Error loading custom models: {str(e)}")
 
 
-load_custom_models()
-
-# Get custom API keys from environment and store in config
-for model_config in CUSTOM_OPENAI_MODELS.values():
-    api_key_name = model_config.get("api_key_name")
-    if api_key_name:
-        api_key_value = os.environ.get(api_key_name)
-        if api_key_value:
-            config.add_custom_api_key(api_key_name, api_key_value)
-        else:
-            logger.warning(f"Missing API key for {api_key_name}")
+def initialize_custom_models():
+    """Initialize custom models and API keys. Called when running as main."""
+    load_custom_models()
+    
+    # Get custom API keys from environment and store in config
+    for model_config in CUSTOM_OPENAI_MODELS.values():
+        api_key_name = model_config.get("api_key_name")
+        if api_key_name:
+            api_key_value = os.environ.get(api_key_name)
+            if api_key_value:
+                config.add_custom_api_key(api_key_name, api_key_value)
+            else:
+                logger.warning(f"Missing API key for {api_key_name}")
 
 
 def generate_thinking_signature(thinking_content: str) -> str:
@@ -1162,109 +1165,73 @@ def convert_anthropic_to_openai_request(
                     openai_messages.append({"role": "user", "content": msg.content})
                 continue
 
-            # Accumulate different types and split on tool_result
-            text_parts = []
-            image_parts = []
+            # Process content blocks in order, maintaining structure
+            current_text_parts = []
+            content_parts = []
             pending_tool_messages = []
 
             for block in msg.content:
-                if isinstance(block, ContentBlockText) or (
-                    isinstance(block, dict) and block.get("type") == "text"
-                ):
+                block_type = block.type if hasattr(block, "type") else block.get("type")
+                
+                if block_type == "text":
                     text_content = (
                         block.text if hasattr(block, "text") else block.get("text", "")
                     )
-                    text_parts.append(text_content)
-                elif isinstance(block, ContentBlockImage) or (
-                    isinstance(block, dict) and block.get("type") == "image"
-                ):
-                    # Handle image blocks if needed
-                    if isinstance(block, ContentBlockImage) and hasattr(
-                        block, "source"
-                    ):
-                        source = block.source
-                    elif isinstance(block, dict) and "source" in block:
-                        source = block["source"]
-                    else:
-                        continue
-
-                    if (
-                        isinstance(source, dict)
-                        and source.get("type") == "base64"
-                        and "media_type" in source
-                        and "data" in source
-                    ):
-                        image_parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{source['media_type']};base64,{source['data']}"
-                                },
-                            }
-                        )
-                elif isinstance(block, ContentBlockToolResult) or (
-                    isinstance(block, dict) and block.get("type") == "tool_result"
-                ):
-                    # CRITICAL: Split user message when tool_result is encountered
-                    if text_parts or image_parts:
-                        content_parts = []
-                        text_content = "".join(text_parts).strip()
+                    current_text_parts.append(text_content)
+                    
+                elif block_type in ["image", "thinking"]:
+                    # Process any accumulated text first
+                    if current_text_parts:
+                        text_content = "".join(current_text_parts)
                         if text_content:
                             content_parts.append({"type": "text", "text": text_content})
-                        content_parts.extend(image_parts)
-
-                        if content_parts:
-                            if (
-                                len(content_parts) == 1
-                                and content_parts[0]["type"] == "text"
-                            ):
-                                openai_messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": content_parts[0]["text"],
-                                    }
-                                )
-                            else:
-                                openai_messages.append(
-                                    {"role": "user", "content": content_parts}
-                                )
-                        text_parts.clear()
-                        image_parts.clear()
+                        current_text_parts.clear()
+                    
+                    # Convert and add non-text block using utility function
+                    openai_content = convert_content_block_to_openai(block)
+                    if openai_content:  # None for thinking blocks
+                        content_parts.append(openai_content)
+                        
+                elif block_type == "tool_result":
+                    # Process any remaining text first
+                    if current_text_parts:
+                        text_content = "".join(current_text_parts)
+                        if text_content:
+                            content_parts.append({"type": "text", "text": text_content})
+                        current_text_parts.clear()
+                    
+                    # CRITICAL: Split user message when tool_result is encountered
+                    if content_parts:
+                        if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                            openai_messages.append(
+                                {"role": "user", "content": content_parts[0]["text"]}
+                            )
+                        else:
+                            openai_messages.append(
+                                {"role": "user", "content": content_parts}
+                            )
+                        content_parts.clear()
 
                     # Add tool result as separate "tool" role message
-                    if isinstance(block, ContentBlockToolResult):
-                        tool_use_id = block.tool_use_id
-                        content = block.content
-                    else:
-                        tool_use_id = block.get("tool_use_id", "")
-                        content = block.get("content", "")
+                    tool_message = convert_content_block_to_openai(block)
+                    if tool_message:
+                        pending_tool_messages.append(tool_message)
 
-                    parsed_content = _parse_tool_result_content(content)
-                    pending_tool_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_use_id,
-                            "content": parsed_content,
-                        }
-                    )
-
-            # Add any remaining text/image content
-            if text_parts or image_parts:
-                content_parts = []
-                text_content = "".join(text_parts).strip()
+            # Process any remaining content
+            if current_text_parts:
+                text_content = "".join(current_text_parts)
                 if text_content:
                     content_parts.append({"type": "text", "text": text_content})
-                content_parts.extend(image_parts)
 
-                if content_parts:
-                    if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                        openai_messages.append(
-                            {"role": "user", "content": content_parts[0]["text"]}
-                        )
-                    else:
-                        openai_messages.append(
-                            {"role": "user", "content": content_parts}
-                        )
+            if content_parts:
+                if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                    openai_messages.append(
+                        {"role": "user", "content": content_parts[0]["text"]}
+                    )
+                else:
+                    openai_messages.append(
+                        {"role": "user", "content": content_parts}
+                    )
 
             # Add any pending tool messages
             openai_messages.extend(pending_tool_messages)
@@ -1338,13 +1305,20 @@ def convert_anthropic_to_openai_request(
         )
 
     # Build complete request with OpenAI SDK type validation
+    # Handle max_tokens for custom models vs standard models
+    if model in CUSTOM_OPENAI_MODELS:
+        max_tokens = min(
+            CUSTOM_OPENAI_MODELS[model].get("max_tokens", request.max_tokens), 
+            request.max_tokens
+        )
+    else:
+        max_tokens = request.max_tokens
+    
     request_params = {
         "model": model,
         "messages": openai_messages,
         "stream": request.stream,
-        "max_tokens": min(
-            CUSTOM_OPENAI_MODELS[model].get("max_tokens"), request.max_tokens
-        ),
+        "max_tokens": max_tokens,
         "temperature": request.temperature,
         "top_p": request.top_p,
     }
@@ -3057,6 +3031,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
+
+    # Initialize custom models and API keys
+    initialize_custom_models()
 
     # Configure uvicorn to run with minimal logs
     uvicorn.run(
