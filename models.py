@@ -401,7 +401,6 @@ class Message(BaseModel):
         # Process content blocks in order, maintaining structure
         current_text_parts = []
         content_parts = []
-        pending_tool_messages = []
         
         for block in self.content:
             block_type = block.type if hasattr(block, "type") else block.get("type")
@@ -445,10 +444,10 @@ class Message(BaseModel):
                         )
                     content_parts.clear()
 
-                # Add tool result as separate "tool" role message
+                # Add tool result immediately to maintain chronological order
                 tool_message = convert_content_block_to_openai(block)
                 if tool_message:
-                    pending_tool_messages.append(tool_message)
+                    openai_messages.append(tool_message)
 
         # Process any remaining content
         if current_text_parts:
@@ -466,8 +465,7 @@ class Message(BaseModel):
                     {"role": "user", "content": content_parts}
                 )
 
-        # Add any pending tool messages
-        openai_messages.extend(pending_tool_messages)
+        # Tool messages are now added immediately when encountered to maintain order
         
         return openai_messages
 

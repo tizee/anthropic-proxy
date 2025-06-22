@@ -712,6 +712,216 @@ def test_official_docs_tool_use_scenario():
     return True
 
 
+def test_claude_code_tool_interruption_message_ordering():
+    """Test that tool interruption messages maintain correct chronological order."""
+    print("🧪 Testing Claude Code tool interruption message ordering...")
+    
+    # This test specifically verifies the bug fix for message ordering
+    # when user interrupts a tool call with mixed content blocks
+    
+    test_request = MessagesRequest(
+        model='test-model',
+        max_tokens=4000,
+        messages=[
+            # The critical test case: user message with tool_result + text content
+            # This is the exact scenario from the bug report logs
+            Message(
+                role='user',
+                content=[
+                    # Tool result should be converted to separate tool message
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="call_test_interruption_123",
+                        content="The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+                    ),
+                    # User interruption marker
+                    ContentBlockText(
+                        type="text",
+                        text="[Request interrupted by user for tool use]"
+                    ),
+                    # Additional user message  
+                    ContentBlockText(
+                        type="text",
+                        text="Actually, let's try a different approach. The file already exists."
+                    )
+                ]
+            )
+        ]
+    )
+    
+    # Convert to OpenAI format
+    result = convert_anthropic_to_openai_request(test_request, 'test-model')
+    
+    # Validate conversion structure
+    assert 'messages' in result
+    messages = result['messages']
+    
+    # CRITICAL TEST: The correct order should be:
+    # 1. tool message (from ContentBlockToolResult) 
+    # 2. user message (from ContentBlockText blocks)
+    #
+    # NOT the incorrect order that was happening before the bug fix:
+    # 1. user message (from ContentBlockText blocks)
+    # 2. tool message (from ContentBlockToolResult) <- Wrong! This was happening at the end
+    
+    assert len(messages) == 2, f"Expected exactly 2 messages, got {len(messages)}"
+    
+    # First message should be the tool result
+    tool_message = messages[0]
+    assert tool_message['role'] == 'tool', f"First message should be tool role, got {tool_message['role']}"
+    assert tool_message['tool_call_id'] == "call_test_interruption_123", "Tool call ID should match"
+    assert "The user doesn't want to proceed" in tool_message['content'], "Tool result content should match"
+    
+    # Second message should be the user content  
+    user_message = messages[1]
+    assert user_message['role'] == 'user', f"Second message should be user role, got {user_message['role']}"
+    expected_user_content = "[Request interrupted by user for tool use]Actually, let's try a different approach. The file already exists."
+    assert user_message['content'] == expected_user_content, f"User content should be combined text blocks, got: {user_message['content']}"
+    
+    print("✅ Claude Code tool interruption message ordering test passed")
+    return True
+
+
+def test_claude_code_multiple_interruptions():
+    """Test complex scenario with multiple tool results and interruptions."""
+    print("🧪 Testing multiple tool interruptions scenario...")
+    
+    # Test scenario with multiple tool calls and interruptions to ensure
+    # our fix handles complex cases correctly
+    
+    test_request = MessagesRequest(
+        model='test-model',
+        max_tokens=4000,
+        messages=[
+            # Multiple messages to create a complex conversation
+            Message(role='user', content="Please help with file operations"),
+            
+            # Assistant uses tool
+            Message(role='assistant', content=[
+                ContentBlockToolUse(
+                    type="tool_use",
+                    id="call_glob_123",
+                    name="Glob", 
+                    input={"pattern": "*.yaml"}
+                )
+            ]),
+            
+            # First tool result - normal flow
+            Message(role='user', content=[
+                ContentBlockToolResult(
+                    type="tool_result",
+                    tool_use_id="call_glob_123",
+                    content="/path/to/config.yaml"
+                )
+            ]),
+            
+            # Assistant uses another tool
+            Message(role='assistant', content=[
+                ContentBlockToolUse(
+                    type="tool_use",
+                    id="call_read_456",
+                    name="Read",
+                    input={"file_path": "/path/to/config.yaml"}
+                )
+            ]),
+            
+            # Second tool result with additional user content - interruption scenario
+            Message(role='user', content=[
+                ContentBlockToolResult(
+                    type="tool_result", 
+                    tool_use_id="call_read_456",
+                    content="version: 1.0\napi_key: example"
+                ),
+                ContentBlockText(
+                    type="text",
+                    text="Wait, let me check something else first."
+                )
+            ]),
+            
+            # Assistant tries another tool
+            Message(role='assistant', content=[
+                ContentBlockToolUse(
+                    type="tool_use",
+                    id="call_plan_789",
+                    name="exit_plan_mode",
+                    input={"plan": "Create config example"}
+                )
+            ]),
+            
+            # Third interruption - the critical test case
+            Message(role='user', content=[
+                ContentBlockToolResult(
+                    type="tool_result",
+                    tool_use_id="call_plan_789", 
+                    content="Tool use rejected by user"
+                ),
+                ContentBlockText(
+                    type="text",
+                    text="[Request interrupted by user for tool use]"
+                ),
+                ContentBlockText(
+                    type="text",
+                    text="Let's skip this step entirely."
+                )
+            ])
+        ]
+    )
+    
+    # Convert to OpenAI format
+    result = convert_anthropic_to_openai_request(test_request, 'test-model')
+    
+    # Validate conversion
+    assert 'messages' in result
+    messages = result['messages']
+    
+    # Expected OpenAI message structure:
+    # 1. user: "Please help with file operations"
+    # 2. assistant: tool_calls=[Glob call]
+    # 3. tool: Glob result
+    # 4. assistant: tool_calls=[Read call] 
+    # 5. tool: Read result (from mixed content block)
+    # 6. user: "Wait, let me check something else first." (from mixed content block)
+    # 7. assistant: tool_calls=[exit_plan_mode call]
+    # 8. tool: exit_plan_mode result (from mixed content block)
+    # 9. user: "[Request interrupted...]Let's skip this step entirely." (from mixed content block)
+    
+    # Find messages by role
+    user_messages = [msg for msg in messages if msg['role'] == 'user']
+    assistant_messages = [msg for msg in messages if msg['role'] == 'assistant']
+    tool_messages = [msg for msg in messages if msg['role'] == 'tool']
+    
+    # Should have 3 user messages (initial + 2 from mixed content)
+    assert len(user_messages) == 3, f"Expected 3 user messages, got {len(user_messages)}"
+    
+    # Should have 3 assistant messages (all with tool calls)
+    assert len(assistant_messages) == 3, f"Expected 3 assistant messages, got {len(assistant_messages)}"
+    
+    # Should have 3 tool messages (all results)
+    assert len(tool_messages) == 3, f"Expected 3 tool messages, got {len(tool_messages)}"
+    
+    # Verify the critical ordering: in the mixed content scenarios,
+    # tool results should appear immediately, not deferred to the end
+    
+    # The last few messages should be in this exact order:
+    # ..., assistant (tool call), tool (result), user (interruption text)
+    
+    last_three = messages[-3:]
+    assert last_three[0]['role'] == 'assistant', "Third-to-last should be assistant with tool call"
+    assert 'tool_calls' in last_three[0], "Should have tool calls"
+    assert last_three[0]['tool_calls'][0]['function']['name'] == 'exit_plan_mode'
+    
+    assert last_three[1]['role'] == 'tool', "Second-to-last should be tool result" 
+    assert last_three[1]['tool_call_id'] == 'call_plan_789'
+    assert last_three[1]['content'] == "Tool use rejected by user"
+    
+    assert last_three[2]['role'] == 'user', "Last should be user interruption"
+    assert "[Request interrupted by user for tool use]" in last_three[2]['content']
+    assert "Let's skip this step entirely." in last_three[2]['content']
+    
+    print("✅ Multiple tool interruptions scenario test passed")
+    return True
+
+
 def run_all_conversion_tests():
     """Run all conversion tests."""
     print("🚀 Running OpenAI SDK type integration tests...\n")
@@ -730,6 +940,8 @@ def run_all_conversion_tests():
         test_mixed_content_message_conversion,
         test_thinking_content_filtering,
         test_official_docs_tool_use_scenario,
+        test_claude_code_tool_interruption_message_ordering,
+        test_claude_code_multiple_interruptions,
     ]
 
     passed = 0

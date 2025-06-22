@@ -44,6 +44,7 @@ from models import (
     ThinkingConfigDisabled,
     ContentBlockText,
     ContentBlockToolUse,
+    ContentBlockToolResult,
     Message,
     SystemContent,
     ToolChoiceAuto,
@@ -293,6 +294,21 @@ todo_read_tool = Tool(
     input_schema={"type": "object", "properties": {}},
 )
 
+exit_plan_mode_tool = Tool(
+    name="exit_plan_mode",
+    description="Use this tool when you are in plan mode and have finished presenting your plan and are ready to code. This will prompt the user to exit plan mode.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "plan": {
+                "type": "string",
+                "description": "The plan you came up with, that you want to run by the user for approval. Supports markdown. The plan should be pretty concise."
+            }
+        },
+        "required": ["plan"]
+    },
+)
+
 # Define behavioral difference tests that should warn instead of fail
 BEHAVIORAL_DIFFERENCE_TESTS = {
     "multi_turn",
@@ -321,6 +337,7 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "claude_code_todoread_test_stream",
     "claude_code_interruption_test",
     "claude_code_interruption_only_test",
+    "deepseek_task_summarization_stream",
 }
 
 # Test scenarios using MessagesRequest Pydantic models
@@ -689,26 +706,518 @@ TEST_SCENARIOS = {
         tools=[todo_read_tool],
         tool_choice=tool_choice_required,
     ),
-    # Claude Code interruption test - simulates tool use interruption
+    # Claude Code interruption test - simulates complete tool use interruption workflow
     "claude_code_interruption_test": MessagesRequest(
         model=MODEL,
-        max_tokens=1024,
+        max_tokens=4000,
         messages=[
+            # Initial user request
             Message(
                 role="user",
-                content="[Request interrupted by user for tool use]我记得我没有添加install命令啊，为什么要无中生有？",
+                content="Please help me create a configuration file example.",
+            ),
+            # Assistant starts with tool calls
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="call_abc123def456",
+                        name="Glob",
+                        input={"pattern": "config.yaml"}
+                    )
+                ]
+            ),
+            # Tool result comes back
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="call_abc123def456",
+                        content="/path/to/project/config.yaml"
+                    )
+                ]
+            ),
+            # Assistant continues with another tool call
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="call_def789ghi012",
+                        name="Read",
+                        input={"file_path": "/path/to/project/config.yaml"}
+                    )
+                ]
+            ),
+            # Another tool result
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="call_def789ghi012",
+                        content="# Configuration File\nversion: 1.0\napi_key: example_key\nendpoint: https://api.example.com"
+                    )
+                ]
+            ),
+            # Assistant tries to use exit_plan_mode but gets interrupted
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="call_jkl345mno678",
+                        name="exit_plan_mode",
+                        input={"plan": "I will create an example configuration file with placeholder values for each field, maintaining the same structure and adding helpful comments."}
+                    )
+                ]
+            ),
+            # User interrupts with mixed content - tool result + user message (the critical test case)
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="call_jkl345mno678",
+                        content="The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+                    ),
+                    ContentBlockText(
+                        type="text",
+                        text="[Request interrupted by user for tool use]"
+                    ),
+                    ContentBlockText(
+                        type="text",
+                        text="Actually, the example file already exists. Please check before creating new files."
+                    )
+                ]
             )
         ],
+        tools=[glob_tool, read_tool, exit_plan_mode_tool],
+        tool_choice=tool_choice_auto,
     ),
-    # Claude Code interruption test - interruption only (no user message)
+    # Claude Code interruption test - interruption only (minimal case)
     "claude_code_interruption_only_test": MessagesRequest(
         model=MODEL,
         max_tokens=1024,
         messages=[
+            # Simple case: user interrupts without prior tool use context
             Message(
                 role="user",
-                content="[Request interrupted by user for tool use]",
+                content=[
+                    ContentBlockText(
+                        type="text",
+                        text="[Request interrupted by user for tool use]"
+                    ),
+                    ContentBlockText(
+                        type="text", 
+                        text="Please wait, I need to reconsider this approach."
+                    )
+                ]
             )
+        ],
+    ),
+    # DeepSeek multi-turn task summarization test - simulates Claude Code workflow
+    "deepseek_task_summarization_stream": MessagesRequest(
+        model="deepseek-v3-250324",
+        max_tokens=2048,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Help me create a simple Python function to calculate the factorial of a number.",
+            ),
+            Message(
+                role="assistant",
+                content="I'll help you create a Python function to calculate the factorial of a number. Here's a simple implementation:\n\n```python\ndef factorial(n):\n    \"\"\"\n    Calculate the factorial of a non-negative integer.\n    \n    Args:\n        n (int): A non-negative integer\n    \n    Returns:\n        int: The factorial of n (n!)\n    \n    Raises:\n        ValueError: If n is negative\n    \"\"\"\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    if n == 0 or n == 1:\n        return 1\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    \n    return result\n\n# Example usage:\nif __name__ == \"__main__\":\n    # Test the function\n    test_values = [0, 1, 5, 10]\n    \n    for num in test_values:\n        print(f\"{num}! = {factorial(num)}\")\n```\n\nThis function:\n1. **Handles edge cases**: Returns 1 for n=0 and n=1 (by mathematical definition, 0! = 1)\n2. **Input validation**: Raises a ValueError for negative inputs\n3. **Iterative approach**: Uses a simple loop for efficiency\n4. **Documentation**: Includes a clear docstring\n\nYou could also implement it recursively if you prefer:\n\n```python\ndef factorial_recursive(n):\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    if n == 0 or n == 1:\n        return 1\n    \n    return n * factorial_recursive(n - 1)\n```\n\nThe iterative version is generally more efficient for larger numbers as it avoids the overhead of recursive function calls."
+            ),
+            Message(
+                role="user",
+                content="Now add proper error handling and unit tests for this function.",
+            ),
+            Message(
+                role="assistant",
+                content="I'll enhance the factorial function with comprehensive error handling and create unit tests. Here's the complete implementation:\n\n**factorial.py**\n```python\ndef factorial(n):\n    \"\"\"\n    Calculate the factorial of a non-negative integer.\n    \n    Args:\n        n (int): A non-negative integer\n    \n    Returns:\n        int: The factorial of n (n!)\n    \n    Raises:\n        TypeError: If n is not an integer\n        ValueError: If n is negative\n        OverflowError: If the result would be too large to represent\n    \"\"\"\n    # Type checking\n    if not isinstance(n, int):\n        raise TypeError(f\"Expected integer, got {type(n).__name__}\")\n    \n    # Range validation\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    # Handle large numbers that might cause overflow\n    if n > 1000:  # Arbitrary large number threshold\n        raise OverflowError(f\"Factorial of {n} would be too large to compute efficiently\")\n    \n    # Base cases\n    if n == 0 or n == 1:\n        return 1\n    \n    # Calculate factorial\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    \n    return result\n\n\ndef safe_factorial(n, max_value=None):\n    \"\"\"\n    A safer version of factorial with optional maximum value limit.\n    \n    Args:\n        n (int): A non-negative integer\n        max_value (int, optional): Maximum allowed input value\n    \n    Returns:\n        int: The factorial of n, or None if computation would exceed limits\n    \"\"\"\n    try:\n        if max_value is not None and n > max_value:\n            return None\n        return factorial(n)\n    except (TypeError, ValueError, OverflowError) as e:\n        print(f\"Error computing factorial of {n}: {e}\")\n        return None\n```\n\n**test_factorial.py**\n```python\nimport unittest\nimport sys\nfrom factorial import factorial, safe_factorial\n\n\nclass TestFactorial(unittest.TestCase):\n    \n    def test_base_cases(self):\n        \"\"\"Test base cases (0! and 1!).\"\"\"\n        self.assertEqual(factorial(0), 1)\n        self.assertEqual(factorial(1), 1)\n    \n    def test_small_positive_numbers(self):\n        \"\"\"Test factorial for small positive integers.\"\"\"\n        self.assertEqual(factorial(2), 2)\n        self.assertEqual(factorial(3), 6)\n        self.assertEqual(factorial(4), 24)\n        self.assertEqual(factorial(5), 120)\n        self.assertEqual(factorial(6), 720)\n    \n    def test_larger_numbers(self):\n        \"\"\"Test factorial for larger numbers.\"\"\"\n        self.assertEqual(factorial(10), 3628800)\n        self.assertEqual(factorial(12), 479001600)\n    \n    def test_negative_input(self):\n        \"\"\"Test that negative inputs raise ValueError.\"\"\"\n        with self.assertRaises(ValueError) as context:\n            factorial(-1)\n        self.assertIn(\"negative numbers\", str(context.exception))\n        \n        with self.assertRaises(ValueError):\n            factorial(-5)\n    \n    def test_type_errors(self):\n        \"\"\"Test that non-integer inputs raise TypeError.\"\"\"\n        with self.assertRaises(TypeError) as context:\n            factorial(3.14)\n        self.assertIn(\"Expected integer\", str(context.exception))\n        \n        with self.assertRaises(TypeError):\n            factorial(\"5\")\n        \n        with self.assertRaises(TypeError):\n            factorial([5])\n        \n        with self.assertRaises(TypeError):\n            factorial(None)\n    \n    def test_overflow_protection(self):\n        \"\"\"Test that very large inputs raise OverflowError.\"\"\"\n        with self.assertRaises(OverflowError) as context:\n            factorial(1001)\n        self.assertIn(\"too large\", str(context.exception))\n    \n    def test_boundary_values(self):\n        \"\"\"Test values near the overflow boundary.\"\"\"\n        # Should work fine\n        result = factorial(20)\n        self.assertIsInstance(result, int)\n        self.assertGreater(result, 0)\n        \n        # Should still work\n        result = factorial(100)\n        self.assertIsInstance(result, int)\n        self.assertGreater(result, 0)\n\n\nclass TestSafeFactorial(unittest.TestCase):\n    \n    def test_safe_factorial_normal_cases(self):\n        \"\"\"Test safe_factorial with normal inputs.\"\"\"\n        self.assertEqual(safe_factorial(5), 120)\n        self.assertEqual(safe_factorial(0), 1)\n    \n    def test_safe_factorial_with_max_value(self):\n        \"\"\"Test safe_factorial with maximum value limit.\"\"\"\n        self.assertEqual(safe_factorial(5, max_value=10), 120)\n        self.assertIsNone(safe_factorial(15, max_value=10))\n    \n    def test_safe_factorial_error_handling(self):\n        \"\"\"Test that safe_factorial handles errors gracefully.\"\"\"\n        # Should return None for invalid inputs instead of raising\n        self.assertIsNone(safe_factorial(-1))\n        self.assertIsNone(safe_factorial(\"invalid\"))\n        self.assertIsNone(safe_factorial(1001))\n\n\nclass TestFactorialPerformance(unittest.TestCase):\n    \n    def test_performance_reasonable_time(self):\n        \"\"\"Test that factorial computation completes in reasonable time.\"\"\"\n        import time\n        \n        start_time = time.time()\n        result = factorial(100)\n        end_time = time.time()\n        \n        # Should complete within 1 second\n        self.assertLess(end_time - start_time, 1.0)\n        self.assertIsInstance(result, int)\n\n\ndef run_example_tests():\n    \"\"\"Run some example calculations to demonstrate the function.\"\"\"\n    print(\"Factorial Function Examples:\")\n    print(\"=\" * 30)\n    \n    test_values = [0, 1, 5, 10, 15]\n    \n    for num in test_values:\n        try:\n            result = factorial(num)\n            print(f\"{num}! = {result:,}\")\n        except Exception as e:\n            print(f\"{num}! = Error: {e}\")\n    \n    print(\"\\nTesting error cases:\")\n    error_cases = [-1, 3.14, \"5\", 1001]\n    \n    for case in error_cases:\n        result = safe_factorial(case)\n        if result is not None:\n            print(f\"factorial({case}) = {result}\")\n        else:\n            print(f\"factorial({case}) = Error (handled safely)\")\n\n\nif __name__ == \"__main__\":\n    # Run the unit tests\n    print(\"Running unit tests...\")\n    unittest.main(argv=[''], exit=False, verbosity=2)\n    \n    print(\"\\n\" + \"=\" * 50)\n    \n    # Run example demonstrations\n    run_example_tests()\n```\n\n**To run the tests:**\n\n1. Save both files in the same directory\n2. Run the tests with: `python test_factorial.py`\n3. Or run specific test classes: `python -m unittest test_factorial.TestFactorial -v`\n\n**Key improvements:**\n\n1. **Enhanced Error Handling:**\n   - Type checking for non-integer inputs\n   - Overflow protection for very large numbers\n   - Clear, descriptive error messages\n\n2. **Comprehensive Unit Tests:**\n   - Base cases and edge cases\n   - Error condition testing\n   - Performance testing\n   - Boundary value testing\n\n3. **Safe Alternative:**\n   - `safe_factorial()` function that returns None instead of raising exceptions\n   - Optional maximum value limit\n\n4. **Documentation:**\n   - Clear docstrings with Args, Returns, and Raises sections\n   - Example usage and test demonstrations\n\nThis implementation is production-ready with proper error handling and thorough test coverage!"
+            ),
+            Message(
+                role="user",
+                content="Please provide a summary of what we accomplished in this conversation and suggest next steps for improving this factorial implementation.",
+            ),
+        ],
+    ),
+    # Complex multi-turn Todo workflow test - simulates Claude Code task planning and completion
+    "deepseek_complex_todo_workflow_stream": MessagesRequest(
+        model="deepseek-v3-0324",
+        max_tokens=3072,
+        stream=True,
+        messages=[
+            Message(
+                role="user",
+                content="Help me implement a new feature for a web application that allows users to export their data. I need you to plan this task using the TodoWrite tool, then work through it step by step.",
+            ),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockText(
+                        type="text",
+                        text="I'll help you implement a data export feature for your web application. Let me start by creating a comprehensive task plan using the TodoWrite tool.",
+                    ),
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_01ABC123DEF456",
+                        name="TodoWrite",
+                        input={
+                            "todos": [
+                                {
+                                    "id": "1",
+                                    "content": "Design the data export API endpoints and schema",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "2",
+                                    "content": "Implement backend export service with CSV/JSON support",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "3",
+                                    "content": "Create frontend export UI component with progress indicator",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "4",
+                                    "content": "Add export format selection (CSV, JSON, Excel)",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "5",
+                                    "content": "Implement data filtering and pagination for large exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "6",
+                                    "content": "Add user authentication and permission checks for exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "7",
+                                    "content": "Write comprehensive unit tests for export functionality",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "8",
+                                    "content": "Create integration tests for end-to-end export workflow",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "9",
+                                    "content": "Add rate limiting and security measures for export API",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "10",
+                                    "content": "Document export API and create user guide",
+                                    "status": "pending",
+                                    "priority": "low"
+                                }
+                            ]
+                        }
+                    ),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_01ABC123DEF456",
+                        content="Todo list has been updated successfully. 10 items added to the task list."
+                    ),
+                    ContentBlockText(
+                        type="text",
+                        text="Great! Now let's start working on the first task. Begin with designing the API endpoints.",
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockText(
+                        type="text",
+                        text="Perfect! Let me start working on the first task by designing the data export API endpoints. I'll mark it as in progress and then provide the design.",
+                    ),
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_02XYZ789GHI012",
+                        name="TodoWrite",
+                        input={
+                            "todos": [
+                                {
+                                    "id": "1",
+                                    "content": "Design the data export API endpoints and schema",
+                                    "status": "in_progress",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "2",
+                                    "content": "Implement backend export service with CSV/JSON support",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "3",
+                                    "content": "Create frontend export UI component with progress indicator",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "4",
+                                    "content": "Add export format selection (CSV, JSON, Excel)",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "5",
+                                    "content": "Implement data filtering and pagination for large exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "6",
+                                    "content": "Add user authentication and permission checks for exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "7",
+                                    "content": "Write comprehensive unit tests for export functionality",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "8",
+                                    "content": "Create integration tests for end-to-end export workflow",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "9",
+                                    "content": "Add rate limiting and security measures for export API",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "10",
+                                    "content": "Document export API and create user guide",
+                                    "status": "pending",
+                                    "priority": "low"
+                                }
+                            ]
+                        }
+                    ),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_02XYZ789GHI012",
+                        content="Todo list has been updated successfully. Task 1 marked as in_progress."
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockText(
+                        type="text",
+                        text="Excellent! Now I'll design the comprehensive API endpoints for the data export feature:\n\n## Data Export API Design\n\n### 1. Export Request Endpoint\n```\nPOST /api/v1/exports\nContent-Type: application/json\nAuthorization: Bearer <token>\n\nRequest Body:\n{\n  \"format\": \"csv|json|excel\",\n  \"data_type\": \"users|orders|products|analytics\",\n  \"filters\": {\n    \"date_range\": {\n      \"start\": \"2024-01-01\",\n      \"end\": \"2024-12-31\"\n    },\n    \"status\": [\"active\", \"pending\"],\n    \"categories\": [\"electronics\", \"books\"]\n  },\n  \"fields\": [\"id\", \"name\", \"email\", \"created_at\"],\n  \"sort_by\": \"created_at\",\n  \"sort_order\": \"desc\",\n  \"chunk_size\": 1000\n}\n\nResponse:\n{\n  \"export_id\": \"exp_1234567890\",\n  \"status\": \"queued\",\n  \"estimated_records\": 15420,\n  \"created_at\": \"2024-06-22T10:30:00Z\",\n  \"expires_at\": \"2024-06-29T10:30:00Z\"\n}\n```\n\n### 2. Export Status Check\n```\nGET /api/v1/exports/{export_id}\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"export_id\": \"exp_1234567890\",\n  \"status\": \"processing|completed|failed\",\n  \"progress\": {\n    \"processed_records\": 8500,\n    \"total_records\": 15420,\n    \"percentage\": 55.1\n  },\n  \"download_url\": \"https://api.example.com/api/v1/exports/exp_1234567890/download\",\n  \"file_size\": 2048576,\n  \"error_message\": null,\n  \"created_at\": \"2024-06-22T10:30:00Z\",\n  \"completed_at\": \"2024-06-22T10:45:23Z\",\n  \"expires_at\": \"2024-06-29T10:30:00Z\"\n}\n```\n\n### 3. Export Download\n```\nGET /api/v1/exports/{export_id}/download\nAuthorization: Bearer <token>\n\nResponse Headers:\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=\"users_export_20240622.csv\"\nContent-Length: 2048576\n\nResponse: Binary file data\n```\n\n### 4. List User Exports\n```\nGET /api/v1/exports?page=1&limit=20&status=completed\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"exports\": [\n    {\n      \"export_id\": \"exp_1234567890\",\n      \"status\": \"completed\",\n      \"format\": \"csv\",\n      \"data_type\": \"users\",\n      \"record_count\": 15420,\n      \"file_size\": 2048576,\n      \"created_at\": \"2024-06-22T10:30:00Z\",\n      \"expires_at\": \"2024-06-29T10:30:00Z\"\n    }\n  ],\n  \"pagination\": {\n    \"page\": 1,\n    \"limit\": 20,\n    \"total\": 45,\n    \"has_more\": true\n  }\n}\n```\n\n### 5. Cancel Export\n```\nDELETE /api/v1/exports/{export_id}\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"message\": \"Export cancelled successfully\",\n  \"export_id\": \"exp_1234567890\"\n}\n```\n\n## Database Schema\n\n```sql\nCREATE TABLE exports (\n  id VARCHAR(50) PRIMARY KEY,\n  user_id INTEGER NOT NULL,\n  status ENUM('queued', 'processing', 'completed', 'failed', 'cancelled'),\n  format ENUM('csv', 'json', 'excel'),\n  data_type VARCHAR(50),\n  filters JSON,\n  fields JSON,\n  total_records INTEGER,\n  processed_records INTEGER DEFAULT 0,\n  file_path VARCHAR(500),\n  file_size BIGINT,\n  error_message TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  started_at TIMESTAMP NULL,\n  completed_at TIMESTAMP NULL,\n  expires_at TIMESTAMP NOT NULL,\n  INDEX idx_user_status (user_id, status),\n  INDEX idx_created_at (created_at),\n  INDEX idx_expires_at (expires_at)\n);\n```\n\nThe API design includes proper authentication, rate limiting considerations, progress tracking, and automatic cleanup of expired exports. Now let me mark this task as completed and move to the next one.",
+                    ),
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_03JKL345MNO678",
+                        name="TodoWrite",
+                        input={
+                            "todos": [
+                                {
+                                    "id": "1",
+                                    "content": "Design the data export API endpoints and schema",
+                                    "status": "completed",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "2",
+                                    "content": "Implement backend export service with CSV/JSON support",
+                                    "status": "in_progress",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "3",
+                                    "content": "Create frontend export UI component with progress indicator",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "4",
+                                    "content": "Add export format selection (CSV, JSON, Excel)",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "5",
+                                    "content": "Implement data filtering and pagination for large exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "6",
+                                    "content": "Add user authentication and permission checks for exports",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "7",
+                                    "content": "Write comprehensive unit tests for export functionality",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "8",
+                                    "content": "Create integration tests for end-to-end export workflow",
+                                    "status": "pending",
+                                    "priority": "medium"
+                                },
+                                {
+                                    "id": "9",
+                                    "content": "Add rate limiting and security measures for export API",
+                                    "status": "pending",
+                                    "priority": "high"
+                                },
+                                {
+                                    "id": "10",
+                                    "content": "Document export API and create user guide",
+                                    "status": "pending",
+                                    "priority": "low"
+                                }
+                            ]
+                        }
+                    ),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_03JKL345MNO678",
+                        content="Todo list has been updated successfully. Task 1 marked as completed, Task 2 marked as in_progress."
+                    ),
+                    ContentBlockText(
+                        type="text",
+                        text="Excellent API design! Now let's check our current progress and then continue with implementing the backend service. Can you show me the current todo list status?",
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlockText(
+                        type="text",
+                        text="Of course! Let me check our current progress by reading the todo list.",
+                    ),
+                    ContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_04PQR901STU234",
+                        name="TodoRead",
+                        input={}
+                    ),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_04PQR901STU234",
+                        content=[
+                            {
+                                "id": "1",
+                                "content": "Design the data export API endpoints and schema",
+                                "status": "completed",
+                                "priority": "high"
+                            },
+                            {
+                                "id": "2",
+                                "content": "Implement backend export service with CSV/JSON support",
+                                "status": "in_progress",
+                                "priority": "high"
+                            },
+                            {
+                                "id": "3",
+                                "content": "Create frontend export UI component with progress indicator",
+                                "status": "pending",
+                                "priority": "medium"
+                            },
+                            {
+                                "id": "4",
+                                "content": "Add export format selection (CSV, JSON, Excel)",
+                                "status": "pending",
+                                "priority": "medium"
+                            },
+                            {
+                                "id": "5",
+                                "content": "Implement data filtering and pagination for large exports",
+                                "status": "pending",
+                                "priority": "high"
+                            },
+                            {
+                                "id": "6",
+                                "content": "Add user authentication and permission checks for exports",
+                                "status": "pending",
+                                "priority": "high"
+                            },
+                            {
+                                "id": "7",
+                                "content": "Write comprehensive unit tests for export functionality",
+                                "status": "pending",
+                                "priority": "medium"
+                            },
+                            {
+                                "id": "8",
+                                "content": "Create integration tests for end-to-end export workflow",
+                                "status": "pending",
+                                "priority": "medium"
+                            },
+                            {
+                                "id": "9",
+                                "content": "Add rate limiting and security measures for export API",
+                                "status": "pending",
+                                "priority": "high"
+                            },
+                            {
+                                "id": "10",
+                                "content": "Document export API and create user guide",
+                                "status": "pending",
+                                "priority": "low"
+                            }
+                        ]
+                    ),
+                    ContentBlockText(
+                        type="text",
+                        text="Perfect! Now please provide a summary of our progress and what we've accomplished so far in this implementation.",
+                    ),
+                ],
+            ),
         ],
     ),
     # Streaming thinking tests

@@ -321,6 +321,7 @@ def load_custom_models(config_file=None):
                 "max_input_tokens": model.get(
                     "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
                 ),
+                "extra_headers": model.get("extra_headers", None),
             }
 
             # Store pricing info for cost calculation
@@ -1924,6 +1925,24 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
         return "end_turn"
 
 
+def _calculate_accurate_output_tokens(accumulated_text: str, accumulated_thinking: str, reported_tokens: int, context: str = "") -> int:
+    """Calculate accurate output tokens and log comparison."""
+    calculated_tokens = count_tokens_in_response(
+        response_content=accumulated_text,
+        thinking_content=accumulated_thinking,
+        tool_calls=None,  # Tool calls handled separately in streaming
+    )
+    
+    # Use calculated tokens if they differ significantly from reported tokens
+    final_tokens = calculated_tokens
+    if reported_tokens > 0 and abs(reported_tokens - calculated_tokens) < (calculated_tokens * 0.1):
+        # If reported tokens are close to calculated (within 10%), use reported tokens
+        final_tokens = reported_tokens
+    
+    logger.debug(f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens}")
+    return final_tokens
+
+
 async def handle_streaming(response_generator, original_request: MessagesRequest):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
     has_sent_stop_reason = False
@@ -1994,11 +2013,24 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                                 f"Could not find model configuration for {model_to_use}"
                             )
 
+                    # Calculate actual output tokens for session stats
+                    actual_output_tokens = count_tokens_in_response(
+                        response_content=accumulated_text,
+                        thinking_content=accumulated_thinking,
+                        tool_calls=None,
+                    )
+                    
+                    # Use the larger of reported vs calculated tokens for session stats
+                    session_output_tokens = max(output_tokens, actual_output_tokens)
+                    
+                    logger.debug(f"Session stats - Input: {input_tokens}, Output (reported): {output_tokens}, Output (calculated): {actual_output_tokens}, Using: {session_output_tokens}")
+                    logger.debug(f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}")
+
                     # Update session statistics for streaming
                     update_session_stats(
                         model=model_to_use,
                         input_tokens=input_tokens,
-                        output_tokens=output_tokens,
+                        output_tokens=session_output_tokens,
                     )
 
                 # Handle content from choices
@@ -2171,6 +2203,7 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
 
                     if delta_reasoning is not None and delta_reasoning != "":
                         accumulated_thinking += delta_reasoning
+                        logger.debug(f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(accumulated_thinking)} chars")
 
                         # Start thinking block if not started
                         if not thinking_block_started:
@@ -2250,6 +2283,7 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                         and not is_tool_use
                     ):
                         accumulated_text += delta_content
+                        logger.debug(f"Added text content: +{len(delta_content)} chars, total: {len(accumulated_text)} chars")
 
                         # Start text block if not started
                         if not text_block_started:
@@ -2316,9 +2350,14 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                         stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
                         logger.debug(f"Mapped stop_reason: {stop_reason}")
 
+                        # Calculate accurate output tokens from accumulated content
+                        final_output_tokens = _calculate_accurate_output_tokens(
+                            accumulated_text, accumulated_thinking, output_tokens, "Finish reason received"
+                        )
+
                         # Send message delta with final content and stop reason
                         yield _send_message_delta_event(
-                            stop_reason, output_tokens, current_content_blocks
+                            stop_reason, final_output_tokens, current_content_blocks
                         )
 
                         # Send message stop
@@ -2345,10 +2384,15 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                 # Close the current content block if there is one
                 yield _send_content_block_stop_event(content_block_index)
 
+            # Calculate accurate output tokens from accumulated content
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "No finish_reason"
+            )
+
             # Send final events
             stop_reason = "tool_use" if is_tool_use else "end_turn"
             yield _send_message_delta_event(
-                stop_reason, output_tokens, current_content_blocks
+                stop_reason, final_output_tokens, current_content_blocks
             )
             yield _send_message_stop_event()
             logger.debug("Streaming completed without finish_reason")
@@ -2369,9 +2413,14 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
 
     finally:
         if not has_sent_stop_reason:
+            # Calculate accurate output tokens from accumulated content
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "Finally block"
+            )
+            
             stop_reason = "tool_use" if is_tool_use else "end_turn"
             yield _send_message_delta_event(
-                stop_reason, output_tokens, current_content_blocks
+                stop_reason, final_output_tokens, current_content_blocks
             )
             yield _send_message_stop_event()
             logger.debug(
@@ -2471,11 +2520,9 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         client, model_name = create_openai_client(request.model, is_async=True)
         openai_request["model"] = model_name
 
-        # extra_header
-        openai_request["extra_headers"] = {
-            "HTTP-Referer": "https://localhost:8082",  # Optional. Site URL for rankings on openrouter.ai.
-            "X-Title": "Claude Code",  # Optional. Site title for rankings on openrouter.ai.
-        }
+        # Add extra headers if defined in model config
+        if "extra_headers" in CUSTOM_OPENAI_MODELS.get(request.model, {}):
+            openai_request["extra_headers"] = CUSTOM_OPENAI_MODELS[request.model]["extra_headers"]
 
         # Only log basic info about the request, not the full details
         logger.debug(
