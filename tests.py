@@ -47,7 +47,7 @@ from models import (
     Message,
     SystemContent,
     ToolChoiceAuto,
-    ToolChoiceAny
+    ToolChoiceAny,
 )
 
 # Load environment variables
@@ -71,7 +71,7 @@ anthropic_headers = {
 }
 
 tool_choice_required = ToolChoiceAny(type="any")
-tool_choice_auto= ToolChoiceAuto(type="auto")
+tool_choice_auto = ToolChoiceAuto(type="auto")
 
 proxy_headers = {
     "x-api-key": PROXY_API_KEY,
@@ -786,7 +786,9 @@ def serialize_request_data(data) -> Dict[str, Any]:
                 serialized[key] = value.model_dump(exclude_none=True)
             elif isinstance(value, list):
                 serialized[key] = [
-                    item.model_dump(exclude_none=True) if isinstance(item, BaseModel) else item
+                    item.model_dump(exclude_none=True)
+                    if isinstance(item, BaseModel)
+                    else item
                     for item in value
                 ]
             else:

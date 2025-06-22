@@ -36,13 +36,10 @@ from models import (
     MessagesResponse,
     Usage,
     ContentBlockText,
-    ContentBlockImage,
     ContentBlockToolUse,
-    ContentBlockToolResult,
     ContentBlockThinking,
     TokenCountRequest,
     TokenCountResponse,
-    convert_content_block_to_openai,
 )
 
 
@@ -60,6 +57,7 @@ session_stats = SessionStats()
 
 # Load environment variables from .env file
 load_dotenv()
+
 
 class ModelDefaults:
     """Default values and limits for model configurations"""
@@ -270,6 +268,7 @@ app = FastAPI()
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
+
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file."""
@@ -367,8 +366,10 @@ def initialize_custom_models():
             else:
                 logger.warning(f"Missing API key for {api_key_name}")
 
+
 # Initialize custom models and API keys
 initialize_custom_models()
+
 
 def generate_thinking_signature(thinking_content: str) -> str:
     """Generate a signature for thinking content using SHA-256 hash."""
@@ -1208,7 +1209,7 @@ def convert_anthropic_to_openai_request(
     if model in CUSTOM_OPENAI_MODELS:
         max_tokens = min(
             CUSTOM_OPENAI_MODELS[model].get("max_tokens", request.max_tokens),
-            request.max_tokens
+            request.max_tokens,
         )
     else:
         max_tokens = request.max_tokens
