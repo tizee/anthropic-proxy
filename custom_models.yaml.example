@@ -1,4 +1,6 @@
 # Example custom OpenAI-compatible model configurations
+# Required fields: model_id, api_base, api_key_name
+# Optional fields: model_name, can_stream, max_tokens, input_cost_per_token, output_cost_per_token, max_input_tokens
 
 - model_id: my-large-model
   model_name: actual-model-name  # Optional if different from model_id
@@ -6,6 +8,7 @@
   api_key_name: MY_API_KEY
   can_stream: true
   max_tokens: 16384
+  max_input_tokens: 128000
   input_cost_per_token: 0.0000025  # $ per token
   output_cost_per_token: 0.0000075
 
@@ -14,5 +17,6 @@
   api_key_name: MY_API_KEY
   can_stream: true
   max_tokens: 8192
+  max_input_tokens: 128000
   input_cost_per_token: 0.0000015
   output_cost_per_token: 0.0000045
