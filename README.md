@@ -378,6 +378,8 @@ Follows SOLID principles:
 
 This project is forked from and based on [claude-code-proxy](https://github.com/1rgs/claude-code-proxy) by [@1rgs](https://github.com/1rgs). The original project provided the foundation for proxying Anthropic API requests to other model providers.
 
+The intelligent routing feature that distributes requests to different models based on token count and thinking flag was inspired by [claude-code-router](https://github.com/musistudio/claude-code-router).
+
 ### Key Enhancements in This Fork
 - **Removed LiteLLM dependency**: Replaced with native OpenAI SDK for better control and simplified architecture
 - Enhanced intelligent routing with background/think/long-context modes
