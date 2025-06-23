@@ -3,68 +3,164 @@ Pydantic models for Claude proxy API requests and responses.
 This module contains only the model definitions without any server startup code.
 """
 
-from pydantic import BaseModel, field_validator, ConfigDict
-from typing import Dict, List, Optional, Union, Literal, Any
+from openai import AsyncStream
+from pydantic import BaseModel, field_validator
+from typing import Dict, List, Optional, Union, Literal, Any, Iterable
 import re
 import json
 import uuid
+import logging
+import tiktoken
+import hashlib
 
-class ToolChoiceAuto(BaseModel):
+from openai.types.chat import (
+    ChatCompletion,
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionChunk,
+    ChatCompletionContentPartImageParam,
+    ChatCompletionContentPartTextParam,
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCallParam,
+    ChatCompletionNamedToolChoiceParam,
+    ChatCompletionTool,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionToolChoiceOptionParam,
+    ChatCompletionToolMessageParam,
+    ChatCompletionToolParam,
+    ChatCompletionUserMessageParam,
+)
+
+class ModelDefaults:
+    """Default values and limits for model configurations"""
+
+    # Token limits
+    DEFAULT_MAX_TOKENS = 8192
+    DEFAULT_MAX_INPUT_TOKENS = 128000
+    MAX_TOKENS_LIMIT = 16384
+    LONG_CONTEXT_THRESHOLD = 128000
+
+    # Pricing defaults
+    DEFAULT_INPUT_COST_PER_TOKEN = 0.000001
+    DEFAULT_OUTPUT_COST_PER_TOKEN = 0.000002
+
+    # Hash signature length
+    THINKING_SIGNATURE_LENGTH = 16
+
+    # Default server settings
+    DEFAULT_HOST = "0.0.0.0"
+    DEFAULT_PORT = 8082
+    DEFAULT_LOG_LEVEL = "WARNING"
+    DEFAULT_MAX_RETRIES = 2
+
+
+logger = logging.getLogger(__name__)
+
+try:
+    enc = tiktoken.get_encoding("cl100k_base")
+    logger.debug("✅ TikToken encoder initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize TikToken encoder: {e}")
+    enc = None
+
+# Constants for better maintainability
+
+class Constants:
+    ROLE_USER = "user"
+    ROLE_ASSISTANT = "assistant"
+    ROLE_SYSTEM = "system"
+    ROLE_TOOL = "tool"
+
+    CONTENT_TEXT = "text"
+    CONTENT_IMAGE = "image"
+    CONTENT_TOOL_USE = "tool_use"
+    CONTENT_TOOL_RESULT = "tool_result"
+
+    TOOL_FUNCTION = "function"
+
+    STOP_END_TURN = "end_turn"
+    STOP_MAX_TOKENS = "max_tokens"
+    STOP_TOOL_USE = "tool_use"
+    STOP_ERROR = "error"
+
+    EVENT_MESSAGE_START = "message_start"
+    EVENT_MESSAGE_STOP = "message_stop"
+    EVENT_MESSAGE_DELTA = "message_delta"
+    EVENT_CONTENT_BLOCK_START = "content_block_start"
+    EVENT_CONTENT_BLOCK_STOP = "content_block_stop"
+    EVENT_CONTENT_BLOCK_DELTA = "content_block_delta"
+    EVENT_PING = "ping"
+
+    DELTA_TEXT = "text_delta"
+    DELTA_INPUT_JSON = "input_json_delta"
+
+
+def generate_thinking_signature(thinking_content: str) -> str:
+    """Generate a signature for thinking content using SHA-256 hash."""
+    if not thinking_content:
+        return ""
+
+    # Create SHA-256 hash of the thinking content
+    hash_object = hashlib.sha256(thinking_content.encode("utf-8"))
+    signature = hash_object.hexdigest()[: ModelDefaults.THINKING_SIGNATURE_LENGTH]
+    return f"thinking_{signature}"
+
+class ClaudeToolChoiceAuto(BaseModel):
     type: Literal["auto"] = "auto"
     disable_parallel_tool_use: Optional[bool] = None
 
-    def to_openai(self) -> Literal["auto"]:
+    def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
         return "auto"
 
-
-class ToolChoiceAny(BaseModel):
+class ClaudeToolChoiceAny(BaseModel):
     type: Literal["any"] = "any"
     disable_parallel_tool_use: Optional[bool] = None
 
-    def to_openai(self) -> Literal["required"]:
+    def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
         return "required"
 
 
-class ToolChoiceTool(BaseModel):
+class ClaudeToolChoiceTool(BaseModel):
     type: Literal["tool"] = "tool"
     name: str
     disable_parallel_tool_use: Optional[bool] = None
 
-    def to_openai(self) -> dict:
+    def to_openai(self) -> ChatCompletionNamedToolChoiceParam:
         return {
             "type": "function",
             "function": {"name": self.name}
         }
 
 
-class ToolChoiceNone(BaseModel):
+class ClaudeToolChoiceNone(BaseModel):
     type: Literal["none"] = "none"
 
-    def to_openai(self) -> None:
-        return None
+    def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
+        return "none"
 
 
 # Union type for all tool choice options
-ClaudeToolChoice = Union[ToolChoiceAuto, ToolChoiceAny, ToolChoiceTool, ToolChoiceNone]
+ClaudeToolChoice = Union[ClaudeToolChoiceAuto, ClaudeToolChoiceAny,
+                         ClaudeToolChoiceTool, ClaudeToolChoiceNone]
 
 
-class ContentBlockText(BaseModel):
+class ClaudeContentBlockText(BaseModel):
     type: Literal["text"]
     text: str
 
-    def to_openai(self) -> Dict[str, str]:
+    def to_openai(self) -> ChatCompletionContentPartTextParam:
         """Convert Claude text block to OpenAI text format."""
         return {"type": "text", "text": self.text}
 
 
-class ContentBlockImage(BaseModel):
+class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
     source: Dict[str, Any]
 
-    def to_openai(self) -> Optional[Dict[str, Any]]:
+    # only user message contains image content
+    def to_openai(self) -> Optional[ChatCompletionContentPartImageParam]:
         """
         Convert Claude image block to OpenAI image_url format.
-        
+
         Claude format:
         {
             "type": "image",
@@ -74,7 +170,7 @@ class ContentBlockImage(BaseModel):
                 "data": "iVBORw0KGgoAAAANSUhEUgAAAB..."
             }
         }
-        
+
         OpenAI format:
         {
             "type": "image_url",
@@ -98,13 +194,14 @@ class ContentBlockImage(BaseModel):
         return None
 
 
-class ContentBlockToolUse(BaseModel):
+class ClaudeContentBlockToolUse(BaseModel):
     type: Literal["tool_use"]
     id: str
     name: str
     input: Dict[str, Any]
 
-    def to_openai(self) -> Dict[str, Any]:
+    # only assistant message contains tool_calls
+    def to_openai(self) -> ChatCompletionMessageToolCallParam:
         """
         Convert Claude tool_use to OpenAI tool_call format.
 
@@ -142,79 +239,35 @@ class ContentBlockToolUse(BaseModel):
             }
         }
 
-    @staticmethod
-    def extract_tool_call_data(tool_call) -> tuple:
-        """Extract tool call data from different formats."""
-        if isinstance(tool_call, dict):
-            tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
-            function_data = tool_call.get("function", {})
-            name = function_data.get("name", "")
-            arguments_str = function_data.get("arguments", "{}")
-        elif hasattr(tool_call, "id") and hasattr(tool_call, "function"):
-            tool_id = tool_call.id
-            name = tool_call.function.name
-            arguments_str = tool_call.function.arguments
-        else:
-            return None, None, None
-
-        return tool_id, name, arguments_str
-
-    @staticmethod
-    def parse_arguments(arguments_str: str) -> dict:
-        """Parse tool arguments safely."""
-        try:
-            arguments_dict = json.loads(arguments_str)
-            if not isinstance(arguments_dict, dict):
-                arguments_dict = {"input": arguments_dict}
-            return arguments_dict
-        except json.JSONDecodeError:
-            return {"raw_arguments": arguments_str}
-
-
-class ContentBlockToolResult(BaseModel):
+class ClaudeContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
-    content: Union[str, List[Dict[str, Any]], Dict[str, Any], List[Any], Any]
+    content: Union[str, List[Dict[str, Any]]]
 
-    def process_content(self) -> str:
+    def process_content(self) -> Union[str, Iterable[ChatCompletionContentPartTextParam]]:
         """
         Process Claude tool_result content into a string format.
 
         Claude supports various content formats:
         - Simple string: "259.75 USD"
         - List with text blocks: [{"type": "text", "text": "result"}]
-        - Complex nested structures
+        - List with image block (OpenAI models only support text content parts)
         """
-        import json
 
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, list):
             # Handle list content by extracting all text
-            content_parts = []
+            content_parts: List[ChatCompletionContentPartTextParam] = []
             for item in self.content:
-                if isinstance(item, dict):
-                    if item.get("type") == "text" and "text" in item:
-                        content_parts.append(item["text"])
-                    elif "text" in item:
-                        content_parts.append(item["text"])
-                    else:
-                        # Fallback: serialize non-text items
-                        content_parts.append(json.dumps(item))
-                else:
-                    content_parts.append(str(item))
-            return "\n".join(content_parts) if content_parts else ""
-        elif isinstance(self.content, dict):
-            # Handle single dict content
-            if self.content.get("type") == "text" and "text" in self.content:
-                return self.content["text"]
-            else:
-                return json.dumps(self.content)
+                content_parts.append({"type": "text", "text": item["content"]})
+            return content_parts
         else:
             # Fallback: serialize anything else
-            return json.dumps(self.content) if self.content is not None else ""
+            return ""
 
-    def to_openai(self) -> Dict[str, Any]:
+    # Claude Tool Result content block -> OpenAI Tool Role Message
+    def to_openai_message(self) -> ChatCompletionToolMessageParam:
         """
         Convert Claude tool_result to OpenAI tool role message format.
 
@@ -238,47 +291,7 @@ class ContentBlockToolResult(BaseModel):
             "content": self.process_content()
         }
 
-    @staticmethod
-    def parse_content(content) -> str:
-        """Parse and normalize tool result content into a string format."""
-        if content is None:
-            return "No content provided"
-
-        if isinstance(content, str):
-            return content
-
-        if isinstance(content, list):
-            result_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    result_parts.append(item.get("text", ""))
-                elif isinstance(item, str):
-                    result_parts.append(item)
-                elif isinstance(item, dict):
-                    if "text" in item:
-                        result_parts.append(item.get("text", ""))
-                    else:
-                        try:
-                            result_parts.append(json.dumps(item))
-                        except:
-                            result_parts.append(str(item))
-            return "\n".join(result_parts).strip()
-
-        if isinstance(content, dict):
-            if content.get("type") == "text":
-                return content.get("text", "")
-            try:
-                return json.dumps(content)
-            except:
-                return str(content)
-
-        try:
-            return str(content)
-        except:
-            return "Unparseable content"
-
-
-class ContentBlockThinking(BaseModel):
+class ClaudeContentBlockThinking(BaseModel):
     type: Literal["thinking"]
     thinking: str
     signature: Optional[str] = None
@@ -287,28 +300,27 @@ class ContentBlockThinking(BaseModel):
         """Thinking blocks should be filtered out for OpenAI format."""
         return None
 
-
-class SystemContent(BaseModel):
+class ClaudeSystemContent(BaseModel):
     type: Literal["text"]
     text: str
 
-
-class Message(BaseModel):
+class ClaudeMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: Union[
         str,
         List[
             Union[
-                ContentBlockText,
-                ContentBlockImage,
-                ContentBlockToolUse,
-                ContentBlockToolResult,
-                ContentBlockThinking
+                ClaudeContentBlockText,
+                ClaudeContentBlockImage,
+                ClaudeContentBlockToolUse,
+                ClaudeContentBlockToolResult,
+                ClaudeContentBlockThinking
             ]
         ],
     ]
 
-    def extract_tool_calls(self) -> List[Dict[str, Any]]:
+    # Claude tool use content block -> OpenAI assistant tool call
+    def extract_tool_calls(self) -> List[ChatCompletionMessageToolCallParam]:
         """
         Extract tool calls from Claude message content for OpenAI format.
         Returns a list of OpenAI tool_call objects.
@@ -317,16 +329,12 @@ class Message(BaseModel):
 
         if isinstance(self.content, list):
             for block in self.content:
-                if isinstance(block, ContentBlockToolUse):
+                if isinstance(block, ClaudeContentBlockToolUse):
                     tool_calls.append(block.to_openai())
-                elif isinstance(block, dict) and block.get("type") == "tool_use":
-                    # Fallback for dict format
-                    tool_use = ContentBlockToolUse.model_validate(block)
-                    tool_calls.append(tool_use.to_openai())
 
         return tool_calls
 
-    def extract_tool_results(self) -> List[Dict[str, Any]]:
+    def extract_tool_results(self) -> List[ChatCompletionToolMessageParam]:
         """
         Extract tool result messages from Claude message content for OpenAI format.
         Returns a list of OpenAI tool role message objects.
@@ -335,12 +343,8 @@ class Message(BaseModel):
 
         if isinstance(self.content, list):
             for block in self.content:
-                if isinstance(block, ContentBlockToolResult):
-                    tool_messages.append(block.to_openai())
-                elif isinstance(block, dict) and block.get("type") == "tool_result":
-                    # Fallback for dict format
-                    tool_result = ContentBlockToolResult.model_validate(block)
-                    tool_messages.append(tool_result.to_openai())
+                if isinstance(block, ClaudeContentBlockToolResult):
+                    tool_messages.append(block.to_openai_message())
 
         return tool_messages
 
@@ -355,7 +359,7 @@ class Message(BaseModel):
             content_parts = []
 
             for block in self.content:
-                if isinstance(block, ContentBlockText):
+                if isinstance(block, ClaudeContentBlockText):
                     content_parts.append(block.text)
                 elif isinstance(block, dict):
                     if block.get("type") == "text" and "text" in block:
@@ -371,67 +375,49 @@ class Message(BaseModel):
         """Process Claude Code interrupted messages."""
         if not isinstance(self.content, str):
             return ""
-        
+
         content = self.content
         if content.startswith("[Request interrupted by user for tool use]"):
             # Split the interrupted message
             interrupted_prefix = "[Request interrupted by user for tool use]"
             remaining_content = content[len(interrupted_prefix):].strip()
             return remaining_content if remaining_content else content
-        
+
         return content
 
-    def to_openai_messages(self) -> List[Dict[str, Any]]:
+    def to_openai_user_messages(self) -> List[Union[ChatCompletionUserMessageParam, ChatCompletionToolMessageParam]]:
         """
-        Convert Claude user message to OpenAI message format.
+        Convert Claude user message to OpenAI user message format.
         Handles complex logic including tool_result splitting, content block ordering, etc.
         Returns a list of OpenAI messages (can be multiple due to tool_result splitting).
+
+        Note:
+            For Claude user message, there is no tool call and thinking content.
+            tool call content block and thinking content is for assistant message only
         """
         if self.role != "user":
             raise ValueError("This method is only for user messages")
-        
+
         openai_messages = []
-        
+
         # Handle simple string content
         if isinstance(self.content, str):
-            processed_content = self.process_interrupted_content()
-            openai_messages.append({"role": "user", "content": processed_content})
+            # processed_content = self.process_interrupted_content()
+            openai_messages.append({"role": "user", "content": self.content})
             return openai_messages
-        
+
         # Process content blocks in order, maintaining structure
-        current_text_parts = []
         content_parts = []
-        
+
+        # Claude user message content blocks -> OpenAI user message content
+        # parts
+        # https://docs.anthropic.com/en/api/messages#body-messages-content
+        # https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages
         for block in self.content:
-            block_type = block.type if hasattr(block, "type") else block.get("type")
-            
-            if block_type == "text":
-                text_content = (
-                    block.text if hasattr(block, "text") else block.get("text", "")
-                )
-                current_text_parts.append(text_content)
-                
-            elif block_type in ["image", "thinking"]:
-                # Process any accumulated text first
-                if current_text_parts:
-                    text_content = "".join(current_text_parts)
-                    if text_content:
-                        content_parts.append({"type": "text", "text": text_content})
-                    current_text_parts.clear()
-                
-                # Convert and add non-text block using utility function
-                openai_content = convert_content_block_to_openai(block)
-                if openai_content:  # None for thinking blocks
-                    content_parts.append(openai_content)
-                    
-            elif block_type == "tool_result":
-                # Process any remaining text first
-                if current_text_parts:
-                    text_content = "".join(current_text_parts)
-                    if text_content:
-                        content_parts.append({"type": "text", "text": text_content})
-                    current_text_parts.clear()
-                
+            if not isinstance(block,
+                              ClaudeContentBlockToolResult):
+                content_parts.append(block.to_openai())
+            elif isinstance(block,ClaudeContentBlockToolResult):
                 # CRITICAL: Split user message when tool_result is encountered
                 if content_parts:
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
@@ -443,18 +429,11 @@ class Message(BaseModel):
                             {"role": "user", "content": content_parts}
                         )
                     content_parts.clear()
-
                 # Add tool result immediately to maintain chronological order
-                tool_message = convert_content_block_to_openai(block)
-                if tool_message:
-                    openai_messages.append(tool_message)
+                tool_message = block.to_openai_message()
+                openai_messages.append(tool_message)
 
         # Process any remaining content
-        if current_text_parts:
-            text_content = "".join(current_text_parts)
-            if text_content:
-                content_parts.append({"type": "text", "text": text_content})
-
         if content_parts:
             if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                 openai_messages.append(
@@ -465,23 +444,21 @@ class Message(BaseModel):
                     {"role": "user", "content": content_parts}
                 )
 
-        # Tool messages are now added immediately when encountered to maintain order
-        
         return openai_messages
 
-    def to_openai_assistant_message(self) -> Optional[Dict[str, Any]]:
+    def to_openai_assistant_message(self) -> Union[ChatCompletionAssistantMessageParam, List[Union[ChatCompletionAssistantMessageParam,ChatCompletionToolMessageParam]]]:
         """
         Convert Claude assistant message to OpenAI assistant message format.
         Returns None if the message has no content or tool calls.
         """
         if self.role != "assistant":
             raise ValueError("This method is only for assistant messages")
-        
+
         # Extract tool calls and text content using existing methods
         tool_calls = self.extract_tool_calls()
         text_content = self.extract_text_content()
 
-        assistant_msg = {"role": "assistant"}
+        assistant_msg = ChatCompletionAssistantMessageParam(role="assistant")
 
         # Handle content for assistant messages
         if text_content:
@@ -493,164 +470,60 @@ class Message(BaseModel):
             assistant_msg["tool_calls"] = tool_calls
 
         # Only return message if it has actual content or tool calls
-        if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
-            return assistant_msg
-        
-        return None
+        # if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
+        #     return assistant_msg
+        return assistant_msg
 
-    @staticmethod
-    def clean_tool_markers(content: str) -> str:
-        """Clean up tool call markers and malformed content (DeepSeek-R1 style)."""
-        if not content:
-            return content
-
-        # Remove specific tool call markers
-        content = re.sub(r"<｜tool▁call▁end｜>", "", content)
-        content = re.sub(r"<\|tool_call_end\|>", "", content)
-
-        # Remove DeepSeek-R1 function call blocks completely
-        patterns_to_remove = [
-            # Pattern 1: function FunctionName\n```json\n{...}\n```
-            r"function\s+\w+\s*\n\s*```json\s*\n\s*{[\s\S]*?}\s*\n\s*```",
-            # Pattern 2: function FunctionName ```json\n{...}\n```
-            r"function\s+\w+\s*```json\s*\n\s*{[\s\S]*?}\s*\n\s*```",
-            # Pattern 3: function FunctionName\n```json{...}```
-            r"function\s+\w+\s*\n?\s*```json\s*{.*?}\s*```",
-            # Pattern 4: More flexible - function name followed by any JSON in code blocks
-            r"function\s+\w+[\s\S]*?```(?:json)?\s*{[\s\S]*?}\s*```",
-        ]
-
-        for pattern in patterns_to_remove:
-            content = re.sub(pattern, "", content, flags=re.DOTALL | re.IGNORECASE)
-
-        # Remove standalone function names that appear by themselves
-        content = re.sub(r"^\s*function\s+\w+\s*$", "", content, flags=re.MULTILINE)
-
-        # Clean up excessive whitespace
-        content = re.sub(r"\n\s*\n\s*\n+", "\n\n", content)
-        content = re.sub(r"^\s*\n+", "", content)  # Remove leading newlines
-        content = content.strip()
-
-        return content
-
-    @staticmethod
-    def parse_tool_calls_from_content(content: str) -> List[Dict[str, Any]]:
-        """Extract tool calls from malformed content (DeepSeek-R1 style)."""
-        tool_calls = []
-
-        # DeepSeek-R1 specific patterns
-        patterns = [
-            # Pattern 1: function FunctionName\n```json\n{...}\n```
-            r"function\s+(\w+)\s*\n\s*```json\s*\n\s*({[\s\S]*?})\s*\n\s*```",
-            # Pattern 2: function FunctionName ```json\n{...}\n```
-            r"function\s+(\w+)\s*```json\s*\n\s*({[\s\S]*?})\s*\n\s*```",
-            # Pattern 3: function FunctionName\n```json{...}```
-            r"function\s+(\w+)\s*\n?\s*```json\s*({.*?})\s*```",
-            # Pattern 4: More flexible - function name followed by any JSON in code blocks
-            r"function\s+(\w+)[\s\S]*?```(?:json)?\s*({[\s\S]*?})\s*```",
-        ]
-
-        for i, pattern in enumerate(patterns):
-            matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
-            if matches:
-                for match in matches:
-                    function_name = match[0]
-                    json_str = match[1].strip()
-
-                    # Clean up the JSON string
-                    json_str = re.sub(r"\n\s*", " ", json_str)  # Remove extra whitespace
-                    json_str = re.sub(r",\s*}", "}", json_str)  # Remove trailing commas
-                    json_str = re.sub(
-                        r",\s*]", "]", json_str
-                    )  # Remove trailing commas in arrays
-
-                    try:
-                        arguments = json.loads(json_str)
-                        tool_call_id = f"toolu_{uuid.uuid4().hex[:24]}"
-                        tool_calls.append(
-                            {
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": function_name,
-                                    "arguments": json.dumps(arguments)
-                                    if isinstance(arguments, dict)
-                                    else json_str,
-                                },
-                            }
-                        )
-                    except json.JSONDecodeError:
-                        # Try to create a tool call with raw arguments
-                        tool_call_id = f"toolu_{uuid.uuid4().hex[:24]}"
-                        tool_calls.append(
-                            {
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": function_name,
-                                    "arguments": json.dumps({"raw_input": json_str}),
-                                },
-                            }
-                        )
-
-                # If we found matches with this pattern, stop trying others
-                if tool_calls:
-                    break
-
-        return tool_calls
-
-
-class Tool(BaseModel):
+class ClaudeTool(BaseModel):
     name: str
     description: Optional[str] = None
     input_schema: Dict[str, Any]
 
-class ThinkingConfigEnabled(BaseModel):
+class ClaudeThinkingConfigEnabled(BaseModel):
     type: Literal["enabled"] = "enabled"
     budget_tokens: Optional[int] = None
 
 
-class ThinkingConfigDisabled(BaseModel):
+class ClaudeThinkingConfigDisabled(BaseModel):
     type: Literal["disabled"] = "disabled"
 
-
-class MessagesRequest(BaseModel):
+class ClaudeMessagesRequest(BaseModel):
     model: str
     max_tokens: int
-    messages: List[Message]
-    system: Optional[Union[str, List[SystemContent]]] = None
+    messages: List[ClaudeMessage]
+    system: Optional[Union[str, List[ClaudeSystemContent]]] = None
     stop_sequences: Optional[List[str]] = None
     stream: Optional[bool] = False
     temperature: Optional[float] = 1.0
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
-    tools: Optional[List[Tool]] = None
+    tools: Optional[List[ClaudeTool]] = None
     tool_choice: Optional[ClaudeToolChoice] = None
-    thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled]] = None
+    thinking: Optional[Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled]] = None
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
         if isinstance(v, dict):
             if v.get("enabled") is True:
-                return ThinkingConfigEnabled(
+                return ClaudeThinkingConfigEnabled(
                     type="enabled", budget_tokens=v.get("budget_tokens")
                 )
             elif v.get("enabled") is False:
-                return ThinkingConfigDisabled(type="disabled")
+                return ClaudeThinkingConfigDisabled(type="disabled")
             elif v.get("type") == "enabled":
-                return ThinkingConfigEnabled(
+                return ClaudeThinkingConfigEnabled(
                     type="enabled", budget_tokens=v.get("budget_tokens")
                 )
             elif v.get("type") == "disabled":
-                return ThinkingConfigDisabled(type="disabled")
+                return ClaudeThinkingConfigDisabled(type="disabled")
         return v
 
     def extract_system_content(self) -> str:
         """Extract system content from various formats."""
         if not self.system:
             return ""
-        
+
         if isinstance(self.system, str):
             return self.system
         elif isinstance(self.system, list):
@@ -663,124 +536,1634 @@ class MessagesRequest(BaseModel):
             return system_content
         return ""
 
+    # see https://platform.openai.com/docs/api-reference/chat/create
+    def to_openai_request(self) -> Dict[str, Any]:
+        """Convert Anthropic API request to OpenAI API format using OpenAI SDK types for validation."""
 
-class TokenCountRequest(BaseModel):
+        logger.debug(f"🔄 Converting Claude request to OpenAI format for model: {self.model}")
+        logger.debug(f"🔄 Input messages count: {len(self.messages)}")
+
+        # Log message types for debugging
+        for i, msg in enumerate(self.messages):
+            has_tool_use = False
+            has_tool_result = False
+            if isinstance(msg.content, list):
+                for block in msg.content:
+                    if block.type == Constants.CONTENT_TOOL_USE:
+                        has_tool_use = True
+                    elif block.type == Constants.CONTENT_TOOL_RESULT:
+                        has_tool_result = True
+            logger.debug(
+                f"🔄 Message {i} ({msg.role}): tool_use={has_tool_use}, tool_result={has_tool_result}"
+            )
+
+        # Build OpenAI messages with type validation
+        openai_messages :List[ChatCompletionMessageParam] = []
+
+        # --- Claude Messages -> OpenAI messages ---
+        # Convert system message if present
+        if self.system:
+            system_content = self.extract_system_content()
+            if system_content:
+                system_msg: ChatCompletionSystemMessageParam = {
+                    "role": "system",
+                    "content": system_content,
+                }
+                openai_messages.append(system_msg)
+
+        for msg in self.messages:
+            if msg.role == Constants.ROLE_USER:
+                user_messages = msg.to_openai_user_messages()
+                openai_messages.extend(user_messages)
+            elif msg.role == Constants.ROLE_ASSISTANT:
+                # Note:
+                # Claude only has user and assistant these
+                # two roles. So the Claude assistant's tool use
+                # content blocks should be added to the OpenAI
+                # assistant's tool_calls.
+                # For tool result content blocks, we need to create
+                # tool role messages.
+                # Besides, tool use should always before tool result
+
+                assistant_message = msg.to_openai_assistant_message()
+                if isinstance(assistant_message, list):
+                    openai_messages.extend(assistant_message)
+                elif isinstance(assistant_message, dict) and assistant_message["role"] == "assistant":
+                    openai_messages.append(assistant_message)
+                    logger.debug(f"🔧 Assistant message:content={bool(assistant_message.get("content"))},tool_calls={len(list(assistant_message.get('tool_calls',[])))}")
+
+        # Claude request tools -> OpenAI request tools
+        # https://docs.anthropic.com/en/api/messages#body-tools
+        # https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools
+        openai_tools = []
+        if self.tools:
+            openai_tools: List[ChatCompletionToolParam] = []
+            for tool in self.tools:
+                tool_params: ChatCompletionToolParam = {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                    },
+                }
+                if hasattr(tool, "input_schema"):
+                    if "gemini" in self.model.lower():
+                        tool_params["function"]["parameters"] = clean_gemini_schema(
+                            tool.input_schema
+                        )
+                    else:
+                        tool_params["function"]["parameters"] = tool.input_schema
+                    openai_tools.append(tool_params)
+                    logger.debug(f"openai_tools append: {tool_params}")
+
+        # Handle tool_choice with type validation
+        # Claude tool_choice -> OpenAI tool_choice
+        # https://docs.anthropic.com/en/api/messages#body-tool-choice
+        # https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
+        tool_choice = None
+        if self.tool_choice:
+            tool_choice = self.tool_choice.to_openai()
+            logger.debug(
+                f"openai tool choice param: {tool_choice} <- {self.tool_choice}"
+            )
+
+        request_params = {
+            "model": self.model,
+            "messages": openai_messages,
+            "stream": self.stream,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+        }
+
+        if openai_tools:
+            request_params["tools"] = openai_tools
+        if tool_choice:
+            request_params["tool_choice"] = tool_choice
+
+        raw_json = self.model_dump()
+        logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
+        logger.debug(f"🔄 Original request: {raw_json}")
+        logger.debug(f"🔄 OpenAI request: {request_params}")
+
+        # Compare request data and log any mismatches
+        _compare_request_data(self, request_params)
+
+        # Return the request with validated components
+        # Individual components (messages, tools) are already validated using OpenAI SDK types
+        return request_params
+
+    def calculate_tokens(self) -> int:
+        # TODO
+        return 0
+
+
+
+class ClaudeTokenCountRequest(BaseModel):
     model: str
-    messages: List[Message]
-    system: Optional[Union[str, List[SystemContent]]] = None
-    tools: Optional[List[Tool]] = None
-    thinking: Optional[Union[ThinkingConfigEnabled, ThinkingConfigDisabled, dict]] = None
+    messages: List[ClaudeMessage]
+    system: Optional[Union[str, List[ClaudeSystemContent]]] = None
+    tools: Optional[List[ClaudeTool]] = None
+    thinking: Optional[Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled, dict]] = None
     tool_choice: Optional[Dict[str, Any]] = None
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
         if isinstance(v, dict):
             if v.get("enabled") is True:
-                return ThinkingConfigEnabled(
+                return ClaudeThinkingConfigEnabled(
                     type="enabled", budget_tokens=v.get("budget_tokens")
                 )
             elif v.get("enabled") is False:
-                return ThinkingConfigDisabled(type="disabled")
+                return ClaudeThinkingConfigDisabled(type="disabled")
             elif v.get("type") == "enabled":
-                return ThinkingConfigEnabled(
+                return ClaudeThinkingConfigEnabled(
                     type="enabled", budget_tokens=v.get("budget_tokens")
                 )
             elif v.get("type") == "disabled":
-                return ThinkingConfigDisabled(type="disabled")
+                return ClaudeThinkingConfigDisabled(type="disabled")
         return v
 
+    def calculate_tokens(self) -> int:
+        return 0
 
-class TokenCountResponse(BaseModel):
+
+class ClaudeTokenCountResponse(BaseModel):
     input_tokens: int
 
 
-class Usage(BaseModel):
+class ClaudeUsage(BaseModel):
     input_tokens: int
     output_tokens: int
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
 
 
-class MessagesResponse(BaseModel):
+# see https://docs.anthropic.com/en/api/messages#response-id
+class ClaudeMessagesResponse(BaseModel):
     id: str
-    model: str
-    role: Literal["assistant"] = "assistant"
-    content: List[Union[ContentBlockText, ContentBlockToolUse, ContentBlockThinking]]
     type: Literal["message"] = "message"
+    role: Literal["assistant"] = "assistant"
+    model: str
+    content: List[Union[ClaudeContentBlockText, ClaudeContentBlockToolUse, ClaudeContentBlockThinking]]
     stop_reason: Optional[
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "error"]
+        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use",
+                "pause_turn", "refusal", "error"]
     ] = None
     stop_sequence: Optional[str] = None
-    usage: Usage
+    usage: ClaudeUsage
 
+# openai response -> claude response
+def convert_openai_response_to_anthropic(
+        openai_response: ChatCompletion, original_request: ClaudeMessagesRequest
+) -> ClaudeMessagesResponse:
+    """Convert OpenAI response back to Anthropic API format using OpenAI SDK type validation."""
+    try:
+        # Validate and extract response data using OpenAI SDK types
+        response_id = f"msg_{uuid.uuid4()}"
+        content_text = ""
+        tool_calls = None
+        finish_reason = "stop"
+        prompt_tokens = 0
+        completion_tokens = 0
+        thinking_content = ""
 
-# Utility function for converting content blocks to OpenAI format
-def convert_content_block_to_openai(block: Union[ContentBlockText, ContentBlockImage, ContentBlockToolUse, ContentBlockToolResult, ContentBlockThinking, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """
-    Convert Claude content block to OpenAI format, handling both Pydantic models and dict formats.
-    
-    Args:
-        block: Content block in either Pydantic model or dict format
-    
-    Returns:
-        OpenAI-formatted content or None if block should be filtered out
-    """
-    # Handle Pydantic model instances
-    if isinstance(block, (ContentBlockText, ContentBlockImage, ContentBlockToolUse, ContentBlockToolResult, ContentBlockThinking)):
-        return block.to_openai()
-    
-    # Handle dict format (legacy/raw API)
-    elif isinstance(block, dict):
-        block_type = block.get("type")
-        
-        if block_type == "text":
-            return {"type": "text", "text": block.get("text", "")}
-        
-        elif block_type == "image":
-            source = block.get("source", {})
-            if (
-                isinstance(source, dict)
-                and source.get("type") == "base64"
-                and "media_type" in source
-                and "data" in source
-            ):
-                return {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{source['media_type']};base64,{source['data']}"
-                    },
-                }
-            return None
-        
-        elif block_type == "tool_use":
-            import json
-            tool_input = block.get("input", {})
-            try:
-                arguments_str = json.dumps(tool_input, ensure_ascii=False, separators=(',', ':'))
-            except (TypeError, ValueError):
-                arguments_str = "{}"
-            
-            return {
-                "id": block.get("id", ""),
-                "type": "function",
-                "function": {
-                    "name": block.get("name", ""),
-                    "arguments": arguments_str
-                }
-            }
-        
-        elif block_type == "tool_result":
-            # For tool_result in dict format, create a temporary ContentBlockToolResult to reuse logic
-            temp_block = ContentBlockToolResult(
-                type="tool_result",
-                tool_use_id=block.get("tool_use_id", ""),
-                content=block.get("content", "")
+        logger.debug(f"Converting OpenAI response: {type(openai_response)}")
+
+        choice = openai_response.choices[0]
+        # Extract message content
+        message = choice.message
+        content_text = message.content or ""
+        raw_message = message.model_dump()
+
+        # Extract reasoning_content for thinking models (OpenAI format)
+        if 'reasoning_content' in raw_message:
+            thinking_content = raw_message["reasoning_content"]
+            logger.debug(
+                f"Extracted reasoning_content: {len(thinking_content)} characters"
             )
-            return temp_block.to_openai()
-        
-        elif block_type == "thinking":
-            # Filter out thinking blocks
-            return None
-    
-    # Unknown format
-    return None
+
+        # Extract tool calls if present
+        if message.tool_calls:
+            tool_calls = message.tool_calls
+        # Extract finish reason
+        finish_reason = choice.finish_reason
+
+        # Extract usage information
+        usage = openai_response.usage
+        if usage:
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+
+        logger.debug(f"Raw content extracted: {len(content_text)} characters")
+        logger.debug(f"Tool calls from response: {tool_calls}")
+
+        # Enhanced debugging for Claude Code tool testing
+        if logger.isEnabledFor(10):  # DEBUG level
+            logger.debug("=== ENHANCED DEBUG INFO ===")
+            if thinking_content:
+                logger.debug(f"Thinking content preview: {thinking_content[:500]}...")
+            if content_text:
+                logger.debug(f"Raw content text: {repr(content_text)}")
+            logger.debug("=== END DEBUG INFO ===")
+
+        # Build content blocks
+        content_blocks = []
+
+        # Add thinking content first if present (for Claude Code display)
+        if thinking_content:
+            thinking_signature = generate_thinking_signature(thinking_content)
+            content_blocks.append(
+                ClaudeContentBlockThinking(
+                    type="thinking",
+                    thinking=thinking_content,
+                    signature=thinking_signature,
+                )
+            )
+            logger.debug(
+                f"Added thinking content block: {len(thinking_content)} characters, signature: {thinking_signature}"
+            )
+
+        # Add text content if present
+        if content_text:
+            content_blocks.append(
+                ClaudeContentBlockText(type=Constants.CONTENT_TEXT, text=content_text)
+            )
+
+        # Process tool calls
+        if tool_calls:
+            for tool_call in tool_calls:
+                try:
+                    arguments_dict = _parse_tool_arguments(tool_call.function.arguments)
+                    content_blocks.append(
+                        ClaudeContentBlockToolUse(
+                            type=Constants.CONTENT_TOOL_USE,
+                            id=tool_call.id,
+                            name=tool_call.function.name,
+                            input=arguments_dict,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Error processing tool call: {e}")
+                    continue
+
+        # Only add empty content block if there are no tool calls (to avoid Claude Code loops)
+        # if not content_blocks and not tool_calls:
+        #     content_blocks.append(
+        #         ClaudeContentBlockText(type=Constants.CONTENT_TEXT, text="")
+        #     )
+
+        # Map finish reason to Anthropic format
+        if finish_reason == "length":
+            stop_reason = Constants.STOP_MAX_TOKENS
+        elif finish_reason == "tool_calls":
+            stop_reason = Constants.STOP_TOOL_USE
+        elif finish_reason is None and tool_calls:
+            stop_reason = Constants.STOP_TOOL_USE
+        else:
+            stop_reason = Constants.STOP_END_TURN
+
+        # Final debug info for Claude message creation
+        if logger.isEnabledFor(10):  # DEBUG level
+            logger.debug(
+                f"Creating Claude response with {len(content_blocks)} content blocks:"
+            )
+            for i, block in enumerate(content_blocks):
+                block_type = getattr(block, "type", "unknown")
+                logger.debug(f"  Block {i}: {block_type}")
+                if block_type == "thinking":
+                    thinking_text = getattr(block, "thinking", "")
+                    logger.debug(f"    Thinking length: {len(thinking_text)}")
+                elif block_type == "text":
+                    text = getattr(block, "text", "")
+                    logger.debug(f"    Text: {repr(text[:200])}...")
+                elif block_type == "tool_use":
+                    name = getattr(block, "name", "unknown")
+                    logger.debug(f"    Tool: {name}")
+
+        # Create Claude response
+        claude_response = ClaudeMessagesResponse(
+            id=response_id,
+            model=original_request.model,
+            role=Constants.ROLE_ASSISTANT,
+            content=content_blocks,
+            stop_reason=stop_reason,
+            stop_sequence=None,
+            usage=ClaudeUsage(input_tokens=prompt_tokens, output_tokens=completion_tokens),
+        )
+
+        # Compare response data and log any mismatches
+        _compare_response_data(openai_response, claude_response)
+
+        return claude_response
+
+    except Exception as e:
+        logger.error(f"Error converting response: {e}")
+        return ClaudeMessagesResponse(
+            id=f"msg_error_{uuid.uuid4()}",
+            model=original_request.model,
+            role=Constants.ROLE_ASSISTANT,
+            content=[
+                ClaudeContentBlockText(
+                    type=Constants.CONTENT_TEXT, text="Response conversion error"
+                )
+            ],
+            stop_reason=Constants.STOP_ERROR,
+            usage=ClaudeUsage(input_tokens=0, output_tokens=0),
+        )
+
+# Helper function to clean schema for Gemini
+def _remove_gemini_incompatible_uri_format(schema: dict) -> dict:
+    """Fix only the specific URI format issue that causes MALFORMED_FUNCTION_CALL in Gemini."""
+    # Create a copy to avoid modifying the original
+    fixed_schema = {}
+
+    for key, value in schema.items():
+        if key == "properties" and isinstance(value, dict):
+            # Fix properties recursively
+            fixed_properties = {}
+            for prop_name, prop_schema in value.items():
+                if isinstance(prop_schema, dict):
+                    fixed_prop = _remove_gemini_incompatible_uri_format(prop_schema)
+                    fixed_properties[prop_name] = fixed_prop
+                else:
+                    fixed_properties[prop_name] = prop_schema
+            fixed_schema[key] = fixed_properties
+        elif key == "format" and value == "uri":
+            # Skip the format field if it's 'uri' - this is the main issue
+            logger.debug("Removing 'uri' format for Gemini compatibility")
+            continue
+        elif isinstance(value, dict):
+            # Recursively fix nested objects
+            fixed_schema[key] = _remove_gemini_incompatible_uri_format(value)
+        elif isinstance(value, list):
+            # Handle arrays
+            fixed_list = []
+            for item in value:
+                if isinstance(item, dict):
+                    fixed_list.append(_remove_gemini_incompatible_uri_format(item))
+                else:
+                    fixed_list.append(item)
+            fixed_schema[key] = fixed_list
+        else:
+            # Keep everything else as-is
+            fixed_schema[key] = value
+
+    return fixed_schema
+
+
+def clean_gemini_schema(schema: Any) -> Any:
+    """
+    Recursively clean and validate JSON schema for Gemini OpenAI API compatibility.
+
+    Gemini requires a strict subset of OpenAPI schema format:
+    - Function names: descriptive, no spaces/special chars (underscores/camelCase OK)
+    - Parameters: must be object type with properties structure
+    - Required: array of mandatory parameter names
+    - Enum: use arrays for fixed value sets
+    """
+    if isinstance(schema, dict):
+        # Create a copy to avoid modifying the original
+        cleaned_schema = {}
+
+        for key, value in schema.items():
+            # Skip problematic fields that cause MALFORMED_FUNCTION_CALL
+            if key in [
+                "additionalProperties",  # Gemini doesn't support this
+                "default",  # Can cause validation issues
+                "examples",  # Not part of core OpenAPI subset
+                "title",  # Not needed for function parameters
+                "$schema",  # Schema metadata not needed
+                "$id",  # Schema metadata not needed
+                "definitions",  # Complex references not supported
+                "$ref",  # References not supported
+                "allOf",
+                "anyOf",
+                "oneOf",  # Complex schema combinations
+                "not",  # Negation schemas not supported
+                "patternProperties",  # Advanced property patterns
+                "dependencies",  # Complex dependency validation
+                "const",  # Use enum instead
+                "contains",  # Array contains validation
+                "propertyNames",  # Property name validation
+                "if",
+                "then",
+                "else",  # Conditional schemas
+                "readOnly",
+                "writeOnly",  # OpenAPI 3.0 specific fields
+                "deprecated",  # OpenAPI metadata
+                "external_docs",  # OpenAPI documentation
+                "xml",  # XML-specific metadata
+                "example",  # Use examples array instead
+            ]:
+                logger.debug(
+                    f"Removing unsupported field '{key}' for Gemini compatibility"
+                )
+                continue
+
+            # Handle format field - only allow very basic formats
+            if key == "format":
+                # Gemini only supports very limited formats
+                allowed_formats = {"date-time", "email", "uri"}  # Minimal set
+                if value not in allowed_formats:
+                    logger.debug(
+                        f"Removing unsupported format '{value}' for Gemini compatibility"
+                    )
+                    continue
+                # Even for allowed formats, be conservative and remove format
+                # as it can cause validation issues
+                logger.debug(
+                    f"Removing format '{value}' for maximum Gemini compatibility"
+                )
+                continue
+
+            # Handle string length constraints - be more lenient
+            if key in ["minLength", "maxLength"] and isinstance(value, int):
+                # Keep reasonable constraints but avoid extremes
+                if key == "minLength" and value < 0:
+                    continue
+                if key == "maxLength" and value > 1000000:  # 1M chars max
+                    cleaned_schema[key] = 1000000
+                    continue
+
+            # Handle numeric constraints
+            if key in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]:
+                # Keep basic numeric constraints
+                if isinstance(value, (int, float)):
+                    cleaned_schema[key] = value
+                continue
+
+            # Handle pattern - remove complex regex patterns
+            if key == "pattern":
+                # Gemini may not support complex regex patterns
+                logger.debug(f"Removing pattern '{value}' for Gemini compatibility")
+                continue
+
+            # Handle multipleOf - keep simple ones
+            if key == "multipleOf" and isinstance(value, (int, float)) and value > 0:
+                cleaned_schema[key] = value
+                continue
+
+            # Recursively clean nested schemas
+            if isinstance(value, dict):
+                cleaned_value = clean_gemini_schema(value)
+                if cleaned_value:  # Only add if not empty
+                    cleaned_schema[key] = cleaned_value
+            elif isinstance(value, list):
+                cleaned_value = [clean_gemini_schema(item) for item in value]
+                # Filter out empty items
+                cleaned_value = [
+                    item for item in cleaned_value if item is not None and item != {}
+                ]
+                if cleaned_value:  # Only add if not empty
+                    cleaned_schema[key] = cleaned_value
+            else:
+                # Keep primitive values
+                cleaned_schema[key] = value
+
+        return cleaned_schema
+    elif isinstance(schema, list):
+        # Recursively clean items in a list
+        cleaned_list = [clean_gemini_schema(item) for item in schema]
+        # Filter out empty items
+        return [item for item in cleaned_list if item is not None and item != {}]
+
+    return schema
+
+
+def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
+    """
+    Validate a function definition for Gemini OpenAI API compatibility.
+
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    try:
+        # Check basic structure
+        if not isinstance(tool_def, dict):
+            return False, "Tool definition must be a dictionary"
+
+        if tool_def.get("type") != "function":
+            return False, "Tool type must be 'function'"
+
+        function_def = tool_def.get("function")
+        if not isinstance(function_def, dict):
+            return False, "Tool must have a 'function' object"
+
+        # Validate function name
+        name = function_def.get("name")
+        if not name or not isinstance(name, str):
+            return False, "Function must have a non-empty string name"
+
+        # Check name format - no spaces, only alphanumeric, underscores, hyphens
+        import re
+
+        if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
+            return (
+                False,
+                f"Function name '{name}' contains invalid characters. Use alphanumeric, underscores, or hyphens only",
+            )
+
+        # Validate description
+        description = function_def.get("description", "")
+        if not isinstance(description, str):
+            return False, "Function description must be a string"
+
+        if len(description.strip()) == 0:
+            return False, "Function description cannot be empty (required for Gemini)"
+
+        # Validate parameters schema
+        parameters = function_def.get("parameters")
+        if parameters is None:
+            # Empty parameters are allowed
+            return True, ""
+
+        if not isinstance(parameters, dict):
+            return False, "Parameters must be a dictionary"
+
+        # For Gemini, parameters must be object type
+        param_type = parameters.get("type")
+        if param_type is None:
+            return False, "Parameters must have a 'type' field"
+
+        if param_type != "object":
+            return False, f"Parameters type must be 'object', got '{param_type}'"
+
+        # Validate properties if present
+        properties = parameters.get("properties")
+        if properties is not None:
+            if not isinstance(properties, dict):
+                return False, "Properties must be a dictionary"
+
+            for prop_name, prop_schema in properties.items():
+                if not isinstance(prop_name, str) or not prop_name.strip():
+                    return (
+                        False,
+                        f"Property name must be a non-empty string, got '{prop_name}'",
+                    )
+
+                if not isinstance(prop_schema, dict):
+                    return False, f"Property '{prop_name}' schema must be a dictionary"
+
+                # Each property must have a type
+                prop_type = prop_schema.get("type")
+                if prop_type is None:
+                    return False, f"Property '{prop_name}' must have a 'type' field"
+
+                # Validate allowed types for Gemini
+                allowed_types = {
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean",
+                    "array",
+                    "object",
+                }
+                if prop_type not in allowed_types:
+                    return (
+                        False,
+                        f"Property '{prop_name}' has unsupported type '{prop_type}'. Allowed: {allowed_types}",
+                    )
+
+                # Validate array items
+                if prop_type == "array":
+                    items = prop_schema.get("items")
+                    if items is None:
+                        return (
+                            False,
+                            f"Array property '{prop_name}' must have 'items' definition",
+                        )
+
+                    if isinstance(items, dict):
+                        items_type = items.get("type")
+                        if items_type is None:
+                            return (
+                                False,
+                                f"Array property '{prop_name}' items must have a 'type' field",
+                            )
+
+                        if items_type not in allowed_types:
+                            return (
+                                False,
+                                f"Array property '{prop_name}' items has unsupported type '{items_type}'",
+                            )
+
+        # Validate required array if present
+        required = parameters.get("required")
+        if required is not None:
+            if not isinstance(required, list):
+                return False, "Required must be an array"
+
+            for req_field in required:
+                if not isinstance(req_field, str) or not req_field.strip():
+                    return (
+                        False,
+                        f"Required field must be a non-empty string, got '{req_field}'",
+                    )
+
+                # Check that required fields exist in properties
+                if properties and req_field not in properties:
+                    return (
+                        False,
+                        f"Required field '{req_field}' not found in properties",
+                    )
+
+        return True, ""
+
+    except Exception as e:
+        return False, f"Validation error: {str(e)}"
+
+def _extract_tool_call_data(tool_call) -> tuple:
+    """Extract tool call data from different formats."""
+    if isinstance(tool_call, dict):
+        tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
+        function_data = tool_call.get(Constants.TOOL_FUNCTION, {})
+        name = function_data.get("name", "")
+        arguments_str = function_data.get("arguments", "{}")
+    elif hasattr(tool_call, "id") and hasattr(tool_call, Constants.TOOL_FUNCTION):
+        tool_id = tool_call.id
+        name = tool_call.function.name
+        arguments_str = tool_call.function.arguments
+    else:
+        return None, None, None
+
+    return tool_id, name, arguments_str
+
+
+def _parse_tool_arguments(arguments_str: str) -> dict:
+    """Parse tool arguments safely."""
+    try:
+        arguments_dict = json.loads(arguments_str)
+        if not isinstance(arguments_dict, dict):
+            arguments_dict = {"input": arguments_dict}
+        return arguments_dict
+    except json.JSONDecodeError:
+        return {"raw_arguments": arguments_str}
+
+
+def _parse_tool_result_content(content):
+    """Parse and normalize tool result content into a string format."""
+    if content is None:
+        return "No content provided"
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        result_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                result_parts.append(item.get("text", ""))
+            elif isinstance(item, str):
+                result_parts.append(item)
+            elif isinstance(item, dict):
+                if "text" in item:
+                    result_parts.append(item.get("text", ""))
+                else:
+                    try:
+                        result_parts.append(json.dumps(item))
+                    except:
+                        result_parts.append(str(item))
+        return "\n".join(result_parts).strip()
+
+    if isinstance(content, dict):
+        if content.get("type") == "text":
+            return content.get("text", "")
+        try:
+            return json.dumps(content)
+        except:
+            return str(content)
+
+    try:
+        return str(content)
+    except:
+        return "Unparseable content"
+
+def _send_message_start_event(message_id: str, model: str):
+    """Send message_start event."""
+    message_data = {
+        "type": "message_start",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        },
+    }
+    event_str = f"event: message_start\ndata: {json.dumps(message_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: message_start - message_id: {message_id}, model: {model}")
+    return event_str
+
+
+def _send_content_block_start_event(index: int, block_type: str, **kwargs):
+    """Send content_block_start event."""
+    content_block = {"type": block_type, **kwargs}
+    if block_type == "text":
+        content_block["text"] = ""
+    elif block_type == "tool_use":
+        # Ensure tool_use blocks have required fields
+        if "id" not in content_block:
+            content_block["id"] = f"toolu_{uuid.uuid4().hex[:24]}"
+        if "name" not in content_block:
+            content_block["name"] = ""
+        if "input" not in content_block:
+            content_block["input"] = {}
+    event_data = {'type': 'content_block_start', 'index': index, 'content_block': content_block}
+    event_str = f"event: content_block_start\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: content_block_start - index: {index}, block_type: {block_type}, kwargs: {kwargs}")
+    return event_str
+
+
+# see https://docs.anthropic.com/en/docs/build-with-claude/streaming#event-types
+def _send_content_block_delta_event(index: int, delta_type: str, content: str):
+    """Send content_block_delta event."""
+    delta = {"type": delta_type}
+    if delta_type == "text_delta":
+        delta["text"] = content
+    elif delta_type == "input_json_delta":
+        delta["partial_json"] = content
+    elif delta_type == "thinking_delta":
+        delta["thinking"] = content
+    elif delta_type == "signature_delta":
+        delta["signature"] = content
+    event_data = {'type': 'content_block_delta', 'index': index, 'delta': delta}
+    event_str = f"event: content_block_delta\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: content_block_delta - index: {index}, delta_type: {delta_type}, content_len: {len(content)}")
+    return event_str
+
+
+def _send_content_block_stop_event(index: int):
+    """Send content_block_stop event."""
+    event_data = {'type': 'content_block_stop', 'index': index}
+    event_str = f"event: content_block_stop\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: content_block_stop - index: {index}")
+    return event_str
+
+def _process_image_content_block(block, image_parts: List[Dict]) -> None:
+    """Process an image content block by adding it to image_parts."""
+    if (
+        isinstance(block.source, dict)
+        and block.source.get("type") == "base64"
+        and "media_type" in block.source
+        and "data" in block.source
+    ):
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{block.source['media_type']};base64,{block.source['data']}"
+                },
+            }
+        )
+
+def _normalize_block(block):
+    if isinstance(block, BaseModel):
+        return block.model_dump(exclude_none=True)  # pydantic ≥v2
+    return block
+
+
+def _send_message_delta_event(
+    stop_reason: str, output_tokens: int, content_blocks=None
+):
+    """Send message_delta event."""
+    usage = {"output_tokens": output_tokens}
+    delta = {"stop_reason": stop_reason, "stop_sequence": None}
+
+    # Include content blocks in the delta if provided (required for proper Anthropic format)
+    if content_blocks is not None:
+        # Convert dict content blocks to proper Pydantic models
+        converted_blocks = [_normalize_block(b) for b in content_blocks]
+        delta["content"] = converted_blocks
+
+    event_data = {'type': 'message_delta', 'delta': delta, 'usage': usage}
+    event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}, content_blocks_count: {len(content_blocks) if content_blocks else 0}")
+    return event_str
+
+
+def _send_message_stop_event():
+    """Send message_stop event."""
+    event_data = {'type': 'message_stop'}
+    event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: message_stop")
+    return event_str
+
+
+def _send_ping_event():
+    """Send ping event."""
+    event_data = {'type': 'ping'}
+    event_str = f"event: ping\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: ping")
+    return event_str
+
+
+def _send_done_event():
+    """Send [DONE] marker to terminate stream."""
+    event_str = "data: [DONE]\n\n"
+    logger.debug(f"STREAMING_EVENT: [DONE]")
+    return event_str
+
+
+def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
+    """Map OpenAI finish_reason to Anthropic stop_reason."""
+    if finish_reason == "length":
+        return "max_tokens"
+    elif finish_reason == "tool_calls":
+        return "tool_use"
+    else:
+        return "end_turn"
+
+# openai SSE -> claude SSE
+async def convert_openai_streaming_response_to_anthropic(response_generator: AsyncStream[ChatCompletionChunk], original_request: ClaudeMessagesRequest):
+    """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
+    has_sent_stop_reason = False
+    is_tool_use = False
+    input_tokens = 0
+    output_tokens = 0
+    current_content_blocks = []
+    accumulated_text = ""
+    accumulated_thinking = ""
+    try:
+        # Send initial events
+        message_id = f"msg_{uuid.uuid4().hex[:24]}"
+        yield _send_message_start_event(message_id, original_request.model)
+        yield _send_ping_event()
+
+        # State tracking variables
+        content_block_index = 0
+        text_block_started = False
+        text_block_closed = False
+
+        # Tool call state
+        tool_json = ""
+        current_tool_id = None
+        current_tool_name = None
+
+        # Thinking/reasoning state
+        thinking_block_started = False
+        thinking_block_closed = False
+
+        # Streaming comparison tracking
+        openai_chunks_received = 0
+
+        logger.debug(f"Starting streaming for model: {original_request.model}")
+
+        # Process each chunk
+        async for chunk in response_generator:
+            try:
+               # Count OpenAI chunks received
+                openai_chunks_received += 1
+
+                # Detailed chunk logging
+                chunk_data = {
+                    "chunk_id": chunk.id,
+                    "has_choices": len(chunk.choices) > 0,
+                    "has_usage": chunk.usage,
+                }
+
+                if chunk_data["has_choices"]:
+                    choice = chunk.choices[0]
+                    chunk_data["choice_data"] = {
+                        "has_delta": choice.delta is not None,
+                        "finish_reason": choice.finish_reason,
+                    }
+                    if chunk_data["choice_data"]["has_delta"]:
+                        delta = choice.delta
+                        chunk_data["delta_data"] = {
+                            "content": getattr(delta, "content", None),
+                            "role": getattr(delta, "role", None),
+                            "tool_calls": getattr(delta, "tool_calls", None) is not None,
+                        }
+                        if chunk_data["delta_data"]["content"]:
+                            chunk_data["delta_data"]["content_length"] = len(chunk_data["delta_data"]["content"])
+
+                if chunk_data["has_usage"]:
+                    chunk_data["usage"] = {
+                        "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
+                        "total_tokens": getattr(chunk.usage, "total_tokens", None),
+                    }
+
+                logger.debug(f"STREAMING_CHUNK #{openai_chunks_received}: {json.dumps(chunk_data, default=str)}")
+
+                # Raw chunk debugging - print original chunk data when DEBUG_RAW_CHUNKS is set
+                logger.debug(f"=== RAW CHUNK #{openai_chunks_received} ===")
+                logger.debug(f"Raw chunk type: {type(chunk)}")
+                logger.debug(f"Raw chunk dict: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}")
+                logger.debug("=== END RAW CHUNK ===")
+
+                # Also print raw json representation if possible
+                try:
+                    if hasattr(chunk, 'model_dump'):
+                        raw_json = json.dumps(chunk.model_dump(), indent=2, default=str)
+                        logger.debug(f"Raw chunk JSON:\n{raw_json}")
+                except Exception as e:
+                    logger.info(f"Could not serialize chunk to JSON: {e}")
+
+                # Check if this is the end of the response with usage data
+                if chunk.usage is not None:
+                    # Extract input tokens from usage if available (for cost calculation)
+                    reported_input_tokens = getattr(chunk.usage, "prompt_tokens", 0)
+                    reported_output_tokens = getattr(chunk.usage, "completion_tokens", 0)
+                    logger.debug(f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}")
+                    # Update session statistics for streaming (using calculated tokens)
+                    logger.debug(f"Session stats - Input: {input_tokens}, Output: {output_tokens}")
+                    logger.debug(f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}")
+
+                # Handle content from choices
+                if len(chunk.choices) > 0:
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    # Get the delta from the choice
+                    delta = choice.delta
+
+                    # Check for finish_reason to know when we're done
+                    finish_reason = choice.finish_reason
+
+                    # Handle tool calls first
+                    delta_tool_calls = delta.tool_calls
+
+                    if delta_tool_calls:
+                        # Convert to list if it's not already
+                        if not isinstance(delta_tool_calls, list):
+                            delta_tool_calls = [delta_tool_calls]
+
+                        for tool_call in delta_tool_calls:
+                            # If we haven't started a tool yet, we need to handle any accumulated text first
+                            if not is_tool_use:
+                                # If we have accumulated text, send it first
+                                if accumulated_text and not text_block_started:
+                                    text_block = {"type": "text", "text": ""}
+                                    current_content_blocks.append(text_block)
+                                    yield _send_content_block_start_event(
+                                        content_block_index, "text"
+                                    )
+                                    text_block_started = True
+
+                                    # Send the accumulated text
+                                    yield _send_content_block_delta_event(
+                                        content_block_index,
+                                        "text_delta",
+                                        accumulated_text,
+                                    )
+
+                                    # Update the content block
+                                    current_content_blocks[content_block_index][
+                                        "text"
+                                    ] = accumulated_text
+
+                                    # Close the text block
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+                                elif text_block_started and not text_block_closed:
+                                    # Close any open text block
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+                                elif not text_block_started and not text_block_closed:
+                                    # Even if no text, we might need to close the implicit text block
+                                    text_block = {"type": "text", "text": ""}
+                                    current_content_blocks.append(text_block)
+                                    yield _send_content_block_start_event(
+                                        content_block_index, "text"
+                                    )
+                                    yield _send_content_block_stop_event(
+                                        content_block_index
+                                    )
+                                    text_block_closed = True
+                                    content_block_index += 1
+
+                                # Now start the tool use block
+                                is_tool_use = True
+
+                                # Extract tool info
+                                if isinstance(tool_call, dict):
+                                    function = tool_call.get("function", {})
+                                    current_tool_name = (
+                                        function.get("name", "")
+                                        if isinstance(function, dict)
+                                        else ""
+                                    )
+                                    current_tool_id = tool_call.get(
+                                        "id", f"toolu_{uuid.uuid4().hex[:24]}"
+                                    )
+                                else:
+                                    function = getattr(tool_call, "function", None)
+                                    current_tool_name = (
+                                        getattr(function, "name", "")
+                                        if function
+                                        else ""
+                                    )
+                                    current_tool_id = getattr(
+                                        tool_call,
+                                        "id",
+                                        f"toolu_{uuid.uuid4().hex[:24]}",
+                                    )
+
+                                # Create tool use block
+                                tool_block = {
+                                    "type": "tool_use",
+                                    "id": current_tool_id,
+                                    "name": current_tool_name,
+                                    "input": {},
+                                }
+                                current_content_blocks.append(tool_block)
+
+                                yield _send_content_block_start_event(
+                                    content_block_index,
+                                    "tool_use",
+                                    id=current_tool_id,
+                                    name=current_tool_name,
+                                )
+                                tool_json = ""
+
+                            # Extract function arguments
+                            arguments = None
+                            if isinstance(tool_call, dict) and "function" in tool_call:
+                                function = tool_call.get("function", {})
+                                arguments = (
+                                    function.get("arguments", "")
+                                    if isinstance(function, dict)
+                                    else ""
+                                )
+                            elif hasattr(tool_call, "function"):
+                                function = getattr(tool_call, "function", None)
+                                arguments = (
+                                    getattr(function, "arguments", "")
+                                    if function
+                                    else ""
+                                )
+
+                            # If we have arguments, send them as a delta
+                            if arguments:
+                                tool_json += arguments
+
+                                # Try to parse JSON to update the content block
+                                try:
+                                    parsed_json = json.loads(tool_json)
+                                    current_content_blocks[content_block_index][
+                                        "input"
+                                    ] = parsed_json
+                                except json.JSONDecodeError:
+                                    # JSON not yet complete, continue accumulating
+                                    pass
+
+                                # Send the delta
+                                yield _send_content_block_delta_event(
+                                    content_block_index, "input_json_delta", arguments
+                                )
+
+                    # Handle reasoning/thinking content first (from deepseek reasoning models)
+                    delta_reasoning = None
+                    raw_delta = delta.model_dump()
+                    if isinstance(raw_delta, dict) and "reasoning_content" in raw_delta:
+                        delta_reasoning = raw_delta["reasoning_content"]
+
+                    if delta_reasoning is not None and delta_reasoning != "":
+                        accumulated_thinking += delta_reasoning
+                        logger.debug(f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(accumulated_thinking)} chars")
+
+                        # Start thinking block if not started
+                        if not thinking_block_started:
+                            thinking_block = {"type": "thinking", "thinking": ""}
+                            current_content_blocks.append(thinking_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "thinking"
+                            )
+                            thinking_block_started = True
+
+                        # Send thinking delta
+                        yield _send_content_block_delta_event(
+                            content_block_index, "thinking_delta", delta_reasoning
+                        )
+
+                        # Update content block
+                        if content_block_index < len(current_content_blocks):
+                            current_content_blocks[content_block_index]["thinking"] = (
+                                accumulated_thinking
+                            )
+
+                    # Check if reasoning is complete (no more reasoning deltas and we have normal content)
+                    elif thinking_block_started and not thinking_block_closed:
+                        # If we have normal content coming and thinking was active, close thinking block
+                        delta_content = None
+                        if hasattr(delta, "content"):
+                            delta_content = delta.content
+                        elif isinstance(delta, dict) and "content" in delta:
+                            delta_content = delta["content"]
+
+                        if delta_content is not None and delta_content != "":
+                            # Close thinking block and prepare for text block
+                            # Generate signature for completed thinking content
+                            if content_block_index < len(current_content_blocks):
+                                thinking_signature = generate_thinking_signature(
+                                    accumulated_thinking
+                                )
+                                current_content_blocks[content_block_index][
+                                    "signature"
+                                ] = thinking_signature
+                                # Send signature delta before closing thinking block
+                                yield _send_content_block_delta_event(
+                                    content_block_index,
+                                    "signature_delta",
+                                    thinking_signature,
+                                )
+                            yield _send_content_block_stop_event(content_block_index)
+                            thinking_block_closed = True
+                            content_block_index += 1
+
+                    # Handle text content - check for text content first
+                    delta_content = delta.content
+
+                    # If we have text content and we're currently in tool use mode, end the tool use first
+                    if (
+                        delta_content is not None
+                        and delta_content != ""
+                        and is_tool_use
+                    ):
+                        # End current tool call block
+                        yield _send_content_block_stop_event(content_block_index)
+                        content_block_index += 1
+                        is_tool_use = False
+                        # Reset tool state
+                        tool_json = ""
+                        current_tool_id = None
+                        current_tool_name = None
+
+                    # Handle text content
+                    if (
+                        delta_content is not None
+                        and delta_content != ""
+                        and not is_tool_use
+                    ):
+                        accumulated_text += delta_content
+                        # Calculate current output tokens in real-time using tiktoken
+                        current_output_tokens = count_tokens_in_response(
+                            response_content=accumulated_text,
+                            thinking_content=accumulated_thinking,
+                            tool_calls=[],
+                        )
+                        logger.debug(f"Added text content: +{len(delta_content)} chars, total: {len(accumulated_text)} chars, tokens: {current_output_tokens}")
+
+                        # Start text block if not started
+                        if not text_block_started:
+                            text_block = {"type": "text", "text": ""}
+                            current_content_blocks.append(text_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "text"
+                            )
+                            text_block_started = True
+
+                        # Send text delta
+                        yield _send_content_block_delta_event(
+                            content_block_index, "text_delta", delta_content
+                        )
+
+                        # Update content block
+                        if content_block_index < len(current_content_blocks):
+                            current_content_blocks[content_block_index]["text"] = (
+                                accumulated_text
+                            )
+
+                    # Process finish_reason - end the streaming response
+                    if finish_reason and not has_sent_stop_reason:
+                        logger.debug(f"Processing finish_reason: {finish_reason}")
+                        has_sent_stop_reason = True
+
+                        # Close thinking block if it was started
+                        if thinking_block_started and not thinking_block_closed:
+                            # Generate signature for completed thinking content
+                            if content_block_index < len(current_content_blocks):
+                                thinking_signature = generate_thinking_signature(
+                                    accumulated_thinking
+                                )
+                                current_content_blocks[content_block_index][
+                                    "signature"
+                                ] = thinking_signature
+                                # Send signature delta before closing thinking block
+                                yield _send_content_block_delta_event(
+                                    content_block_index,
+                                    "signature_delta",
+                                    thinking_signature,
+                                )
+                            yield _send_content_block_stop_event(content_block_index)
+                            thinking_block_closed = True
+                            content_block_index += 1
+
+                        # If we haven't started any blocks yet, start and immediately close a text block
+                        if (
+                            not text_block_started
+                            and not is_tool_use
+                            and not thinking_block_started
+                        ):
+                            text_block = {"type": "text", "text": ""}
+                            current_content_blocks.append(text_block)
+                            yield _send_content_block_start_event(
+                                content_block_index, "text"
+                            )
+                            yield _send_content_block_stop_event(content_block_index)
+                        elif text_block_started or is_tool_use:
+                            # Close the current content block
+                            yield _send_content_block_stop_event(content_block_index)
+
+                        # Determine stop reason
+                        stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
+                        logger.debug(f"Mapped stop_reason: {stop_reason}")
+
+                        # Calculate accurate output tokens from accumulated content
+                        final_output_tokens = _calculate_accurate_output_tokens(
+                            accumulated_text, accumulated_thinking, output_tokens, "Finish reason received"
+                        )
+
+                        # Send message delta with final content and stop reason
+                        yield _send_message_delta_event(
+                            stop_reason, final_output_tokens, current_content_blocks
+                        )
+
+                        # Send message stop
+                        yield _send_message_stop_event()
+                        yield _send_done_event()
+                        logger.debug("Streaming completed successfully")
+                        has_sent_stop_reason = True
+                        return
+
+            except Exception as e:
+                # Log error but continue processing other chunks
+                logger.error(f"Error processing chunk: {str(e)}")
+                continue
+
+            # Validate content integrity after processing each chunk
+            if openai_chunks_received % 10 == 0:  # Every 10 chunks to avoid too much logging
+                validation = _validate_streaming_content_integrity(
+                    accumulated_text, accumulated_thinking, current_content_blocks,
+                    f"After chunk #{openai_chunks_received}"
+                )
+                if validation["has_issues"]:
+                    logger.warning(f"Content integrity issues: {validation}")
+                else:
+                    logger.debug(f"Content validation passed: {validation}")
+
+        # If we didn't get a finish reason, close any open blocks
+        if not has_sent_stop_reason:
+            logger.debug("No finish_reason received, closing stream manually")
+            # If we haven't started any blocks yet, start and immediately close a text block
+            if not text_block_started and not is_tool_use:
+                text_block = {"type": "text", "text": ""}
+                current_content_blocks.append(text_block)
+                yield _send_content_block_start_event(content_block_index, "text")
+                yield _send_content_block_stop_event(content_block_index)
+            elif text_block_started or is_tool_use:
+                # Close the current content block if there is one
+                yield _send_content_block_stop_event(content_block_index)
+
+            # Calculate accurate output tokens from accumulated content
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "No finish_reason"
+            )
+
+            # Send final events
+            stop_reason = "tool_use" if is_tool_use else "end_turn"
+            yield _send_message_delta_event(
+                stop_reason, final_output_tokens, current_content_blocks
+            )
+            yield _send_message_stop_event()
+            yield _send_done_event()
+            logger.debug("Streaming completed without finish_reason")
+
+    except Exception as e:
+        import traceback
+
+        error_traceback = traceback.format_exc()
+        error_message = (
+            f"Error in streaming: {str(e)}\n\nFull traceback:\n{error_traceback}"
+        )
+        logger.error(error_message)
+
+        # Send error events
+        logger.error(f"Streaming error: {error_message}")
+        yield _send_message_delta_event("error", 0, [])
+        yield _send_message_stop_event()
+        yield _send_done_event()
+
+    finally:
+        if not has_sent_stop_reason:
+            # Calculate accurate output tokens from accumulated content
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "Finally block"
+            )
+
+            stop_reason = "tool_use" if is_tool_use else "end_turn"
+            yield _send_message_delta_event(
+                stop_reason, final_output_tokens, current_content_blocks
+            )
+            yield _send_message_stop_event()
+            yield _send_done_event()
+            logger.debug(
+                "Streaming finally: emitted missing message_delta + message_stop"
+            )
+        # Final content integrity validation
+        final_validation = _validate_streaming_content_integrity(
+            accumulated_text, accumulated_thinking, current_content_blocks,
+            "Final streaming validation"
+        )
+        if final_validation["has_issues"]:
+            logger.error(f"FINAL CONTENT INTEGRITY ISSUES: {final_validation}")
+        else:
+            logger.info(f"Final content validation passed: {final_validation}")
+
+        # DEBUG: Rebuild and log complete response for debugging streaming issues
+        try:
+            final_stop_reason = "tool_use" if is_tool_use else "end_turn"
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "Final debug output"
+            )
+
+            complete_response = _rebuild_complete_response_from_streaming(
+                accumulated_text=accumulated_text,
+                accumulated_thinking=accumulated_thinking,
+                current_content_blocks=current_content_blocks,
+                output_tokens=final_output_tokens,
+                model=original_request.model,
+                stop_reason=final_stop_reason
+            )
+
+            logger.info("=== STREAMING COMPLETE RESPONSE DEBUG ===")
+            logger.info(f"Original request model: {original_request.model}")
+            logger.info(f"Accumulated text length: {len(accumulated_text)}")
+            logger.info(f"Accumulated thinking length: {len(accumulated_thinking)}")
+            logger.info(f"Current content blocks count: {len(current_content_blocks)}")
+            logger.info(f"Is tool use: {is_tool_use}")
+            logger.info(f"Final stop reason: {final_stop_reason}")
+            logger.info(f"Complete rebuilt response:")
+            logger.info(json.dumps(complete_response, indent=2, ensure_ascii=False))
+            logger.info("=== END STREAMING RESPONSE DEBUG ===")
+
+        except Exception as debug_error:
+            logger.error(f"Error in streaming response debug: {debug_error}")
+
+def _validate_streaming_content_integrity(
+    accumulated_text: str,
+    accumulated_thinking: str,
+    current_content_blocks: List[Dict[str, Any]],
+    context: str = ""
+) -> Dict[str, Any]:
+    """
+    Validate that streaming content is being properly preserved.
+    Returns validation results for logging.
+    """
+    validation_results = {
+        "has_text_content": bool(accumulated_text.strip()),
+        "has_thinking_content": bool(accumulated_thinking.strip()),
+        "has_tool_calls": any(block.get("type") == "tool_use" for block in current_content_blocks),
+        "total_content_blocks": len(current_content_blocks),
+        "text_length": len(accumulated_text),
+        "thinking_length": len(accumulated_thinking),
+        "context": context
+    }
+
+    # Check for potential issues
+    issues = []
+    if not validation_results["has_text_content"] and not validation_results["has_tool_calls"]:
+        issues.append("No text content or tool calls found")
+
+    if validation_results["total_content_blocks"] == 0:
+        issues.append("No content blocks created")
+
+    validation_results["issues"] = issues
+    validation_results["has_issues"] = len(issues) > 0
+
+    return validation_results
+
+def _rebuild_complete_response_from_streaming(
+    accumulated_text: str,
+    accumulated_thinking: str,
+    current_content_blocks: List[Dict[str, Any]],
+    output_tokens: int,
+    model: str,
+    stop_reason: str = "end_turn"
+) -> Dict[str, Any]:
+    """
+    Rebuild a complete Anthropic-format response from streaming data.
+    This helps debug streaming issues by showing what the final response looks like.
+    """
+    # Build content blocks array similar to non-streaming responses
+    content_blocks = []
+
+    # Add thinking block if present
+    if accumulated_thinking.strip():
+        content_blocks.append({
+            "type": "thinking",
+            "thinking": accumulated_thinking
+        })
+
+    # Add text block if present
+    if accumulated_text.strip():
+        content_blocks.append({
+            "type": "text",
+            "text": accumulated_text
+        })
+
+    # Add any tool use blocks from current_content_blocks
+    for block in current_content_blocks:
+        if block.get("type") == "tool_use":
+            content_blocks.append(block)
+
+    # Build complete response structure
+    complete_response = {
+        "id": f"msg_{uuid.uuid4().hex[:24]}",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": content_blocks,
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": {
+            "output_tokens": output_tokens
+        }
+    }
+
+    return complete_response
+
+def _calculate_accurate_output_tokens(accumulated_text: str, accumulated_thinking: str, reported_tokens: int, context: str = "") -> int:
+    """Calculate accurate output tokens using tiktoken (always use calculated, not reported)."""
+    calculated_tokens = count_tokens_in_response(
+        response_content=accumulated_text,
+        thinking_content=accumulated_thinking,
+        tool_calls=[],  # Tool calls handled separately in streaming
+    )
+
+    # Always use calculated tokens since reported tokens are often unreliable (0)
+    # for third-party models accessed through proxy APIs
+    final_tokens = calculated_tokens
+
+    logger.debug(f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens} (always using calculated)")
+    return final_tokens
+
+def count_tokens_in_response(
+    response_content: str = "", thinking_content: str = "", tool_calls: list =[]
+) -> int:
+    """Count tokens in response content using tiktoken"""
+    if enc is None:
+        logger.warning(
+            "TikToken encoder not available for response counting, using approximate count"
+        )
+        return 0
+
+    total_tokens = 0
+
+    try:
+        # Count main response content tokens
+        if response_content:
+            total_tokens += len(enc.encode(response_content))
+
+        # Count thinking content tokens
+        if thinking_content:
+            total_tokens += len(enc.encode(thinking_content))
+
+        # Count tool calls tokens
+        if tool_calls:
+            for tool_call in tool_calls:
+                    name = getattr(tool_call.function, "name", "")
+                    arguments = getattr(tool_call.function, "arguments", "")
+                    total_tokens += len(enc.encode(name + arguments))
+
+    except Exception as e:
+        logger.error(f"Error counting response tokens: {e}")
+        # Fallback estimation
+        return 0
+
+    return int(total_tokens)
+
+def _compare_request_data(
+    claude_request: ClaudeMessagesRequest, openai_request: Dict[str, Any]
+) -> None:
+    """Compare original Claude request with converted OpenAI request and log differences."""
+    try:
+        # Count Claude request data
+        claude_tools_count = len(claude_request.tools) if claude_request.tools else 0
+        claude_messages_count = len(claude_request.messages)
+        claude_has_tool_choice = claude_request.tool_choice is not None
+        claude_has_system = claude_request.system is not None
+
+        # Count OpenAI request data
+        openai_tools_count = len(openai_request.get("tools", []))
+        openai_messages_count = len(openai_request.get("messages", []))
+        openai_has_tool_choice = "tool_choice" in openai_request
+        openai_has_system = any(
+            msg.get("role") == "system" for msg in openai_request.get("messages", [])
+        )
+
+        # Log comparison
+        logger.info("REQUEST CONVERSION COMPARISON:")
+        logger.info(
+            f"  Claude -> OpenAI Tools: {claude_tools_count} -> {openai_tools_count}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI Messages: {claude_messages_count} -> {openai_messages_count}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
+        )
+        logger.info(
+            f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}"
+        )
+
+        # Check for mismatches and log errors
+        errors = []
+        if claude_tools_count != openai_tools_count:
+            errors.append(
+                f"Tools count mismatch: Claude({claude_tools_count}) != OpenAI({openai_tools_count})"
+            )
+        if claude_has_tool_choice != openai_has_tool_choice:
+            errors.append(
+                f"Tool choice mismatch: Claude({claude_has_tool_choice}) != OpenAI({openai_has_tool_choice})"
+            )
+
+        # Note: Messages count may differ if system message is extracted/merged
+        if claude_messages_count != openai_messages_count and not claude_has_system:
+            errors.append(
+                f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})"
+            )
+
+        if errors:
+            logger.error(f"REQUEST CONVERSION ERRORS: {'; '.join(errors)}")
+        else:
+            logger.info("REQUEST CONVERSION: All counts match ✓")
+
+    except Exception as e:
+        logger.error(f"Error in request comparison: {e}")
+
+
+def _compare_response_data(openai_response, claude_response: ClaudeMessagesResponse) -> None:
+    """Compare OpenAI response with converted Claude response and log differences."""
+    try:
+        # Count OpenAI response data
+        openai_content_blocks = 0
+        openai_tool_calls = 0
+        openai_finish_reason = None
+
+        if hasattr(openai_response, "choices") and openai_response.choices:
+            choice = openai_response.choices[0]
+            if hasattr(choice, "message") and choice.message:
+                if hasattr(choice.message, "content") and choice.message.content:
+                    openai_content_blocks = 1  # OpenAI has single content field
+                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                    openai_tool_calls = len(choice.message.tool_calls)
+            if hasattr(choice, "finish_reason"):
+                openai_finish_reason = choice.finish_reason
+
+        # Count Claude response data
+        claude_content_blocks = (
+            len(claude_response.content) if claude_response.content else 0
+        )
+        claude_tool_use_blocks = (
+            sum(
+                1
+                for block in claude_response.content
+                if hasattr(block, "type") and block.type == "tool_use"
+            )
+            if claude_response.content
+            else 0
+        )
+        claude_stop_reason = claude_response.stop_reason
+
+        # Log comparison
+        logger.info("RESPONSE CONVERSION COMPARISON:")
+        logger.info(
+            f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}"
+        )
+
+        # Check for mismatches and log errors
+        errors = []
+        if openai_tool_calls != claude_tool_use_blocks:
+            errors.append(
+                f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})"
+            )
+
+        if errors:
+            logger.error(f"RESPONSE CONVERSION ERRORS: {'; '.join(errors)}")
+        else:
+            logger.info("RESPONSE CONVERSION: Key counts match ✓")
+
+    except Exception as e:
+        logger.error(f"Error in response comparison: {e}")

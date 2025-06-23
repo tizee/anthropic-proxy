@@ -38,17 +38,17 @@ from pydantic import BaseModel
 # Import Pydantic models from models.py (separate from server.py to avoid starting the server)
 from models import (
     ClaudeToolChoice,
-    Tool,
-    MessagesRequest,
-    ThinkingConfigEnabled,
-    ThinkingConfigDisabled,
-    ContentBlockText,
-    ContentBlockToolUse,
-    ContentBlockToolResult,
-    Message,
-    SystemContent,
-    ToolChoiceAuto,
-    ToolChoiceAny,
+    ClaudeTool,
+    ClaudeMessagesRequest,
+    ClaudeThinkingConfigEnabled,
+    ClaudeThinkingConfigDisabled,
+    ClaudeContentBlockText,
+    ClaudeContentBlockToolUse,
+    ClaudeContentBlockToolResult,
+    ClaudeMessage,
+    ClaudeSystemContent,
+    ClaudeToolChoiceAuto,
+    ClaudeToolChoiceAny,
 )
 
 # Load environment variables
@@ -71,8 +71,8 @@ anthropic_headers = {
     "content-type": "application/json",
 }
 
-tool_choice_required = ToolChoiceAny(type="any")
-tool_choice_auto = ToolChoiceAuto(type="auto")
+tool_choice_required = ClaudeToolChoiceAny(type="any")
+tool_choice_auto = ClaudeToolChoiceAuto(type="auto")
 
 proxy_headers = {
     "x-api-key": PROXY_API_KEY,
@@ -81,7 +81,7 @@ proxy_headers = {
 }
 
 # Tool definitions using Pydantic models
-calculator_tool = Tool(
+calculator_tool = ClaudeTool(
     name="calculator",
     description="Evaluate mathematical expressions",
     input_schema={
@@ -97,7 +97,7 @@ calculator_tool = Tool(
 )
 
 # Gemini-incompatible tool - contains fields that Gemini doesn't support
-gemini_incompatible_tool = Tool(
+gemini_incompatible_tool = ClaudeTool(
     name="complex_data_processor",
     description="Process complex data with advanced validation",
     input_schema={
@@ -149,7 +149,7 @@ gemini_incompatible_tool = Tool(
     },
 )
 
-weather_tool = Tool(
+weather_tool = ClaudeTool(
     name="weather",
     description="Get weather information for a location",
     input_schema={
@@ -169,7 +169,7 @@ weather_tool = Tool(
     },
 )
 
-search_tool = Tool(
+search_tool = ClaudeTool(
     name="search",
     description="Search for information on the web",
     input_schema={
@@ -180,7 +180,7 @@ search_tool = Tool(
 )
 
 # Claude Code tools for testing
-read_tool = Tool(
+read_tool = ClaudeTool(
     name="Read",
     description="Reads a file from the local filesystem",
     input_schema={
@@ -195,7 +195,7 @@ read_tool = Tool(
     },
 )
 
-bash_tool = Tool(
+bash_tool = ClaudeTool(
     name="Bash",
     description="Executes a bash command",
     input_schema={
@@ -211,7 +211,7 @@ bash_tool = Tool(
     },
 )
 
-ls_tool = Tool(
+ls_tool = ClaudeTool(
     name="LS",
     description="Lists files and directories in a given path",
     input_schema={
@@ -226,7 +226,7 @@ ls_tool = Tool(
     },
 )
 
-grep_tool = Tool(
+grep_tool = ClaudeTool(
     name="Grep",
     description="Fast content search tool using regular expressions",
     input_schema={
@@ -242,7 +242,7 @@ grep_tool = Tool(
     },
 )
 
-glob_tool = Tool(
+glob_tool = ClaudeTool(
     name="Glob",
     description="Fast file pattern matching tool",
     input_schema={
@@ -257,7 +257,7 @@ glob_tool = Tool(
     },
 )
 
-todo_write_tool = Tool(
+todo_write_tool = ClaudeTool(
     name="TodoWrite",
     description="Writes todo items to the todo list",
     input_schema={
@@ -288,13 +288,41 @@ todo_write_tool = Tool(
     },
 )
 
-todo_read_tool = Tool(
+todo_read_tool = ClaudeTool(
     name="TodoRead",
     description="Reads the current todo list",
     input_schema={"type": "object", "properties": {}},
 )
 
-exit_plan_mode_tool = Tool(
+edit_tool = ClaudeTool(
+    name="Edit",
+    description="Performs exact string replacements in files",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": "The absolute path to the file to modify"
+            },
+            "old_string": {
+                "type": "string",
+                "description": "The text to replace"
+            },
+            "new_string": {
+                "type": "string",
+                "description": "The text to replace it with"
+            },
+            "replace_all": {
+                "type": "boolean",
+                "description": "Replace all occurrences of old_string (default false)",
+                "default": False
+            }
+        },
+        "required": ["file_path", "old_string", "new_string"]
+    }
+)
+
+exit_plan_mode_tool = ClaudeTool(
     name="exit_plan_mode",
     description="Use this tool when you are in plan mode and have finished presenting your plan and are ready to code. This will prompt the user to exit plan mode.",
     input_schema={
@@ -318,10 +346,12 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "calculator_stream",
     "content_blocks",
     "multi_tool",
+    "edit_tool_completion",
     "todo_write",
     "todo_read",
     "todo_write_stream",
     "todo_read_stream",
+    "edit_tool_completion_stream",
     "gemini_tool_test",
     "gemini_tool_test_stream",
     "gemini_incompatible_schema_test",
@@ -340,33 +370,33 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "deepseek_task_summarization_stream",
 }
 
-# Test scenarios using MessagesRequest Pydantic models
+# Test scenarios using ClaudeMessagesRequest Pydantic models
 TEST_SCENARIOS = {
     # Simple text response
-    "simple": MessagesRequest(
+    "simple": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Hello, world! Can you tell me about Paris in 2-3 sentences?",
             )
         ],
     ),
     # Basic tool use
-    "calculator": MessagesRequest(
+    "calculator": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        messages=[Message(role="user", content="What is 135 + 7.5 divided by 2.5?")],
+        messages=[ClaudeMessage(role="user", content="What is 135 + 7.5 divided by 2.5?")],
         tools=[calculator_tool],
         tool_choice=tool_choice_required,
     ),
     # Todo tools
-    "todo_write": MessagesRequest(
+    "todo_write": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Create a todo list: 1. Buy milk, 2. Pay bills, 3. Call mom",
             )
@@ -374,22 +404,22 @@ TEST_SCENARIOS = {
         tools=[todo_write_tool],
         tool_choice=tool_choice_required,
     ),
-    "todo_read": MessagesRequest(
+    "todo_read": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
-        messages=[Message(role="user", content="What's on my todo list?")],
+        messages=[ClaudeMessage(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
         tool_choice=tool_choice_required,
     ),
     # Multiple tools
-    "multi_tool": MessagesRequest(
+    "multi_tool": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         temperature=0.7,
         top_p=0.95,
         system="You are a helpful assistant that uses tools when appropriate. Be concise and precise.",
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="I'm planning a trip to New York next week. What's the weather like and what are some interesting places to visit?",
             )
@@ -398,19 +428,19 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Multi-turn conversation
-    "multi_turn": MessagesRequest(
+    "multi_turn": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Let's do some math. What is 240 divided by 8?",
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content="To calculate 240 divided by 8, I'll perform the division:\n\n240 ÷ 8 = 30\n\nSo the result is 30.",
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Now multiply that by 4 and tell me the result.",
             ),
@@ -419,14 +449,14 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Content blocks
-    "content_blocks": MessagesRequest(
+    "content_blocks": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="I need to know the weather in Los Angeles and calculate 75.5 / 5. Can you help with both?",
                     )
@@ -437,30 +467,72 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Simple streaming test
-    "simple_stream": MessagesRequest(
+    "simple_stream": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=100,
         stream=True,
         messages=[
-            Message(role="user", content="Count from 1 to 5, with one number per line.")
+            ClaudeMessage(role="user", content="Count from 1 to 5, with one number per line.")
         ],
     ),
+    # Edit tool completion test - tests model response after tool execution
+    "edit_tool_completion": ClaudeMessagesRequest(
+        model=MODEL,
+        max_tokens=1025,
+        system="You are Claude Code, Anthropic's official CLI for Claude. You help users with software engineering tasks using available tools.",
+        messages=[
+            ClaudeMessage(
+                role="user",
+                content="Please modify the custom_models.yaml.example file to remove sensitive data and make placeholders more generic.",
+            ),
+            ClaudeMessage(
+                role="assistant",
+                content=[
+                    ClaudeContentBlockText(
+                        type="text",
+                        text="I'll help you modify the custom_models.yaml.example file to remove sensitive data and make placeholders more generic. Let me make the change to replace the sensitive API key with a generic placeholder."
+                    ),
+                    ClaudeContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_edit_test_001",
+                        name="Edit",
+                        input={
+                            "file_path": "/tmp/custom_models.yaml.example",
+                            "old_string": "api_key: sk-1234567890abcdef",
+                            "new_string": "api_key: your-api-key-here"
+                        }
+                    )
+                ]
+            ),
+            ClaudeMessage(
+                role="user",
+                content=[
+                    ClaudeContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_edit_test_001",
+                        content="The file /tmp/custom_models.yaml.example has been updated. The API key has been changed to a generic placeholder."
+                    )
+                ]
+            )
+        ],
+        tools=[edit_tool],
+    ),
     # Tool use with streaming
-    "calculator_stream": MessagesRequest(
+    "calculator_stream": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        messages=[Message(role="user", content="What is 135 + 17.5 divided by 2.5?")],
+        messages=[ClaudeMessage(role="user", content="What is 135 + 17.5 divided by 2.5?")],
         tools=[calculator_tool],
         tool_choice=tool_choice_required,
     ),
     # Todo tools with streaming
-    "todo_write_stream": MessagesRequest(
+    "todo_write_stream": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Create a todo list: 1. Buy milk, 2. Pay bills, 3. Call mom",
             )
@@ -468,43 +540,86 @@ TEST_SCENARIOS = {
         tools=[todo_write_tool],
         tool_choice=tool_choice_required,
     ),
-    "todo_read_stream": MessagesRequest(
+    "todo_read_stream": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1025,
         stream=True,
-        messages=[Message(role="user", content="What's on my todo list?")],
+        messages=[ClaudeMessage(role="user", content="What's on my todo list?")],
         tools=[todo_read_tool],
         tool_choice=tool_choice_required,
     ),
+    # Edit tool completion test with streaming - tests model response after tool execution
+    "edit_tool_completion_stream": ClaudeMessagesRequest(
+        model=MODEL,
+        max_tokens=1025,
+        stream=True,
+        system="You are Claude Code, Anthropic's official CLI for Claude. You help users with software engineering tasks using available tools.",
+        messages=[
+            ClaudeMessage(
+                role="user",
+                content="Please modify the custom_models.yaml.example file to remove sensitive data and make placeholders more generic.",
+            ),
+            ClaudeMessage(
+                role="assistant",
+                content=[
+                    ClaudeContentBlockText(
+                        type="text",
+                        text="I'll help you modify the custom_models.yaml.example file to remove sensitive data and make placeholders more generic. Let me make the change to replace the sensitive API key with a generic placeholder."
+                    ),
+                    ClaudeContentBlockToolUse(
+                        type="tool_use",
+                        id="toolu_edit_test_stream_001",
+                        name="Edit",
+                        input={
+                            "file_path": "/tmp/custom_models.yaml.example",
+                            "old_string": "api_key: sk-1234567890abcdef",
+                            "new_string": "api_key: your-api-key-here"
+                        }
+                    )
+                ]
+            ),
+            ClaudeMessage(
+                role="user",
+                content=[
+                    ClaudeContentBlockToolResult(
+                        type="tool_result",
+                        tool_use_id="toolu_edit_test_stream_001",
+                        content="The file /tmp/custom_models.yaml.example has been updated. The API key has been changed to a generic placeholder."
+                    )
+                ]
+            )
+        ],
+        tools=[edit_tool],
+    ),
     # Thinking capability tests
-    "thinking_simple": MessagesRequest(
+    "thinking_simple": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 15 + 27? Please think about it.",
             )
         ],
     ),
-    "thinking_math": MessagesRequest(
+    "thinking_math": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 8 x 9? Please think through the calculation.",
             )
         ],
     ),
-    "thinking_with_tools": MessagesRequest(
+    "thinking_with_tools": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 125 divided by 5? Think about it and use the calculator if needed.",
             )
@@ -512,46 +627,46 @@ TEST_SCENARIOS = {
         tools=[calculator_tool],
         tool_choice=tool_choice_auto,
     ),
-    "thinking_keyword": MessagesRequest(
+    "thinking_keyword": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1536,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="I need you to think deeply about this question: How can artificial intelligence help solve climate change? Please think through various approaches and consider both direct and indirect solutions.",
             )
         ],
     ),
-    "thinking_complex_stream": MessagesRequest(
+    "thinking_complex_stream": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1536,
         stream=True,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         system="You are an expert analyst. Think carefully through each problem before responding.",
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Think about this complex scenario: A company has three products with different profit margins and market demands. Product A has 30% margin with 1000 units/month demand, Product B has 45% margin with 600 units/month demand, and Product C has 20% margin with 11024 units/month demand. If they can only produce 2000 units total per month, what should their production strategy be? Think through this optimization problem step by step.",
             )
         ],
     ),
     # Gemini tool use test - simple math function call
-    "gemini_tool_test": MessagesRequest(
+    "gemini_tool_test": ClaudeMessagesRequest(
         model="gemini-2.5-pro",
         max_tokens=1025,
         messages=[
-            Message(role="user", content="Calculate 25 * 8 using the calculator tool.")
+            ClaudeMessage(role="user", content="Calculate 25 * 8 using the calculator tool.")
         ],
         tools=[calculator_tool],
         tool_choice=tool_choice_required,
     ),
     # Gemini tool use streaming test
-    "gemini_tool_test_stream": MessagesRequest(
+    "gemini_tool_test_stream": ClaudeMessagesRequest(
         model="gemini-2.5-pro",
         max_tokens=1025,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the weather tool to check the weather in Tokyo.",
             )
@@ -560,11 +675,11 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Gemini incompatible schema test - non-streaming
-    "gemini_incompatible_schema_test": MessagesRequest(
+    "gemini_incompatible_schema_test": ClaudeMessagesRequest(
         model="gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
         max_tokens=1025,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Process this data: 'hello world' with strict validation level and configure timeout to 30 seconds.",
             )
@@ -573,12 +688,12 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Gemini incompatible schema test - streaming
-    "gemini_incompatible_schema_test_stream": MessagesRequest(
+    "gemini_incompatible_schema_test_stream": ClaudeMessagesRequest(
         model="/gemini-2.5-pro",  # Use model name containing 'gemini' to trigger cleaning
         max_tokens=1025,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Process this sample data: 'test input' with normal validation and set timeout to 60 seconds.",
             )
@@ -587,12 +702,12 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # DeepSeek R1 thinking + tool use test
-    "deepseek_thinking_tools": MessagesRequest(
+    "deepseek_thinking_tools": ClaudeMessagesRequest(
         model="deepseek-r1-250528",
         max_tokens=1024,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 25 * 8? Think about it and use the calculator.",
             )
@@ -601,13 +716,13 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # DeepSeek R1 thinking + tool use streaming test
-    "deepseek_thinking_tools_stream": MessagesRequest(
+    "deepseek_thinking_tools_stream": ClaudeMessagesRequest(
         model="deepseek-41-250528",
         max_tokens=1024,
         stream=True,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Calculate 12 + 34. Think about it first, then use the calculator tool.",
             )
@@ -616,22 +731,22 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Read tool
-    "claude_code_read_test_stream": MessagesRequest(
+    "claude_code_read_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(role="user", content="Use the Read tool to read the tests.py file.")
+            ClaudeMessage(role="user", content="Use the Read tool to read the tests.py file.")
         ],
         tools=[read_tool],
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Bash tool
-    "claude_code_bash_test_stream": MessagesRequest(
+    "claude_code_bash_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the Bash tool to list files in the current directory.",
             )
@@ -640,12 +755,12 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - LS tool
-    "claude_code_ls_test_stream": MessagesRequest(
+    "claude_code_ls_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the LS tool to list the contents of the current directory.",
             )
@@ -654,12 +769,12 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Grep tool
-    "claude_code_grep_test_stream": MessagesRequest(
+    "claude_code_grep_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the Grep tool to search for 'def' in the current directory.",
             )
@@ -668,23 +783,23 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - Glob tool
-    "claude_code_glob_test_stream": MessagesRequest(
+    "claude_code_glob_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(role="user", content="Use the Glob tool to find all Python files.")
+            ClaudeMessage(role="user", content="Use the Glob tool to find all Python files.")
         ],
         tools=[glob_tool],
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - TodoWrite tool
-    "claude_code_todowrite_test_stream": MessagesRequest(
+    "claude_code_todowrite_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the TodoWrite tool to create a simple todo list.",
             )
@@ -693,12 +808,12 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code tools tests - TodoRead tool
-    "claude_code_todoread_test_stream": MessagesRequest(
+    "claude_code_todoread_test_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=1024,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Use the TodoRead tool to show the current todo list.",
             )
@@ -707,20 +822,20 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_required,
     ),
     # Claude Code interruption test - simulates complete tool use interruption workflow
-    "claude_code_interruption_test": MessagesRequest(
+    "claude_code_interruption_test": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=4000,
         messages=[
             # Initial user request
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Please help me create a configuration file example.",
             ),
             # Assistant starts with tool calls
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="call_abc123def456",
                         name="Glob",
@@ -729,10 +844,10 @@ TEST_SCENARIOS = {
                 ]
             ),
             # Tool result comes back
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="call_abc123def456",
                         content="/path/to/project/config.yaml"
@@ -740,10 +855,10 @@ TEST_SCENARIOS = {
                 ]
             ),
             # Assistant continues with another tool call
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="call_def789ghi012",
                         name="Read",
@@ -752,10 +867,10 @@ TEST_SCENARIOS = {
                 ]
             ),
             # Another tool result
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="call_def789ghi012",
                         content="# Configuration File\nversion: 1.0\napi_key: example_key\nendpoint: https://api.example.com"
@@ -763,10 +878,10 @@ TEST_SCENARIOS = {
                 ]
             ),
             # Assistant tries to use exit_plan_mode but gets interrupted
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="call_jkl345mno678",
                         name="exit_plan_mode",
@@ -775,19 +890,19 @@ TEST_SCENARIOS = {
                 ]
             ),
             # User interrupts with mixed content - tool result + user message (the critical test case)
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="call_jkl345mno678",
                         content="The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
                     ),
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="[Request interrupted by user for tool use]"
                     ),
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Actually, the example file already exists. Please check before creating new files."
                     )
@@ -798,20 +913,20 @@ TEST_SCENARIOS = {
         tool_choice=tool_choice_auto,
     ),
     # Claude Code interruption test - interruption only (minimal case)
-    "claude_code_interruption_only_test": MessagesRequest(
+    "claude_code_interruption_only_test": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1024,
         messages=[
             # Simple case: user interrupts without prior tool use context
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="[Request interrupted by user for tool use]"
                     ),
-                    ContentBlockText(
-                        type="text", 
+                    ClaudeContentBlockText(
+                        type="text",
                         text="Please wait, I need to reconsider this approach."
                     )
                 ]
@@ -819,51 +934,51 @@ TEST_SCENARIOS = {
         ],
     ),
     # DeepSeek multi-turn task summarization test - simulates Claude Code workflow
-    "deepseek_task_summarization_stream": MessagesRequest(
+    "deepseek_task_summarization_stream": ClaudeMessagesRequest(
         model="deepseek-v3-250324",
         max_tokens=2048,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Help me create a simple Python function to calculate the factorial of a number.",
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content="I'll help you create a Python function to calculate the factorial of a number. Here's a simple implementation:\n\n```python\ndef factorial(n):\n    \"\"\"\n    Calculate the factorial of a non-negative integer.\n    \n    Args:\n        n (int): A non-negative integer\n    \n    Returns:\n        int: The factorial of n (n!)\n    \n    Raises:\n        ValueError: If n is negative\n    \"\"\"\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    if n == 0 or n == 1:\n        return 1\n    \n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    \n    return result\n\n# Example usage:\nif __name__ == \"__main__\":\n    # Test the function\n    test_values = [0, 1, 5, 10]\n    \n    for num in test_values:\n        print(f\"{num}! = {factorial(num)}\")\n```\n\nThis function:\n1. **Handles edge cases**: Returns 1 for n=0 and n=1 (by mathematical definition, 0! = 1)\n2. **Input validation**: Raises a ValueError for negative inputs\n3. **Iterative approach**: Uses a simple loop for efficiency\n4. **Documentation**: Includes a clear docstring\n\nYou could also implement it recursively if you prefer:\n\n```python\ndef factorial_recursive(n):\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    if n == 0 or n == 1:\n        return 1\n    \n    return n * factorial_recursive(n - 1)\n```\n\nThe iterative version is generally more efficient for larger numbers as it avoids the overhead of recursive function calls."
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Now add proper error handling and unit tests for this function.",
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content="I'll enhance the factorial function with comprehensive error handling and create unit tests. Here's the complete implementation:\n\n**factorial.py**\n```python\ndef factorial(n):\n    \"\"\"\n    Calculate the factorial of a non-negative integer.\n    \n    Args:\n        n (int): A non-negative integer\n    \n    Returns:\n        int: The factorial of n (n!)\n    \n    Raises:\n        TypeError: If n is not an integer\n        ValueError: If n is negative\n        OverflowError: If the result would be too large to represent\n    \"\"\"\n    # Type checking\n    if not isinstance(n, int):\n        raise TypeError(f\"Expected integer, got {type(n).__name__}\")\n    \n    # Range validation\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    \n    # Handle large numbers that might cause overflow\n    if n > 1000:  # Arbitrary large number threshold\n        raise OverflowError(f\"Factorial of {n} would be too large to compute efficiently\")\n    \n    # Base cases\n    if n == 0 or n == 1:\n        return 1\n    \n    # Calculate factorial\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    \n    return result\n\n\ndef safe_factorial(n, max_value=None):\n    \"\"\"\n    A safer version of factorial with optional maximum value limit.\n    \n    Args:\n        n (int): A non-negative integer\n        max_value (int, optional): Maximum allowed input value\n    \n    Returns:\n        int: The factorial of n, or None if computation would exceed limits\n    \"\"\"\n    try:\n        if max_value is not None and n > max_value:\n            return None\n        return factorial(n)\n    except (TypeError, ValueError, OverflowError) as e:\n        print(f\"Error computing factorial of {n}: {e}\")\n        return None\n```\n\n**test_factorial.py**\n```python\nimport unittest\nimport sys\nfrom factorial import factorial, safe_factorial\n\n\nclass TestFactorial(unittest.TestCase):\n    \n    def test_base_cases(self):\n        \"\"\"Test base cases (0! and 1!).\"\"\"\n        self.assertEqual(factorial(0), 1)\n        self.assertEqual(factorial(1), 1)\n    \n    def test_small_positive_numbers(self):\n        \"\"\"Test factorial for small positive integers.\"\"\"\n        self.assertEqual(factorial(2), 2)\n        self.assertEqual(factorial(3), 6)\n        self.assertEqual(factorial(4), 24)\n        self.assertEqual(factorial(5), 120)\n        self.assertEqual(factorial(6), 720)\n    \n    def test_larger_numbers(self):\n        \"\"\"Test factorial for larger numbers.\"\"\"\n        self.assertEqual(factorial(10), 3628800)\n        self.assertEqual(factorial(12), 479001600)\n    \n    def test_negative_input(self):\n        \"\"\"Test that negative inputs raise ValueError.\"\"\"\n        with self.assertRaises(ValueError) as context:\n            factorial(-1)\n        self.assertIn(\"negative numbers\", str(context.exception))\n        \n        with self.assertRaises(ValueError):\n            factorial(-5)\n    \n    def test_type_errors(self):\n        \"\"\"Test that non-integer inputs raise TypeError.\"\"\"\n        with self.assertRaises(TypeError) as context:\n            factorial(3.14)\n        self.assertIn(\"Expected integer\", str(context.exception))\n        \n        with self.assertRaises(TypeError):\n            factorial(\"5\")\n        \n        with self.assertRaises(TypeError):\n            factorial([5])\n        \n        with self.assertRaises(TypeError):\n            factorial(None)\n    \n    def test_overflow_protection(self):\n        \"\"\"Test that very large inputs raise OverflowError.\"\"\"\n        with self.assertRaises(OverflowError) as context:\n            factorial(1001)\n        self.assertIn(\"too large\", str(context.exception))\n    \n    def test_boundary_values(self):\n        \"\"\"Test values near the overflow boundary.\"\"\"\n        # Should work fine\n        result = factorial(20)\n        self.assertIsInstance(result, int)\n        self.assertGreater(result, 0)\n        \n        # Should still work\n        result = factorial(100)\n        self.assertIsInstance(result, int)\n        self.assertGreater(result, 0)\n\n\nclass TestSafeFactorial(unittest.TestCase):\n    \n    def test_safe_factorial_normal_cases(self):\n        \"\"\"Test safe_factorial with normal inputs.\"\"\"\n        self.assertEqual(safe_factorial(5), 120)\n        self.assertEqual(safe_factorial(0), 1)\n    \n    def test_safe_factorial_with_max_value(self):\n        \"\"\"Test safe_factorial with maximum value limit.\"\"\"\n        self.assertEqual(safe_factorial(5, max_value=10), 120)\n        self.assertIsNone(safe_factorial(15, max_value=10))\n    \n    def test_safe_factorial_error_handling(self):\n        \"\"\"Test that safe_factorial handles errors gracefully.\"\"\"\n        # Should return None for invalid inputs instead of raising\n        self.assertIsNone(safe_factorial(-1))\n        self.assertIsNone(safe_factorial(\"invalid\"))\n        self.assertIsNone(safe_factorial(1001))\n\n\nclass TestFactorialPerformance(unittest.TestCase):\n    \n    def test_performance_reasonable_time(self):\n        \"\"\"Test that factorial computation completes in reasonable time.\"\"\"\n        import time\n        \n        start_time = time.time()\n        result = factorial(100)\n        end_time = time.time()\n        \n        # Should complete within 1 second\n        self.assertLess(end_time - start_time, 1.0)\n        self.assertIsInstance(result, int)\n\n\ndef run_example_tests():\n    \"\"\"Run some example calculations to demonstrate the function.\"\"\"\n    print(\"Factorial Function Examples:\")\n    print(\"=\" * 30)\n    \n    test_values = [0, 1, 5, 10, 15]\n    \n    for num in test_values:\n        try:\n            result = factorial(num)\n            print(f\"{num}! = {result:,}\")\n        except Exception as e:\n            print(f\"{num}! = Error: {e}\")\n    \n    print(\"\\nTesting error cases:\")\n    error_cases = [-1, 3.14, \"5\", 1001]\n    \n    for case in error_cases:\n        result = safe_factorial(case)\n        if result is not None:\n            print(f\"factorial({case}) = {result}\")\n        else:\n            print(f\"factorial({case}) = Error (handled safely)\")\n\n\nif __name__ == \"__main__\":\n    # Run the unit tests\n    print(\"Running unit tests...\")\n    unittest.main(argv=[''], exit=False, verbosity=2)\n    \n    print(\"\\n\" + \"=\" * 50)\n    \n    # Run example demonstrations\n    run_example_tests()\n```\n\n**To run the tests:**\n\n1. Save both files in the same directory\n2. Run the tests with: `python test_factorial.py`\n3. Or run specific test classes: `python -m unittest test_factorial.TestFactorial -v`\n\n**Key improvements:**\n\n1. **Enhanced Error Handling:**\n   - Type checking for non-integer inputs\n   - Overflow protection for very large numbers\n   - Clear, descriptive error messages\n\n2. **Comprehensive Unit Tests:**\n   - Base cases and edge cases\n   - Error condition testing\n   - Performance testing\n   - Boundary value testing\n\n3. **Safe Alternative:**\n   - `safe_factorial()` function that returns None instead of raising exceptions\n   - Optional maximum value limit\n\n4. **Documentation:**\n   - Clear docstrings with Args, Returns, and Raises sections\n   - Example usage and test demonstrations\n\nThis implementation is production-ready with proper error handling and thorough test coverage!"
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Please provide a summary of what we accomplished in this conversation and suggest next steps for improving this factorial implementation.",
             ),
         ],
     ),
     # Complex multi-turn Todo workflow test - simulates Claude Code task planning and completion
-    "deepseek_complex_todo_workflow_stream": MessagesRequest(
+    "deepseek_complex_todo_workflow_stream": ClaudeMessagesRequest(
         model="deepseek-v3-0324",
         max_tokens=3072,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="Help me implement a new feature for a web application that allows users to export their data. I need you to plan this task using the TodoWrite tool, then work through it step by step.",
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="I'll help you implement a data export feature for your web application. Let me start by creating a comprehensive task plan using the TodoWrite tool.",
                     ),
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="toolu_01ABC123DEF456",
                         name="TodoWrite",
@@ -934,28 +1049,28 @@ TEST_SCENARIOS = {
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="toolu_01ABC123DEF456",
                         content="Todo list has been updated successfully. 10 items added to the task list."
                     ),
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Great! Now let's start working on the first task. Begin with designing the API endpoints.",
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Perfect! Let me start working on the first task by designing the data export API endpoints. I'll mark it as in progress and then provide the design.",
                     ),
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="toolu_02XYZ789GHI012",
                         name="TodoWrite",
@@ -1026,24 +1141,24 @@ TEST_SCENARIOS = {
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="toolu_02XYZ789GHI012",
                         content="Todo list has been updated successfully. Task 1 marked as in_progress."
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Excellent! Now I'll design the comprehensive API endpoints for the data export feature:\n\n## Data Export API Design\n\n### 1. Export Request Endpoint\n```\nPOST /api/v1/exports\nContent-Type: application/json\nAuthorization: Bearer <token>\n\nRequest Body:\n{\n  \"format\": \"csv|json|excel\",\n  \"data_type\": \"users|orders|products|analytics\",\n  \"filters\": {\n    \"date_range\": {\n      \"start\": \"2024-01-01\",\n      \"end\": \"2024-12-31\"\n    },\n    \"status\": [\"active\", \"pending\"],\n    \"categories\": [\"electronics\", \"books\"]\n  },\n  \"fields\": [\"id\", \"name\", \"email\", \"created_at\"],\n  \"sort_by\": \"created_at\",\n  \"sort_order\": \"desc\",\n  \"chunk_size\": 1000\n}\n\nResponse:\n{\n  \"export_id\": \"exp_1234567890\",\n  \"status\": \"queued\",\n  \"estimated_records\": 15420,\n  \"created_at\": \"2024-06-22T10:30:00Z\",\n  \"expires_at\": \"2024-06-29T10:30:00Z\"\n}\n```\n\n### 2. Export Status Check\n```\nGET /api/v1/exports/{export_id}\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"export_id\": \"exp_1234567890\",\n  \"status\": \"processing|completed|failed\",\n  \"progress\": {\n    \"processed_records\": 8500,\n    \"total_records\": 15420,\n    \"percentage\": 55.1\n  },\n  \"download_url\": \"https://api.example.com/api/v1/exports/exp_1234567890/download\",\n  \"file_size\": 2048576,\n  \"error_message\": null,\n  \"created_at\": \"2024-06-22T10:30:00Z\",\n  \"completed_at\": \"2024-06-22T10:45:23Z\",\n  \"expires_at\": \"2024-06-29T10:30:00Z\"\n}\n```\n\n### 3. Export Download\n```\nGET /api/v1/exports/{export_id}/download\nAuthorization: Bearer <token>\n\nResponse Headers:\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=\"users_export_20240622.csv\"\nContent-Length: 2048576\n\nResponse: Binary file data\n```\n\n### 4. List User Exports\n```\nGET /api/v1/exports?page=1&limit=20&status=completed\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"exports\": [\n    {\n      \"export_id\": \"exp_1234567890\",\n      \"status\": \"completed\",\n      \"format\": \"csv\",\n      \"data_type\": \"users\",\n      \"record_count\": 15420,\n      \"file_size\": 2048576,\n      \"created_at\": \"2024-06-22T10:30:00Z\",\n      \"expires_at\": \"2024-06-29T10:30:00Z\"\n    }\n  ],\n  \"pagination\": {\n    \"page\": 1,\n    \"limit\": 20,\n    \"total\": 45,\n    \"has_more\": true\n  }\n}\n```\n\n### 5. Cancel Export\n```\nDELETE /api/v1/exports/{export_id}\nAuthorization: Bearer <token>\n\nResponse:\n{\n  \"message\": \"Export cancelled successfully\",\n  \"export_id\": \"exp_1234567890\"\n}\n```\n\n## Database Schema\n\n```sql\nCREATE TABLE exports (\n  id VARCHAR(50) PRIMARY KEY,\n  user_id INTEGER NOT NULL,\n  status ENUM('queued', 'processing', 'completed', 'failed', 'cancelled'),\n  format ENUM('csv', 'json', 'excel'),\n  data_type VARCHAR(50),\n  filters JSON,\n  fields JSON,\n  total_records INTEGER,\n  processed_records INTEGER DEFAULT 0,\n  file_path VARCHAR(500),\n  file_size BIGINT,\n  error_message TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  started_at TIMESTAMP NULL,\n  completed_at TIMESTAMP NULL,\n  expires_at TIMESTAMP NOT NULL,\n  INDEX idx_user_status (user_id, status),\n  INDEX idx_created_at (created_at),\n  INDEX idx_expires_at (expires_at)\n);\n```\n\nThe API design includes proper authentication, rate limiting considerations, progress tracking, and automatic cleanup of expired exports. Now let me mark this task as completed and move to the next one.",
                     ),
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="toolu_03JKL345MNO678",
                         name="TodoWrite",
@@ -1114,28 +1229,28 @@ TEST_SCENARIOS = {
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="toolu_03JKL345MNO678",
                         content="Todo list has been updated successfully. Task 1 marked as completed, Task 2 marked as in_progress."
                     ),
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Excellent API design! Now let's check our current progress and then continue with implementing the backend service. Can you show me the current todo list status?",
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="assistant",
                 content=[
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Of course! Let me check our current progress by reading the todo list.",
                     ),
-                    ContentBlockToolUse(
+                    ClaudeContentBlockToolUse(
                         type="tool_use",
                         id="toolu_04PQR901STU234",
                         name="TodoRead",
@@ -1143,10 +1258,10 @@ TEST_SCENARIOS = {
                     ),
                 ],
             ),
-            Message(
+            ClaudeMessage(
                 role="user",
                 content=[
-                    ContentBlockToolResult(
+                    ClaudeContentBlockToolResult(
                         type="tool_result",
                         tool_use_id="toolu_04PQR901STU234",
                         content=[
@@ -1212,7 +1327,7 @@ TEST_SCENARIOS = {
                             }
                         ]
                     ),
-                    ContentBlockText(
+                    ClaudeContentBlockText(
                         type="text",
                         text="Perfect! Now please provide a summary of our progress and what we've accomplished so far in this implementation.",
                     ),
@@ -1221,37 +1336,37 @@ TEST_SCENARIOS = {
         ],
     ),
     # Streaming thinking tests
-    "thinking_simple_stream": MessagesRequest(
+    "thinking_simple_stream": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 15 + 27? Please think about it.",
             )
         ],
     ),
-    "thinking_math_stream": MessagesRequest(
+    "thinking_math_stream": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 8 x 9? Please think through the calculation.",
             )
         ],
     ),
-    "thinking_with_tools_stream": MessagesRequest(
+    "thinking_with_tools_stream": ClaudeMessagesRequest(
         model=MODEL_THINKING,
         max_tokens=1025,
         stream=True,
-        thinking=ThinkingConfigEnabled(type="enabled", budget_tokens=1024),
+        thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="What is 125 divided by 5? Think about it and use the calculator if needed.",
             )
@@ -1259,12 +1374,12 @@ TEST_SCENARIOS = {
         tools=[calculator_tool],
         tool_choice=tool_choice_auto,
     ),
-    "thinking_keyword_stream": MessagesRequest(
+    "thinking_keyword_stream": ClaudeMessagesRequest(
         model=MODEL,
         max_tokens=1536,
         stream=True,
         messages=[
-            Message(
+            ClaudeMessage(
                 role="user",
                 content="I need you to think deeply about this question: How can artificial intelligence help solve climate change? Please think through various approaches and consider both direct and indirect solutions.",
             )
@@ -1632,7 +1747,7 @@ def test_direct_conversion(
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i + 1} ({role}):")
+                print(f"ClaudeMessage {i + 1} ({role}):")
                 for j, block in enumerate(content):
                     if block.get("type") == "text":
                         text_content = block.get("text", "")[
@@ -1650,9 +1765,9 @@ def test_direct_conversion(
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i + 1} ({role}): {text_preview}")
+                print(f"ClaudeMessage {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
+                print(f"ClaudeMessage {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
@@ -1838,7 +1953,7 @@ def test_request(
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i + 1} ({role}):")
+                print(f"ClaudeMessage {i + 1} ({role}):")
                 for j, block in enumerate(content):
                     if block.get("type") == "text":
                         text_content = block.get("text", "")[
@@ -1856,9 +1971,9 @@ def test_request(
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i + 1} ({role}): {text_preview}")
+                print(f"ClaudeMessage {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
+                print(f"ClaudeMessage {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
@@ -2380,7 +2495,7 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
             # Handle different content formats
             if isinstance(content, list):
                 # Content blocks format
-                print(f"Message {i + 1} ({role}):")
+                print(f"ClaudeMessage {i + 1} ({role}):")
                 for j, block in enumerate(content):
                     if block.get("type") == "text":
                         text_content = block.get("text", "")[
@@ -2398,9 +2513,9 @@ async def test_streaming(test_name, request_data, compare_with_anthropic=True):
                 text_preview = content[:200]  # Limit to first 200 chars
                 if len(content) > 200:
                     text_preview += "..."
-                print(f"Message {i + 1} ({role}): {text_preview}")
+                print(f"ClaudeMessage {i + 1} ({role}): {text_preview}")
             else:
-                print(f"Message {i + 1} ({role}): {str(content)[:100]}...")
+                print(f"ClaudeMessage {i + 1} ({role}): {str(content)[:100]}...")
         print("--- END PROMPTS ---")
 
     # Log system message if present
@@ -2585,14 +2700,15 @@ async def run_tests(args):
     # Filter tests if --test or --only specified
     if args.test or args.only:
         if args.test:
-            if args.test not in TEST_SCENARIOS:
-                print(f"Error: Test '{args.test}' not found.")
+            invalid_tests = [test for test in args.test if test not in TEST_SCENARIOS]
+            if invalid_tests:
+                print(f"Error: The following tests were not found: {', '.join(invalid_tests)}")
                 print("Available tests:")
                 for test_name in TEST_SCENARIOS.keys():
                     print(f"  {test_name}")
                 return False
 
-            test_names = [args.test]
+            test_names = args.test
         else:  # --only
             test_names = [
                 name
@@ -2634,7 +2750,7 @@ async def run_tests(args):
                     f"\n\n=========== RUNNING STREAMING TEST: {test_name} ===========\n"
                 )
                 # Create streaming version of test data
-                if isinstance(test_data, MessagesRequest):
+                if isinstance(test_data, ClaudeMessagesRequest):
                     streaming_data = test_data.model_copy(update={"stream": True})
                 else:
                     streaming_data = test_data.copy()
@@ -2765,6 +2881,37 @@ async def run_tests(args):
         return False
 
 
+async def analyze_edit_tool_completion():
+    """Analyze Edit tool completion behavior difference between official and proxy APIs."""
+    print("\n" + "="*60)
+    print("🔍 EDIT TOOL COMPLETION ANALYSIS")
+    print("="*60)
+    print("Testing model responses after Edit tool execution completes.")
+    print("This helps distinguish between third-party model limitations and proxy conversion issues.")
+    print("-"*60)
+
+    # Test both streaming and non-streaming versions
+    test_cases = ["edit_tool_completion", "edit_tool_completion_stream"]
+
+    for test_name in test_cases:
+        print(f"\n📋 Testing: {test_name}")
+        print("-" * 40)
+
+        test_data = TEST_SCENARIOS[test_name]
+
+        # Run with comparison to official API
+        result, warning = await test_streaming(test_name, test_data, compare_with_anthropic=True)
+
+        if warning:
+            print(f"⚠️ Behavioral difference detected: {warning}")
+        else:
+            print("✅ Behavior matches official API")
+
+    print("\n" + "="*60)
+    print("Analysis complete. Check logs for detailed streaming events and token calculations.")
+    print("="*60)
+
+
 async def main():
     # Check that API key is set
     if not ANTHROPIC_API_KEY:
@@ -2789,7 +2936,8 @@ async def main():
     parser.add_argument(
         "--test",
         type=str,
-        help="Run only a specific test by name (e.g., 'calculator', 'todo_write')",
+        nargs='+',
+        help="Run multiple specific tests by name (e.g., 'calculator todo_write')",
     )
     parser.add_argument(
         "--only",
@@ -2810,7 +2958,17 @@ async def main():
         action="store_true",
         help="Compare responses with official model when using custom model",
     )
+    parser.add_argument(
+        "--analyze-edit-completion",
+        action="store_true",
+        help="Run Edit tool completion analysis to compare official vs proxy API behavior",
+    )
     args = parser.parse_args()
+
+    # Run specific analysis if requested
+    if args.analyze_edit_completion:
+        await analyze_edit_tool_completion()
+        return
 
     # Run tests
     success = await run_tests(args)
