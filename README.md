@@ -2,7 +2,12 @@
 
 **Claude Code Version: 1.0.31**
 
-Tested Models: DeepSeek/Gemini
+Tested Models:
+    - DeepSeek-v3
+    - DeepSeek-r1
+    - Claude (Yes, OpenAI format Claude from OpenRouter)
+    - Doubao-seed-1.6
+    - Gemini-2.5-pro (OpenAI format from OpenRouter)
 
 A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. Features intelligent routing based on token count, thinking flag, and model name.
 
@@ -191,6 +196,8 @@ Add custom OpenAI-compatible models in `custom_models.yaml`:
   api_key_name: MY_API_KEY
   can_stream: true
   max_tokens: 8192
+  input_cost_per_token: 0.00000027  # Optional pricing info for cost tracking
+  output_cost_per_token: 0.00000055 # Optional pricing info for cost tracking
 ```
 
 ## Development Workflow
@@ -236,6 +243,8 @@ Add custom OpenAI-compatible models in `custom_models.yaml`:
 3. **Test the model**:
    ```bash
    python tests.py --model my-new-model --test simple
+   # Test direct conversion without routing
+   python tests.py --model my-new-model --test simple --direct
    ```
 
 ### Testing Workflow
@@ -273,6 +282,7 @@ The server generates several log files for debugging:
 - **Request/Response translation** between Anthropic and OpenAI formats
 - **Session statistics** tracking for cost monitoring
 - **Streaming support** for real-time responses
+- **Enhanced logging** with ANSI color formatting via Colors class for better visibility
 
 #### 2. **models.py** - Data Models & Conversion
 - **Pydantic models** for type-safe API contracts
@@ -298,7 +308,7 @@ ROUTER_DEFAULT     = "deepseek-v3-250324"    # Fallback
 ```
 
 **Decision Flow:**
-1. **Long Context Check**: If input > 128k tokens → use `ROUTER_LONG_CONTEXT`
+1. **Long Context Check**: If input > configured threshold → use `ROUTER_LONG_CONTEXT` (configurable via `LONG_CONTEXT_THRESHOLD` in .env)
 2. **Thinking Mode**: If `thinking` enabled → use `ROUTER_THINK`
 3. **Model Override**: If specific model requested → respect user choice
 4. **Background Mode**: Default fast processing → use `ROUTER_BACKGROUND`
@@ -350,6 +360,7 @@ Models are defined in `custom_models.yaml`:
 ## API Endpoints
 - `/v1/messages`: Main endpoint for message requests
 - `/v1/messages/count_tokens`: Count tokens in messages
+- `/v1/messages/test_conversion`: Direct model testing without routing
 - `/v1/stats`: Get session statistics
 - `/health`: Health check endpoint
 - `/test-connection`: Test API connectivity

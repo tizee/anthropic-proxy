@@ -249,7 +249,10 @@ def load_custom_models(config_file=None):
                 "max_input_tokens": model.get(
                     "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
                 ),
+                # openai request extra options
                 "extra_headers": model.get("extra_headers", None),
+                "extra_body": model.get("extra_body", None),
+                "reasoning_effort": model.get("reasoning_effort", None),
             }
 
             # Store pricing info for cost calculation
@@ -513,8 +516,8 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         openai_request["model"] = model_config.get("model_name")
 
         # Add extra headers if defined in model config
-        if "extra_headers" in model_config:
-            openai_request["extra_headers"] = model_config["extra_headers"]
+        openai_request["extra_headers"] = model_config["extra_headers"] or {}
+        openai_request["extra_body"] = model_config["extra_body"] or {}
 
         # doubao-seed models use "thinking" field as the same as Anthropic's
         #  options:
@@ -522,15 +525,17 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         #   enabled: output reasoning content
         #   auto: enable thinking automatically
         if has_thinking:
-            if model_config["reasoning_effort"] in ["low", "medium", "high"]:
+            if model_config["reasoning_effort"] and model_config[
+                "reasoning_effort"
+            ] in ["low", "medium", "high"]:
                 openai_request["reasoning_effort"] = model_config["reasoning_effort"]
-            openai_request["thinking"] = {"type": "enabled"}
+            openai_request["extra_body"]["thinking"] = {"type": "enabled"}
         else:
-            openai_request["thinking"] = {"type": "auto"}
-
+            # only enable when required
+            openai_request["extra_body"]["thinking"] = {"type": "disabled"}
         # Only log basic info about the request, not the full details
         logger.debug(
-            f"Request for model: {openai_request.get('model')}, stream: {openai_request.get('stream', False)}, thinking_mode: {openai_request.get('thinking')}"
+            f"Request for model: {openai_request.get('model')},stream: {openai_request.get('stream', False)},thinking_mode:{openai_request['extra_body'].get('thinking')}"
         )
 
         # Use OpenAI SDK for streaming
@@ -674,7 +679,8 @@ async def test_message_conversion(request: ClaudeMessagesRequest, raw_request: R
 
         # Create OpenAI client for the model
         client = create_openai_client(original_model)
-        openai_request["model"] = request.model
+        # model_id -> model_name in CUSTOM_OPENAI_MODELS configs
+        openai_request["model"] = CUSTOM_OPENAI_MODELS[request.model]["model_name"]
 
         logger.debug(
             f"🧪 Converted request for {original_model}: {json.dumps({k: v for k, v in openai_request.items() if k != 'messages'}, indent=2)}"
