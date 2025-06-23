@@ -148,7 +148,7 @@ claude-code-proxy/
 ├── models.py                 # Pydantic models and format conversion
 ├── tests.py                  # Comprehensive test suite
 ├── test_conversions.py       # Format conversion unit tests
-├── custom_models.yaml.example # Example custom model config
+├── models.yaml.example # Example custom model config
 ├── Makefile                  # Development commands
 ├── pyproject.toml           # Python project configuration
 ├── uv.lock                  # Dependency lock file
@@ -181,14 +181,14 @@ claude-code-proxy/
 - Thinking mode and reasoning tests
 - Multi-turn conversation testing
 
-#### **custom_models.yaml**
+#### **models.yaml**
 - YAML configuration for custom OpenAI-compatible models
 - Includes API endpoints, authentication, and pricing
 - Supports DeepSeek, local models, and other providers
 - Cost tracking and token limit configuration
 
 ## Custom Models
-Add custom OpenAI-compatible models in `custom_models.yaml`:
+Add custom OpenAI-compatible models in `models.yaml`:
 ```yaml
 - model_id: my-model
   model_name: model-name-used-in-request
@@ -214,7 +214,7 @@ Add custom OpenAI-compatible models in `custom_models.yaml`:
 2. **Configure Environment**:
    - Edit `.env` with your API keys
    - Configure router models in `.env`
-   - Customize `custom_models.yaml` if needed
+   - Customize `models.yaml` if needed
 
 3. **Development Cycle**:
    ```bash
@@ -226,7 +226,7 @@ Add custom OpenAI-compatible models in `custom_models.yaml`:
 
 ### Adding New Models
 
-1. **Add to custom_models.yaml**:
+1. **Add to models.yaml**:
    ```yaml
    - model_id: my-new-model
      api_base: https://api.example.com/v1
@@ -292,7 +292,7 @@ The server generates several log files for debugging:
 
 #### 3. **Configuration System**
 - **Environment-based config** (.env file)
-- **Custom model definitions** (custom_models.yaml)
+- **Custom model definitions** (models.yaml)
 - **Router configuration** for model selection logic
 
 ### Intelligent Routing Logic
@@ -331,7 +331,7 @@ OpenAI API Call → Response Processing → Anthropic Format → Client
 
 ### Custom Model Integration
 
-Models are defined in `custom_models.yaml`:
+Models are defined in `models.yaml`:
 
 ```yaml
 - model_id: deepseek-v3-250324
