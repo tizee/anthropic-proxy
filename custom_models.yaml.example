@@ -1,7 +1,6 @@
 # Example custom OpenAI-compatible model configurations
 # Required fields: model_id, api_base, api_key_name
 # Optional fields: model_name, can_stream, max_tokens, input_cost_per_token, output_cost_per_token, max_input_tokens, enable_thinking, reasoning_effort, extra_headers
-
 - model_id: example-model-1
   model_name: example-name-1
   api_base: "https://example.com/api/v1"

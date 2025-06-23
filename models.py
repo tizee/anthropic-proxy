@@ -12,6 +12,8 @@ import uuid
 import logging
 import tiktoken
 import hashlib
+import threading
+from datetime import datetime
 
 from openai.types.chat import (
     ChatCompletion,
@@ -692,11 +694,279 @@ class ClaudeTokenCountResponse(BaseModel):
     input_tokens: int
 
 
+# Supporting models for detailed token breakdown
+class CompletionTokensDetails(BaseModel):
+    reasoning_tokens: Optional[int] = None
+    accepted_prediction_tokens: Optional[int] = None
+    rejected_prediction_tokens: Optional[int] = None
+
+
+class PromptTokensDetails(BaseModel):
+    cached_tokens: Optional[int] = None
+
+
+class CacheCreation(BaseModel):
+    ephemeral_1h_input_tokens: int = 0
+    ephemeral_5m_input_tokens: int = 0
+
+
+class ServerToolUse(BaseModel):
+    web_search_requests: int = 0
+
+
 class ClaudeUsage(BaseModel):
+    # Core Claude fields (existing)
     input_tokens: int
     output_tokens: int
-    cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: Optional[int] = 0
+    cache_read_input_tokens: Optional[int] = 0
+    
+    # OpenAI/Deepseek additional fields for compatibility
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    prompt_cache_hit_tokens: Optional[int] = None
+    prompt_cache_miss_tokens: Optional[int] = None
+    
+    # Detailed breakdown objects
+    completion_tokens_details: Optional[CompletionTokensDetails] = None
+    prompt_tokens_details: Optional[PromptTokensDetails] = None
+    cache_creation: Optional[CacheCreation] = None
+    server_tool_use: Optional[ServerToolUse] = None
+    service_tier: Optional[str] = None
+
+
+class GlobalUsageStats(BaseModel):
+    """Thread-safe global usage statistics tracking for the proxy session."""
+    
+    # Session metadata
+    session_start_time: datetime = datetime.now()
+    total_requests: int = 0
+    
+    # Core token counters
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    
+    # Cache-related counters
+    total_cache_creation_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_hit_tokens: int = 0
+    total_cache_miss_tokens: int = 0
+    
+    # Reasoning tokens (from thinking models)
+    total_reasoning_tokens: int = 0
+    
+    # Model usage breakdown
+    model_usage_count: Dict[str, int] = {}
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._lock = threading.Lock()
+    
+    def update_usage(self, usage: ClaudeUsage, model: str = "unknown"):
+        """Thread-safe method to update usage statistics."""
+        with self._lock:
+            self.total_requests += 1
+            
+            # Core tokens
+            self.total_input_tokens += usage.input_tokens
+            self.total_output_tokens += usage.output_tokens
+            
+            # Calculate total tokens
+            if usage.total_tokens is not None:
+                self.total_tokens += usage.total_tokens
+            else:
+                self.total_tokens += usage.input_tokens + usage.output_tokens
+            
+            # Cache tokens
+            if usage.cache_creation_input_tokens:
+                self.total_cache_creation_tokens += usage.cache_creation_input_tokens
+            if usage.cache_read_input_tokens:
+                self.total_cache_read_tokens += usage.cache_read_input_tokens
+            if usage.prompt_cache_hit_tokens:
+                self.total_cache_hit_tokens += usage.prompt_cache_hit_tokens
+            if usage.prompt_cache_miss_tokens:
+                self.total_cache_miss_tokens += usage.prompt_cache_miss_tokens
+            
+            # Reasoning tokens
+            if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
+                self.total_reasoning_tokens += usage.completion_tokens_details.reasoning_tokens
+            
+            # Model usage tracking
+            if model not in self.model_usage_count:
+                self.model_usage_count[model] = 0
+            self.model_usage_count[model] += 1
+    
+    def get_session_summary(self) -> Dict[str, Any]:
+        """Get a comprehensive summary of the session statistics."""
+        with self._lock:
+            session_duration = datetime.now() - self.session_start_time
+            return {
+                "session_duration_seconds": int(session_duration.total_seconds()),
+                "total_requests": self.total_requests,
+                "total_input_tokens": self.total_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_tokens": self.total_tokens,
+                "total_cache_creation_tokens": self.total_cache_creation_tokens,
+                "total_cache_read_tokens": self.total_cache_read_tokens,
+                "total_cache_hit_tokens": self.total_cache_hit_tokens,
+                "total_cache_miss_tokens": self.total_cache_miss_tokens,
+                "total_reasoning_tokens": self.total_reasoning_tokens,
+                "model_usage_count": dict(self.model_usage_count),
+                "session_start_time": self.session_start_time.isoformat(),
+            }
+    
+    def reset_stats(self):
+        """Reset all statistics and start a new session."""
+        with self._lock:
+            self.session_start_time = datetime.now()
+            self.total_requests = 0
+            self.total_input_tokens = 0
+            self.total_output_tokens = 0
+            self.total_tokens = 0
+            self.total_cache_creation_tokens = 0
+            self.total_cache_read_tokens = 0
+            self.total_cache_hit_tokens = 0
+            self.total_cache_miss_tokens = 0
+            self.total_reasoning_tokens = 0
+            self.model_usage_count.clear()
+
+
+# Global instance for tracking session usage
+global_usage_stats = GlobalUsageStats()
+
+
+def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
+    """Extract usage data from OpenAI API response and convert to ClaudeUsage format."""
+    usage = openai_response.usage if hasattr(openai_response, 'usage') and openai_response.usage else None
+    
+    if not usage:
+        return ClaudeUsage(input_tokens=0, output_tokens=0)
+    
+    # Core fields mapping
+    input_tokens = getattr(usage, 'prompt_tokens', 0)
+    output_tokens = getattr(usage, 'completion_tokens', 0)
+    total_tokens = getattr(usage, 'total_tokens', input_tokens + output_tokens)
+    
+    # Extract completion_tokens_details if present
+    completion_details = None
+    if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
+        details = usage.completion_tokens_details
+        completion_details = CompletionTokensDetails(
+            reasoning_tokens=getattr(details, 'reasoning_tokens', None),
+            accepted_prediction_tokens=getattr(details, 'accepted_prediction_tokens', None),
+            rejected_prediction_tokens=getattr(details, 'rejected_prediction_tokens', None)
+        )
+    
+    # Extract prompt_tokens_details if present  
+    prompt_details = None
+    if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+        details = usage.prompt_tokens_details
+        prompt_details = PromptTokensDetails(
+            cached_tokens=getattr(details, 'cached_tokens', None)
+        )
+    
+    # Handle Deepseek-specific fields
+    prompt_cache_hit_tokens = getattr(usage, 'prompt_cache_hit_tokens', None)
+    prompt_cache_miss_tokens = getattr(usage, 'prompt_cache_miss_tokens', None)
+    
+    return ClaudeUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        prompt_tokens=input_tokens,
+        completion_tokens=output_tokens,
+        total_tokens=total_tokens,
+        prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+        prompt_cache_miss_tokens=prompt_cache_miss_tokens,
+        completion_tokens_details=completion_details,
+        prompt_tokens_details=prompt_details
+    )
+
+
+def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> ClaudeUsage:
+    """Extract usage data from Claude API response format and convert to enhanced ClaudeUsage."""
+    if not claude_usage_dict:
+        return ClaudeUsage(input_tokens=0, output_tokens=0)
+    
+    # Core fields
+    input_tokens = claude_usage_dict.get('input_tokens', 0)
+    output_tokens = claude_usage_dict.get('output_tokens', 0)
+    cache_creation_input_tokens = claude_usage_dict.get('cache_creation_input_tokens', 0)
+    cache_read_input_tokens = claude_usage_dict.get('cache_read_input_tokens', 0)
+    
+    # Handle cache_creation object
+    cache_creation = None
+    if 'cache_creation' in claude_usage_dict and claude_usage_dict['cache_creation']:
+        cache_data = claude_usage_dict['cache_creation']
+        cache_creation = CacheCreation(
+            ephemeral_1h_input_tokens=cache_data.get('ephemeral_1h_input_tokens', 0),
+            ephemeral_5m_input_tokens=cache_data.get('ephemeral_5m_input_tokens', 0)
+        )
+    
+    # Handle server_tool_use object
+    server_tool_use = None
+    if 'server_tool_use' in claude_usage_dict and claude_usage_dict['server_tool_use']:
+        tool_data = claude_usage_dict['server_tool_use']
+        server_tool_use = ServerToolUse(
+            web_search_requests=tool_data.get('web_search_requests', 0)
+        )
+    
+    service_tier = claude_usage_dict.get('service_tier')
+    
+    return ClaudeUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        prompt_tokens=input_tokens,
+        completion_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        cache_creation=cache_creation,
+        server_tool_use=server_tool_use,
+        service_tier=service_tier
+    )
+
+
+def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = ""):
+    """Update global usage statistics and log the usage information."""
+    global global_usage_stats
+    
+    # Update the global stats
+    global_usage_stats.update_usage(usage, model)
+    
+    # Log current usage
+    logger.info(f"📊 USAGE UPDATE [{context}]: Model={model}, Input={usage.input_tokens}t, Output={usage.output_tokens}t")
+    
+    # Log cache-related tokens if present
+    cache_info = []
+    if usage.cache_read_input_tokens and usage.cache_read_input_tokens > 0:
+        cache_info.append(f"CacheRead={usage.cache_read_input_tokens}t")
+    if usage.cache_creation_input_tokens and usage.cache_creation_input_tokens > 0:
+        cache_info.append(f"CacheCreate={usage.cache_creation_input_tokens}t")
+    if usage.prompt_cache_hit_tokens and usage.prompt_cache_hit_tokens > 0:
+        cache_info.append(f"CacheHit={usage.prompt_cache_hit_tokens}t")
+    if usage.prompt_cache_miss_tokens and usage.prompt_cache_miss_tokens > 0:
+        cache_info.append(f"CacheMiss={usage.prompt_cache_miss_tokens}t")
+    
+    if cache_info:
+        logger.info(f"💾 CACHE USAGE: {', '.join(cache_info)}")
+    
+    # Log reasoning tokens if present
+    if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
+        logger.info(f"🧠 REASONING TOKENS: {usage.completion_tokens_details.reasoning_tokens}t")
+    
+    # Log session totals
+    summary = global_usage_stats.get_session_summary()
+    logger.info(f"📈 SESSION TOTALS: Requests={summary['total_requests']}, Input={summary['total_input_tokens']}t, Output={summary['total_output_tokens']}t, Total={summary['total_tokens']}t")
+    
+    # Log reasoning and cache totals if significant
+    if summary['total_reasoning_tokens'] > 0:
+        logger.info(f"🧠 SESSION REASONING: {summary['total_reasoning_tokens']}t")
+    
+    total_cache = summary['total_cache_hit_tokens'] + summary['total_cache_miss_tokens'] + summary['total_cache_read_tokens']
+    if total_cache > 0:
+        logger.info(f"💾 SESSION CACHE: Hit={summary['total_cache_hit_tokens']}t, Miss={summary['total_cache_miss_tokens']}t, Read={summary['total_cache_read_tokens']}t")
 
 
 # see https://docs.anthropic.com/en/api/messages#response-id
@@ -841,6 +1111,9 @@ def convert_openai_response_to_anthropic(
                     name = getattr(block, "name", "unknown")
                     logger.debug(f"    Tool: {name}")
 
+        # Extract comprehensive usage data from OpenAI response
+        enhanced_usage = extract_usage_from_openai_response(openai_response)
+        
         # Create Claude response
         claude_response = ClaudeMessagesResponse(
             id=response_id,
@@ -849,7 +1122,7 @@ def convert_openai_response_to_anthropic(
             content=content_blocks,
             stop_reason=stop_reason,
             stop_sequence=None,
-            usage=ClaudeUsage(input_tokens=prompt_tokens, output_tokens=completion_tokens),
+            usage=enhanced_usage,
         )
 
         # Compare response data and log any mismatches
@@ -1383,7 +1656,7 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
         return "end_turn"
 
 # openai SSE -> claude SSE
-async def convert_openai_streaming_response_to_anthropic(response_generator: AsyncStream[ChatCompletionChunk], original_request: ClaudeMessagesRequest):
+async def convert_openai_streaming_response_to_anthropic(response_generator: AsyncStream[ChatCompletionChunk], original_request: ClaudeMessagesRequest, routed_model: str = None):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
     has_sent_stop_reason = False
     is_tool_use = False
@@ -1914,6 +2187,39 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
         except Exception as debug_error:
             logger.error(f"Error in streaming response debug: {debug_error}")
+        
+        # Track usage statistics for streaming responses
+        try:
+            # Calculate final tokens for usage tracking
+            final_output_tokens = _calculate_accurate_output_tokens(
+                accumulated_text, accumulated_thinking, output_tokens, "Streaming usage tracking"
+            )
+            
+            # Create usage object from streaming data
+            # Note: For streaming, we typically don't have detailed usage from the API response
+            # so we create a basic usage object with calculated tokens
+            streaming_usage = ClaudeUsage(
+                input_tokens=input_tokens if input_tokens > 0 else 0,
+                output_tokens=final_output_tokens,
+                prompt_tokens=input_tokens if input_tokens > 0 else 0,
+                completion_tokens=final_output_tokens,
+                total_tokens=(input_tokens if input_tokens > 0 else 0) + final_output_tokens
+            )
+            
+            # Add reasoning tokens if we detected thinking content
+            if accumulated_thinking:
+                if not streaming_usage.completion_tokens_details:
+                    streaming_usage.completion_tokens_details = CompletionTokensDetails()
+                
+                reasoning_tokens = count_tokens_in_response(thinking_content=accumulated_thinking)
+                streaming_usage.completion_tokens_details.reasoning_tokens = reasoning_tokens
+            
+            # Update global usage statistics
+            model_name = routed_model if routed_model else original_request.model
+            update_global_usage_stats(streaming_usage, model_name, "Streaming")
+            
+        except Exception as usage_error:
+            logger.error(f"Error tracking streaming usage: {usage_error}")
 
 def _validate_streaming_content_integrity(
     accumulated_text: str,

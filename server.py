@@ -39,20 +39,12 @@ from models import (
     ClaudeContentBlockThinking,
     ClaudeTokenCountRequest,
     ClaudeTokenCountResponse,
+    global_usage_stats,
+    update_global_usage_stats,
     convert_openai_response_to_anthropic,
     convert_openai_streaming_response_to_anthropic,
 )
 
-
-class SessionStats(BaseModel):
-    """Statistics for the current proxy session."""
-
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-
-
-# Global state for session statistics
-session_stats = SessionStats()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -471,22 +463,6 @@ def _format_error_message(e: Exception, error_details: Dict[str, Any]) -> str:
         error_message += f"\nResponse: {error_details['response']}"
     return error_message
 
-
-def update_session_stats(model: str, input_tokens: int, output_tokens: int):
-    """Update the global session statistics with new token counts and costs."""
-    global session_stats
-    # Clean model name to look up in custom models
-    # Update global stats
-    session_stats.total_input_tokens += input_tokens
-    session_stats.total_output_tokens += output_tokens
-    logger.info(
-        f"📊 STATS UPDATE: Model={model}, Input={input_tokens}t, Output={output_tokens}t"
-    )
-    logger.info(
-        f"SESSION TOTALS: Input={session_stats.total_input_tokens}t, Output={session_stats.total_output_tokens}t"
-    )
-
-
 @app.post("/v1/messages")
 async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
     try:
@@ -574,7 +550,7 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             ] = await client.chat.completions.create(**openai_request)
             return StreamingResponse(
                 convert_openai_streaming_response_to_anthropic(
-                    response_generator, request
+                    response_generator, request, routed_model
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -599,6 +575,9 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             anthropic_response = convert_openai_response_to_anthropic(
                 openai_response, request
             )
+
+            # Update global usage statistics and log usage information
+            update_global_usage_stats(anthropic_response.usage, routed_model, "Non-streaming")
 
             return anthropic_response
 
@@ -654,10 +633,10 @@ async def count_tokens(request: ClaudeTokenCountRequest, raw_request: Request):
         raise HTTPException(status_code=500, detail=f"Error counting tokens: {str(e)}")
 
 
-@app.get("/v1/stats", response_model=SessionStats)
+@app.get("/v1/stats")
 async def get_stats():
-    """Returns the token usage statistics for the current session."""
-    return session_stats
+    """Returns the comprehensive token usage statistics for the current session."""
+    return global_usage_stats.get_session_summary()
 
 
 @app.post("/v1/messages/test_conversion")
