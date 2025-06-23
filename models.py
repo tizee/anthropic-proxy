@@ -5,7 +5,7 @@ This module contains only the model definitions without any server startup code.
 
 from openai import AsyncStream
 from pydantic import BaseModel, field_validator
-from typing import Dict, List, Optional, Union, Literal, Any, Iterable
+from typing import Dict, List, Optional, Required, Union, Literal, Any, Iterable
 import re
 import json
 import uuid
@@ -154,11 +154,22 @@ class ClaudeContentBlockText(BaseModel):
         return {"type": "text", "text": self.text}
 
 
+class ClaudeContentBlockImageBase64Source(BaseModel):
+    type: Literal["base64"]
+    media_type: Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
+    data: str
+
+class ClaudeContentBlockImageURLSource(BaseModel):
+    type: Literal["url"]
+    url: str
+
 class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
-    source: Dict[str, Any]
+    source: Union[ClaudeContentBlockImageBase64Source,
+                  ClaudeContentBlockImageURLSource, Dict[str, Any]]
 
     # only user message contains image content
+    #
     def to_openai(self) -> Optional[ChatCompletionContentPartImageParam]:
         """
         Convert Claude image block to OpenAI image_url format.
@@ -181,18 +192,22 @@ class ClaudeContentBlockImage(BaseModel):
             }
         }
         """
-        if (
-            isinstance(self.source, dict)
-            and self.source.get("type") == "base64"
-            and "media_type" in self.source
-            and "data" in self.source
-        ):
+        if isinstance(self.source, ClaudeContentBlockImageBase64Source) :
             return {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:{self.source['media_type']};base64,{self.source['data']}"
+                    "url":
+                    f"data:{self.source.media_type};base64,{self.source.data}"
                 },
             }
+        elif isinstance(self.source, ClaudeContentBlockImageURLSource):
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"{self.source.url}"
+                },
+            }
+
         return None
 
 
@@ -298,9 +313,9 @@ class ClaudeContentBlockThinking(BaseModel):
     thinking: str
     signature: Optional[str] = None
 
-    def to_openai(self) -> None:
-        """Thinking blocks should be filtered out for OpenAI format."""
-        return None
+    def to_openai(self) -> ChatCompletionContentPartTextParam:
+        """Thinking blocks should be transformed to assistant text message"""
+        return { "type": "text", "text": self.thinking }
 
 class ClaudeSystemContent(BaseModel):
     type: Literal["text"]
@@ -321,58 +336,6 @@ class ClaudeMessage(BaseModel):
         ],
     ]
 
-    # Claude tool use content block -> OpenAI assistant tool call
-    def extract_tool_calls(self) -> List[ChatCompletionMessageToolCallParam]:
-        """
-        Extract tool calls from Claude message content for OpenAI format.
-        Returns a list of OpenAI tool_call objects.
-        """
-        tool_calls = []
-
-        if isinstance(self.content, list):
-            for block in self.content:
-                if isinstance(block, ClaudeContentBlockToolUse):
-                    tool_calls.append(block.to_openai())
-
-        return tool_calls
-
-    def extract_tool_results(self) -> List[ChatCompletionToolMessageParam]:
-        """
-        Extract tool result messages from Claude message content for OpenAI format.
-        Returns a list of OpenAI tool role message objects.
-        """
-        tool_messages = []
-
-        if isinstance(self.content, list):
-            for block in self.content:
-                if isinstance(block, ClaudeContentBlockToolResult):
-                    tool_messages.append(block.to_openai_message())
-
-        return tool_messages
-
-    def extract_text_content(self) -> str:
-        """
-        Extract only text content from message, completely ignoring tool-related blocks.
-        Returns a string with just the actual text content, no tool placeholders.
-        """
-        if isinstance(self.content, str):
-            return self.content
-        elif isinstance(self.content, list):
-            content_parts = []
-
-            for block in self.content:
-                if isinstance(block, ClaudeContentBlockText):
-                    content_parts.append(block.text)
-                elif isinstance(block, dict):
-                    if block.get("type") == "text" and "text" in block:
-                        content_parts.append(block["text"])
-                # Completely ignore tool_use and tool_result blocks
-
-            content_text = "".join(content_parts).strip()
-            return content_text if content_text else ""
-
-        return ""
-
     def process_interrupted_content(self) -> str:
         """Process Claude Code interrupted messages."""
         if not isinstance(self.content, str):
@@ -387,9 +350,9 @@ class ClaudeMessage(BaseModel):
 
         return content
 
-    def to_openai_user_messages(self) -> List[Union[ChatCompletionUserMessageParam, ChatCompletionToolMessageParam]]:
+    def to_openai_messages(self) -> List[ChatCompletionMessageParam]:
         """
-        Convert Claude user message to OpenAI user message format.
+        Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
         Handles complex logic including tool_result splitting, content block ordering, etc.
         Returns a list of OpenAI messages (can be multiple due to tool_result splitting).
 
@@ -397,84 +360,77 @@ class ClaudeMessage(BaseModel):
             For Claude user message, there is no tool call and thinking content.
             tool call content block and thinking content is for assistant message only
         """
-        if self.role != "user":
-            raise ValueError("This method is only for user messages")
-
         openai_messages = []
 
         # Handle simple string content
         if isinstance(self.content, str):
             # processed_content = self.process_interrupted_content()
-            openai_messages.append({"role": "user", "content": self.content})
+            openai_messages.append({"role": self.role, "content": self.content})
             return openai_messages
 
         # Process content blocks in order, maintaining structure
-        content_parts = []
+        content_parts: List[Union[ChatCompletionContentPartTextParam, ChatCompletionContentPartImageParam]] = []
+        tool_calls: List[ChatCompletionMessageToolCallParam] = []
 
         # Claude user message content blocks -> OpenAI user message content
         # parts
         # https://docs.anthropic.com/en/api/messages#body-messages-content
         # https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages
+
+        # correct order: assistant message with tool_calls should always
+        # be before than assistant message with tool result.
         for block in self.content:
-            if not isinstance(block,
-                              ClaudeContentBlockToolResult):
-                content_parts.append(block.to_openai())
-            elif isinstance(block,ClaudeContentBlockToolResult):
-                # CRITICAL: Split user message when tool_result is encountered
+            if not isinstance(block, ClaudeContentBlockToolResult) and not isinstance(block, ClaudeContentBlockToolUse):
+                openai_part = block.to_openai()
+                if openai_part:
+                    content_parts.append(openai_part)
+            elif isinstance(block, ClaudeContentBlockToolUse):
+                tool_calls.append(block.to_openai())
+            elif isinstance(block, ClaudeContentBlockToolResult):
+                # CRITICAL: Split message when tool_result is encountered
                 if content_parts:
+                    current_message: Dict[str, Any] = { "role": self.role }
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                        openai_messages.append(
-                            {"role": "user", "content": content_parts[0]["text"]}
-                        )
+                        current_message["content"] = content_parts[0]["text"]
+                        # openai_messages.append(
+                        #     {
+                        #         "role": self.role,
+                        #         "content": content_parts[0]["text"],
+                        #         "tool_calls": tool_calls}
+                        # )
                     else:
-                        openai_messages.append(
-                            {"role": "user", "content": content_parts}
-                        )
+                        current_message["content"] = content_parts
+                        # openai_messages.append(
+                        #     {"role": self.role, "content": content_parts}
+                        # )
+                    if self.role == "assistant" and len(tool_calls) > 0:
+                        current_message["tool_calls"] = tool_calls
+                    openai_messages.append(current_message)
                     content_parts.clear()
+                    tool_calls.clear()
                 # Add tool result immediately to maintain chronological order
                 tool_message = block.to_openai_message()
                 openai_messages.append(tool_message)
 
         # Process any remaining content
         if content_parts:
+            current_message: Dict[str, Any] = { "role": self.role }
             if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                openai_messages.append(
-                    {"role": "user", "content": content_parts[0]["text"]}
-                )
+                current_message["content"] = content_parts[0]["text"]
+                # openai_messages.append(
+                #     {"role": self.role, "content": content_parts[0]["text"]}
+                # )
             else:
-                openai_messages.append(
-                    {"role": "user", "content": content_parts}
-                )
+                current_message["content"] = content_parts
+                # openai_messages.append(
+                #     {"role": self.role, "content": content_parts}
+                # )
+            if self.role == "assistant" and len(tool_calls) > 0:
+                current_message["tool_calls"] = tool_calls
+            openai_messages.append(current_message)
 
         return openai_messages
 
-    def to_openai_assistant_message(self) -> Union[ChatCompletionAssistantMessageParam, List[Union[ChatCompletionAssistantMessageParam,ChatCompletionToolMessageParam]]]:
-        """
-        Convert Claude assistant message to OpenAI assistant message format.
-        Returns None if the message has no content or tool calls.
-        """
-        if self.role != "assistant":
-            raise ValueError("This method is only for assistant messages")
-
-        # Extract tool calls and text content using existing methods
-        tool_calls = self.extract_tool_calls()
-        text_content = self.extract_text_content()
-
-        assistant_msg = ChatCompletionAssistantMessageParam(role="assistant")
-
-        # Handle content for assistant messages
-        if text_content:
-            assistant_msg["content"] = text_content
-        else:
-            assistant_msg["content"] = None
-
-        if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
-
-        # Only return message if it has actual content or tool calls
-        # if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
-        #     return assistant_msg
-        return assistant_msg
 
 class ClaudeTool(BaseModel):
     name: str
@@ -573,26 +529,21 @@ class ClaudeMessagesRequest(BaseModel):
                 }
                 openai_messages.append(system_msg)
 
+        # Note:
+        # Claude only has user and assistant these
+        # two roles. So the Claude assistant's tool use
+        # content blocks should be added to the OpenAI
+        # assistant's tool_calls.
+        # For tool result content blocks, we need to create
+        # tool role messages.
+        # Besides, tool use should always before tool result
         for msg in self.messages:
             if msg.role == Constants.ROLE_USER:
-                user_messages = msg.to_openai_user_messages()
+                user_messages = msg.to_openai_messages()
                 openai_messages.extend(user_messages)
             elif msg.role == Constants.ROLE_ASSISTANT:
-                # Note:
-                # Claude only has user and assistant these
-                # two roles. So the Claude assistant's tool use
-                # content blocks should be added to the OpenAI
-                # assistant's tool_calls.
-                # For tool result content blocks, we need to create
-                # tool role messages.
-                # Besides, tool use should always before tool result
-
-                assistant_message = msg.to_openai_assistant_message()
-                if isinstance(assistant_message, list):
-                    openai_messages.extend(assistant_message)
-                elif isinstance(assistant_message, dict) and assistant_message["role"] == "assistant":
-                    openai_messages.append(assistant_message)
-                    logger.debug(f"🔧 Assistant message:content={bool(assistant_message.get("content"))},tool_calls={len(list(assistant_message.get('tool_calls',[])))}")
+                assistant_messages  = msg.to_openai_messages()
+                openai_messages.extend(assistant_messages)
 
         # Claude request tools -> OpenAI request tools
         # https://docs.anthropic.com/en/api/messages#body-tools
@@ -720,14 +671,14 @@ class ClaudeUsage(BaseModel):
     output_tokens: int
     cache_creation_input_tokens: Optional[int] = 0
     cache_read_input_tokens: Optional[int] = 0
-    
+
     # OpenAI/Deepseek additional fields for compatibility
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     prompt_cache_hit_tokens: Optional[int] = None
     prompt_cache_miss_tokens: Optional[int] = None
-    
+
     # Detailed breakdown objects
     completion_tokens_details: Optional[CompletionTokensDetails] = None
     prompt_tokens_details: Optional[PromptTokensDetails] = None
@@ -738,47 +689,47 @@ class ClaudeUsage(BaseModel):
 
 class GlobalUsageStats(BaseModel):
     """Thread-safe global usage statistics tracking for the proxy session."""
-    
+
     # Session metadata
     session_start_time: datetime = datetime.now()
     total_requests: int = 0
-    
+
     # Core token counters
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_tokens: int = 0
-    
+
     # Cache-related counters
     total_cache_creation_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_hit_tokens: int = 0
     total_cache_miss_tokens: int = 0
-    
+
     # Reasoning tokens (from thinking models)
     total_reasoning_tokens: int = 0
-    
+
     # Model usage breakdown
     model_usage_count: Dict[str, int] = {}
-    
+
     def __init__(self, **data):
         super().__init__(**data)
         self._lock = threading.Lock()
-    
+
     def update_usage(self, usage: ClaudeUsage, model: str = "unknown"):
         """Thread-safe method to update usage statistics."""
         with self._lock:
             self.total_requests += 1
-            
+
             # Core tokens
             self.total_input_tokens += usage.input_tokens
             self.total_output_tokens += usage.output_tokens
-            
+
             # Calculate total tokens
             if usage.total_tokens is not None:
                 self.total_tokens += usage.total_tokens
             else:
                 self.total_tokens += usage.input_tokens + usage.output_tokens
-            
+
             # Cache tokens
             if usage.cache_creation_input_tokens:
                 self.total_cache_creation_tokens += usage.cache_creation_input_tokens
@@ -788,16 +739,16 @@ class GlobalUsageStats(BaseModel):
                 self.total_cache_hit_tokens += usage.prompt_cache_hit_tokens
             if usage.prompt_cache_miss_tokens:
                 self.total_cache_miss_tokens += usage.prompt_cache_miss_tokens
-            
+
             # Reasoning tokens
             if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
                 self.total_reasoning_tokens += usage.completion_tokens_details.reasoning_tokens
-            
+
             # Model usage tracking
             if model not in self.model_usage_count:
                 self.model_usage_count[model] = 0
             self.model_usage_count[model] += 1
-    
+
     def get_session_summary(self) -> Dict[str, Any]:
         """Get a comprehensive summary of the session statistics."""
         with self._lock:
@@ -816,7 +767,7 @@ class GlobalUsageStats(BaseModel):
                 "model_usage_count": dict(self.model_usage_count),
                 "session_start_time": self.session_start_time.isoformat(),
             }
-    
+
     def reset_stats(self):
         """Reset all statistics and start a new session."""
         with self._lock:
@@ -840,15 +791,15 @@ global_usage_stats = GlobalUsageStats()
 def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
     """Extract usage data from OpenAI API response and convert to ClaudeUsage format."""
     usage = openai_response.usage if hasattr(openai_response, 'usage') and openai_response.usage else None
-    
+
     if not usage:
         return ClaudeUsage(input_tokens=0, output_tokens=0)
-    
+
     # Core fields mapping
     input_tokens = getattr(usage, 'prompt_tokens', 0)
     output_tokens = getattr(usage, 'completion_tokens', 0)
     total_tokens = getattr(usage, 'total_tokens', input_tokens + output_tokens)
-    
+
     # Extract completion_tokens_details if present
     completion_details = None
     if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
@@ -858,19 +809,19 @@ def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
             accepted_prediction_tokens=getattr(details, 'accepted_prediction_tokens', None),
             rejected_prediction_tokens=getattr(details, 'rejected_prediction_tokens', None)
         )
-    
-    # Extract prompt_tokens_details if present  
+
+    # Extract prompt_tokens_details if present
     prompt_details = None
     if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
         details = usage.prompt_tokens_details
         prompt_details = PromptTokensDetails(
             cached_tokens=getattr(details, 'cached_tokens', None)
         )
-    
+
     # Handle Deepseek-specific fields
     prompt_cache_hit_tokens = getattr(usage, 'prompt_cache_hit_tokens', None)
     prompt_cache_miss_tokens = getattr(usage, 'prompt_cache_miss_tokens', None)
-    
+
     return ClaudeUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -888,13 +839,13 @@ def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> Cla
     """Extract usage data from Claude API response format and convert to enhanced ClaudeUsage."""
     if not claude_usage_dict:
         return ClaudeUsage(input_tokens=0, output_tokens=0)
-    
+
     # Core fields
     input_tokens = claude_usage_dict.get('input_tokens', 0)
     output_tokens = claude_usage_dict.get('output_tokens', 0)
     cache_creation_input_tokens = claude_usage_dict.get('cache_creation_input_tokens', 0)
     cache_read_input_tokens = claude_usage_dict.get('cache_read_input_tokens', 0)
-    
+
     # Handle cache_creation object
     cache_creation = None
     if 'cache_creation' in claude_usage_dict and claude_usage_dict['cache_creation']:
@@ -903,7 +854,7 @@ def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> Cla
             ephemeral_1h_input_tokens=cache_data.get('ephemeral_1h_input_tokens', 0),
             ephemeral_5m_input_tokens=cache_data.get('ephemeral_5m_input_tokens', 0)
         )
-    
+
     # Handle server_tool_use object
     server_tool_use = None
     if 'server_tool_use' in claude_usage_dict and claude_usage_dict['server_tool_use']:
@@ -911,9 +862,9 @@ def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> Cla
         server_tool_use = ServerToolUse(
             web_search_requests=tool_data.get('web_search_requests', 0)
         )
-    
+
     service_tier = claude_usage_dict.get('service_tier')
-    
+
     return ClaudeUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -931,13 +882,13 @@ def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> Cla
 def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = ""):
     """Update global usage statistics and log the usage information."""
     global global_usage_stats
-    
+
     # Update the global stats
     global_usage_stats.update_usage(usage, model)
-    
+
     # Log current usage
     logger.info(f"📊 USAGE UPDATE [{context}]: Model={model}, Input={usage.input_tokens}t, Output={usage.output_tokens}t")
-    
+
     # Log cache-related tokens if present
     cache_info = []
     if usage.cache_read_input_tokens and usage.cache_read_input_tokens > 0:
@@ -948,22 +899,22 @@ def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = "")
         cache_info.append(f"CacheHit={usage.prompt_cache_hit_tokens}t")
     if usage.prompt_cache_miss_tokens and usage.prompt_cache_miss_tokens > 0:
         cache_info.append(f"CacheMiss={usage.prompt_cache_miss_tokens}t")
-    
+
     if cache_info:
         logger.info(f"💾 CACHE USAGE: {', '.join(cache_info)}")
-    
+
     # Log reasoning tokens if present
     if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
         logger.info(f"🧠 REASONING TOKENS: {usage.completion_tokens_details.reasoning_tokens}t")
-    
+
     # Log session totals
     summary = global_usage_stats.get_session_summary()
     logger.info(f"📈 SESSION TOTALS: Requests={summary['total_requests']}, Input={summary['total_input_tokens']}t, Output={summary['total_output_tokens']}t, Total={summary['total_tokens']}t")
-    
+
     # Log reasoning and cache totals if significant
     if summary['total_reasoning_tokens'] > 0:
         logger.info(f"🧠 SESSION REASONING: {summary['total_reasoning_tokens']}t")
-    
+
     total_cache = summary['total_cache_hit_tokens'] + summary['total_cache_miss_tokens'] + summary['total_cache_read_tokens']
     if total_cache > 0:
         logger.info(f"💾 SESSION CACHE: Hit={summary['total_cache_hit_tokens']}t, Miss={summary['total_cache_miss_tokens']}t, Read={summary['total_cache_read_tokens']}t")
@@ -1113,7 +1064,7 @@ def convert_openai_response_to_anthropic(
 
         # Extract comprehensive usage data from OpenAI response
         enhanced_usage = extract_usage_from_openai_response(openai_response)
-        
+
         # Create Claude response
         claude_response = ClaudeMessagesResponse(
             id=response_id,
@@ -2187,14 +2138,14 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
         except Exception as debug_error:
             logger.error(f"Error in streaming response debug: {debug_error}")
-        
+
         # Track usage statistics for streaming responses
         try:
             # Calculate final tokens for usage tracking
             final_output_tokens = _calculate_accurate_output_tokens(
                 accumulated_text, accumulated_thinking, output_tokens, "Streaming usage tracking"
             )
-            
+
             # Create usage object from streaming data
             # Note: For streaming, we typically don't have detailed usage from the API response
             # so we create a basic usage object with calculated tokens
@@ -2205,19 +2156,19 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                 completion_tokens=final_output_tokens,
                 total_tokens=(input_tokens if input_tokens > 0 else 0) + final_output_tokens
             )
-            
+
             # Add reasoning tokens if we detected thinking content
             if accumulated_thinking:
                 if not streaming_usage.completion_tokens_details:
                     streaming_usage.completion_tokens_details = CompletionTokensDetails()
-                
+
                 reasoning_tokens = count_tokens_in_response(thinking_content=accumulated_thinking)
                 streaming_usage.completion_tokens_details.reasoning_tokens = reasoning_tokens
-            
+
             # Update global usage statistics
             model_name = routed_model if routed_model else original_request.model
             update_global_usage_stats(streaming_usage, model_name, "Streaming")
-            
+
         except Exception as usage_error:
             logger.error(f"Error tracking streaming usage: {usage_error}")
 
