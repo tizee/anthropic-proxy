@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, HTTPException
 import uvicorn
 import logging
 import json
-from pydantic import BaseModel
 import os
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import AsyncOpenAI, AsyncStream
@@ -29,14 +28,8 @@ import sys
 import tiktoken
 
 from models import (
-    Constants,
     ModelDefaults,
     ClaudeMessagesRequest,
-    ClaudeMessagesResponse,
-    ClaudeUsage,
-    ClaudeContentBlockText,
-    ClaudeContentBlockToolUse,
-    ClaudeContentBlockThinking,
     ClaudeTokenCountRequest,
     ClaudeTokenCountResponse,
     global_usage_stats,
@@ -202,6 +195,7 @@ app = FastAPI()
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
+
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file."""
@@ -303,6 +297,7 @@ def initialize_custom_models():
 # Initialize custom models and API keys
 initialize_custom_models()
 
+
 def create_openai_client(model_id: str) -> AsyncOpenAI:
     """Create OpenAI client for the given model and return client and request parameters."""
     api_key = None
@@ -377,6 +372,7 @@ def determine_model_by_router(
 
     # should be model id
     return result
+
 
 # Models for Anthropic API requests
 @app.middleware("http")
@@ -463,6 +459,7 @@ def _format_error_message(e: Exception, error_details: Dict[str, Any]) -> str:
         error_message += f"\nResponse: {error_details['response']}"
     return error_message
 
+
 @app.post("/v1/messages")
 async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
     try:
@@ -471,7 +468,9 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         body_json = json.loads(body.decode("utf-8"))
         original_model = body_json.get("model", "unknown")
 
-        logger.debug(f"RAW REQUEST:\n{json.dumps(body_json, indent=4, ensure_ascii=False, sort_keys=True)}")
+        logger.debug(
+            f"RAW REQUEST:\n{json.dumps(body_json, indent=4, ensure_ascii=False, sort_keys=True)}"
+        )
 
         # Calculate token count for routing decisions
         token_count = request.calculate_tokens()
@@ -517,9 +516,21 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         if "extra_headers" in model_config:
             openai_request["extra_headers"] = model_config["extra_headers"]
 
+        # doubao-seed models use "thinking" field as the same as Anthropic's
+        #  options:
+        #   disabled: not output reasoning content
+        #   enabled: output reasoning content
+        #   auto: enable thinking automatically
+        if has_thinking:
+            if model_config["reasoning_effort"] in ["low", "medium", "high"]:
+                openai_request["reasoning_effort"] = model_config["reasoning_effort"]
+            openai_request["thinking"] = {"type": "enabled"}
+        else:
+            openai_request["thinking"] = {"type": "auto"}
+
         # Only log basic info about the request, not the full details
         logger.debug(
-            f"Request for model: {openai_request.get('model')}, stream: {openai_request.get('stream', False)}"
+            f"Request for model: {openai_request.get('model')}, stream: {openai_request.get('stream', False)}, thinking_mode: {openai_request.get('thinking')}"
         )
 
         # Use OpenAI SDK for streaming
@@ -577,7 +588,9 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             )
 
             # Update global usage statistics and log usage information
-            update_global_usage_stats(anthropic_response.usage, routed_model, "Non-streaming")
+            update_global_usage_stats(
+                anthropic_response.usage, routed_model, "Non-streaming"
+            )
 
             return anthropic_response
 
