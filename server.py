@@ -11,6 +11,7 @@ import tiktoken
 import uvicorn
 import yaml
 from dotenv import load_dotenv
+from hook import hook_manager, load_all_plugins
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import (
@@ -206,6 +207,17 @@ for handler in logger.handlers:
 
 app = FastAPI()
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Load plugins and custom models on startup."""
+    initialize_custom_models()
+    load_all_plugins()
+    logger.info(
+        f"Loaded {len(hook_manager.request_hooks)} request hooks and {len(hook_manager.response_hooks)} response hooks."
+    )
+
+
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
@@ -311,8 +323,8 @@ def initialize_custom_models():
                 logger.warning(f"Missing API key for {api_key_name}")
 
 
-# Initialize custom models and API keys
-initialize_custom_models()
+# Custom models are initialized on app startup
+# initialize_custom_models()
 
 
 def create_openai_client(model_id: str) -> AsyncOpenAI:
@@ -477,6 +489,39 @@ def _format_error_message(e: Exception, error_details: dict[str, Any]) -> str:
     return error_message
 
 
+async def hook_streaming_response(response_generator, request, routed_model):
+    """Wraps a streaming response generator to apply response hooks to each event."""
+    async for event_str in convert_openai_streaming_response_to_anthropic(
+        response_generator, request, routed_model
+    ):
+        try:
+            # The event string is like "event: <type>\ndata: <json>\n\n"
+            if "data: " not in event_str:
+                yield event_str
+                continue
+
+            # Split event string to process data part
+            header, _, data_part = event_str.partition('data: ')
+
+            if data_part.strip() == "[DONE]":
+                yield event_str
+                continue
+
+            if not data_part.strip():
+                yield event_str
+                continue
+
+            data_dict = json.loads(data_part)
+            hooked_data_dict = hook_manager.trigger_response_hooks(data_dict)
+            new_data_str = json.dumps(hooked_data_dict)
+
+            yield f"{header}data: {new_data_str}\n\n"
+
+        except (json.JSONDecodeError, IndexError) as e:
+            logger.warning(f"Could not parse and hook streaming event. Error: {e}")
+            yield event_str
+
+
 @app.post("/v1/messages")
 async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
     try:
@@ -524,6 +569,9 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
 
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
+
+        # Trigger request hooks
+        openai_request = hook_manager.trigger_request_hooks(openai_request)
 
         # Create OpenAI client for the model
         client = create_openai_client(routed_model)
@@ -585,7 +633,7 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
 
         # Build complete request with OpenAI SDK type validation
         # Handle max_tokens for custom models vs standard models
-        max_tokens = max(model_config.get("max_tokens"), request.max_tokens)
+        max_tokens = min(model_config.get("max_tokens"), request.max_tokens)
         openai_request["max_tokens"] = max_tokens
 
         # Handle streaming mode
@@ -594,10 +642,12 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             response_generator: AsyncStream[
                 ChatCompletionChunk
             ] = await client.chat.completions.create(**openai_request)
+            # Wrap the generator to apply response hooks
+            hooked_generator = hook_streaming_response(
+                response_generator, request, routed_model
+            )
             return StreamingResponse(
-                convert_openai_streaming_response_to_anthropic(
-                    response_generator, request, routed_model
-                ),
+                hooked_generator,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -622,12 +672,17 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
                 openai_response, request
             )
 
+            # --- HOOK: Trigger response hooks ---
+            response_dict = anthropic_response.model_dump(exclude_none=True)
+            hooked_response_dict = hook_manager.trigger_response_hooks(response_dict)
+            # ------------------------------------
+
             # Update global usage statistics and log usage information
             update_global_usage_stats(
                 anthropic_response.usage, routed_model, "Non-streaming"
             )
 
-            return anthropic_response
+            return JSONResponse(content=hooked_response_dict)
 
     except Exception as e:
         error_details = _extract_error_details(e)

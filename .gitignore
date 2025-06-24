@@ -37,3 +37,12 @@ ENV/
 .vscode/
 *.swp
 *.swo
+
+# pid
+*.pid
+
+# test
+.coverage
+
+# config
+models.yaml
