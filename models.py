@@ -439,22 +439,19 @@ class ClaudeMessage(BaseModel):
                     current_message: dict[str, Any] = {"role": self.role}
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                         current_message["content"] = content_parts[0]["text"]
-                        # openai_messages.append(
-                        #     {
-                        #         "role": self.role,
-                        #         "content": content_parts[0]["text"],
-                        #         "tool_calls": tool_calls}
-                        # )
                     else:
                         current_message["content"] = content_parts
-                        # openai_messages.append(
-                        #     {"role": self.role, "content": content_parts}
-                        # )
                     if self.role == "assistant" and len(tool_calls) > 0:
                         current_message["tool_calls"] = tool_calls
+                        tool_calls.clear()
                     openai_messages.append(current_message)
                     content_parts.clear()
+                elif len(tool_calls) > 0:
+                    current_message: dict[str, Any] = {"role": "assistant"}
+                    current_message["tool_calls"] = tool_calls
+                    openai_messages.append(current_message)
                     tool_calls.clear()
+
                 # Add tool result immediately to maintain chronological order
                 tool_message = block.to_openai_message()
                 openai_messages.append(tool_message)
