@@ -1193,6 +1193,123 @@ Let me create a new MultiEdit operation with these precise changes for the first
         print("🎯 Test completed - check the output above to see if content is properly preserved")
         print("✅ Exit plan mode scenario test completed")
 
+    def test_tool_use_id_uniqueness(self):
+        """Test that tool use IDs are unique across multiple conversions."""
+        print("🔑 Testing tool use ID uniqueness...")
+
+        # Create multiple tool calls with the same original ID (simulating Gemini API behavior)
+        mock_tool_calls = [
+            {"name": "Edit", "arguments": {"file_path": "/test1.py", "old_string": "old", "new_string": "new"}},
+            {"name": "Edit", "arguments": {"file_path": "/test2.py", "old_string": "old", "new_string": "new"}},
+            {"name": "Read", "arguments": {"file_path": "/test3.py"}},
+        ]
+
+        # Create multiple responses that would have the same tool IDs (like Gemini)
+        response1 = create_mock_openai_response("I'll make these changes.", mock_tool_calls[:2])
+        response2 = create_mock_openai_response("Let me also read this file.", mock_tool_calls[2:])
+
+        original_request = ClaudeMessagesRequest(
+            model="test-model",
+            max_tokens=100,
+            messages=[ClaudeMessage(role="user", content="Please make these changes")],
+        )
+
+        # Convert both responses
+        claude_response1 = convert_openai_response_to_anthropic(response1, original_request)
+        claude_response2 = convert_openai_response_to_anthropic(response2, original_request)
+
+        # Collect all tool use IDs from both responses
+        tool_ids = []
+        
+        for response in [claude_response1, claude_response2]:
+            for block in response.content:
+                if hasattr(block, 'type') and block.type == "tool_use":
+                    tool_ids.append(block.id)
+
+        # Test 1: All IDs should be unique
+        self.assertEqual(len(tool_ids), len(set(tool_ids)), 
+                        f"Tool use IDs should be unique. Found duplicates: {tool_ids}")
+
+        # Test 2: IDs should follow our custom format (timestamp-based)
+        for tool_id in tool_ids:
+            self.assertRegex(tool_id, r'^toolu_\d+_[a-f0-9]{8}$',
+                            f"Tool ID should match format 'toolu_<timestamp>_<hex>': {tool_id}")
+
+        # Test 3: Verify that multiple calls to generate_unique_tool_id() produce different IDs
+        from models import generate_unique_tool_id
+        
+        generated_ids = [generate_unique_tool_id() for _ in range(10)]
+        self.assertEqual(len(generated_ids), len(set(generated_ids)),
+                        f"Generated IDs should be unique: {generated_ids}")
+
+        print("✅ Tool use ID uniqueness test passed")
+
+    def test_tool_use_id_consistency_in_streaming(self):
+        """Test that tool use IDs remain consistent when converting from streaming responses."""
+        print("🔄 Testing tool use ID consistency in streaming...")
+
+        # Simulate a streaming scenario where the same tool is called multiple times
+        # This tests the fix for the Gemini API returning duplicate IDs like "tool_0_Edit"
+        
+        mock_tool_calls_with_duplicate_ids = [
+            # Simulate what Gemini API might return (duplicate IDs)
+            type('MockToolCall', (), {
+                'id': 'tool_0_Edit',  # This is the problematic duplicate ID
+                'function': type('MockFunction', (), {
+                    'name': 'Edit',
+                    'arguments': '{"file_path": "/test1.py", "old_string": "old1", "new_string": "new1"}'
+                })()
+            })(),
+            type('MockToolCall', (), {
+                'id': 'tool_0_Edit',  # Same ID again - this should be made unique
+                'function': type('MockFunction', (), {
+                    'name': 'Edit', 
+                    'arguments': '{"file_path": "/test2.py", "old_string": "old2", "new_string": "new2"}'
+                })()
+            })(),
+        ]
+
+        mock_response = create_mock_openai_response(
+            "I'll make these edits.", 
+            [{"name": call.function.name, "arguments": json.loads(call.function.arguments)} 
+             for call in mock_tool_calls_with_duplicate_ids]
+        )
+
+        # Force the tool call IDs to be the problematic duplicates
+        mock_response.choices[0].message.tool_calls = mock_tool_calls_with_duplicate_ids
+
+        original_request = ClaudeMessagesRequest(
+            model="test-model",
+            max_tokens=100,
+            messages=[ClaudeMessage(role="user", content="Please edit these files")],
+        )
+
+        # Convert to Claude format
+        claude_response = convert_openai_response_to_anthropic(mock_response, original_request)
+
+        # Collect tool use blocks
+        tool_blocks = [block for block in claude_response.content if hasattr(block, 'type') and block.type == "tool_use"]
+        
+        # Should have 2 tool use blocks
+        self.assertEqual(len(tool_blocks), 2, "Should have 2 tool use blocks")
+
+        # IDs should be unique despite the original duplicates
+        tool_ids = [block.id for block in tool_blocks]
+        self.assertEqual(len(tool_ids), len(set(tool_ids)), 
+                        f"Tool use IDs should be unique even when source had duplicates: {tool_ids}")
+
+        # IDs should NOT be the original problematic format
+        for tool_id in tool_ids:
+            self.assertNotEqual(tool_id, "tool_0_Edit", 
+                               f"Tool ID should not be the original duplicate ID: {tool_id}")
+            
+        # IDs should follow our unique format
+        for tool_id in tool_ids:
+            self.assertRegex(tool_id, r'^toolu_\d+_[a-f0-9]{8}$',
+                            f"Tool ID should follow unique format: {tool_id}")
+
+        print("✅ Tool use ID consistency in streaming test passed")
+
     @staticmethod
     def create_mock_openai_response(
         content: str,

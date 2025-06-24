@@ -63,6 +63,19 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize TikToken encoder: {e}")
     enc = None
 
+
+def generate_unique_tool_id() -> str:
+    """
+    Generate a unique tool use ID with timestamp and random suffix.
+    Format: toolu_<timestamp_ms>_<random_hex>
+    This ensures uniqueness across all tool use instances.
+    """
+    import time
+    timestamp_ms = int(time.time() * 1000)
+    random_suffix = uuid.uuid4().hex[:8]
+    return f"toolu_{timestamp_ms}_{random_suffix}"
+
+
 # Constants for better maintainability
 
 
@@ -1133,7 +1146,7 @@ def convert_openai_response_to_anthropic(
                     content_blocks.append(
                         ClaudeContentBlockToolUse(
                             type=Constants.CONTENT_TOOL_USE,
-                            id=tool_call.id,
+                            id=generate_unique_tool_id(),
                             name=tool_call.function.name,
                             input=arguments_dict,
                         )
@@ -1555,7 +1568,7 @@ def _send_content_block_start_event(index: int, block_type: str, **kwargs):
     elif block_type == "tool_use":
         # Ensure tool_use blocks have required fields
         if "id" not in content_block:
-            content_block["id"] = f"toolu_{uuid.uuid4().hex[:24]}"
+            content_block["id"] = generate_unique_tool_id()
         if "name" not in content_block:
             content_block["name"] = ""
         if "input" not in content_block:
@@ -1875,9 +1888,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                         if isinstance(function, dict)
                                         else ""
                                     )
-                                    current_tool_id = tool_call.get(
-                                        "id", f"toolu_{uuid.uuid4().hex[:24]}"
-                                    )
+                                    current_tool_id = generate_unique_tool_id()
                                 else:
                                     function = getattr(tool_call, "function", None)
                                     current_tool_name = (
@@ -1885,11 +1896,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                         if function
                                         else ""
                                     )
-                                    current_tool_id = getattr(
-                                        tool_call,
-                                        "id",
-                                        f"toolu_{uuid.uuid4().hex[:24]}",
-                                    )
+                                    current_tool_id = generate_unique_tool_id()
 
                                 # Create tool use block
                                 tool_block = {
@@ -2028,9 +2035,10 @@ async def convert_openai_streaming_response_to_anthropic(
                                 )
 
                                 # Create tool use content block
+                                unique_tool_id = generate_unique_tool_id()
                                 tool_block = {
                                     "type": "tool_use",
-                                    "id": tool_call["id"],
+                                    "id": unique_tool_id,
                                     "name": tool_call["function"]["name"],
                                     "input": json.loads(
                                         tool_call["function"]["arguments"]
@@ -2042,12 +2050,12 @@ async def convert_openai_streaming_response_to_anthropic(
                                 yield _send_content_block_start_event(
                                     content_block_index,
                                     "tool_use",
-                                    id=tool_call["id"],
+                                    id=unique_tool_id,
                                     name=tool_call["function"]["name"],
                                 )
                                 yield _send_tool_use_delta_events(
                                     content_block_index,
-                                    tool_call["id"],
+                                    unique_tool_id,
                                     tool_call["function"]["name"],
                                     tool_call["function"]["arguments"],
                                 )
@@ -2155,9 +2163,10 @@ async def convert_openai_streaming_response_to_anthropic(
                                 )
 
                                 # Create tool use content block
+                                unique_tool_id = generate_unique_tool_id()
                                 tool_block = {
                                     "type": "tool_use",
-                                    "id": tool_call["id"],
+                                    "id": unique_tool_id,
                                     "name": tool_call["function"]["name"],
                                     "input": json.loads(
                                         tool_call["function"]["arguments"]
@@ -2169,12 +2178,12 @@ async def convert_openai_streaming_response_to_anthropic(
                                 yield _send_content_block_start_event(
                                     content_block_index,
                                     "tool_use",
-                                    id=tool_call["id"],
+                                    id=unique_tool_id,
                                     name=tool_call["function"]["name"],
                                 )
                                 yield _send_tool_use_delta_events(
                                     content_block_index,
-                                    tool_call["id"],
+                                    unique_tool_id,
                                     tool_call["function"]["name"],
                                     tool_call["function"]["arguments"],
                                 )
@@ -2284,9 +2293,10 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Create tool use content block
+                    unique_tool_id = generate_unique_tool_id()
                     tool_block = {
                         "type": "tool_use",
-                        "id": tool_call["id"],
+                        "id": unique_tool_id,
                         "name": tool_call["function"]["name"],
                         "input": json.loads(tool_call["function"]["arguments"]),
                     }
@@ -2296,12 +2306,12 @@ async def convert_openai_streaming_response_to_anthropic(
                     yield _send_content_block_start_event(
                         content_block_index,
                         "tool_use",
-                        id=tool_call["id"],
+                        id=unique_tool_id,
                         name=tool_call["function"]["name"],
                     )
                     yield _send_tool_use_delta_events(
                         content_block_index,
-                        tool_call["id"],
+                        unique_tool_id,
                         tool_call["function"]["name"],
                         tool_call["function"]["arguments"],
                     )
@@ -2383,9 +2393,10 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Create tool use content block
+                    unique_tool_id = generate_unique_tool_id()
                     tool_block = {
                         "type": "tool_use",
-                        "id": tool_call["id"],
+                        "id": unique_tool_id,
                         "name": tool_call["function"]["name"],
                         "input": json.loads(tool_call["function"]["arguments"]),
                     }
