@@ -66,69 +66,80 @@ ANTHROPIC_BASE_URL=http://localhost:8082 claude
 
 ### Testing
 
-The project includes a comprehensive test suite with multiple testing modes:
+The project includes two comprehensive test suites with different approaches:
+
+
+
+#### unittest Framework (`tests_unittest.py`) ⭐
+
+A modern unittest-based test suite with comprehensive coverage:
 
 ```bash
-make test                    # Run all tests
-uv run tests.py             # Direct execution
+make test-unittest          # Run unittest suite (recommended)
+python tests_unittest.py   # Direct execution
 ```
 
-#### Test Script Features (`tests.py`)
+**Features:**
+- 🧪 **13 Test Classes** with 33+ async test methods
+- 🔄 **Anthropic API Comparison**: Proxy vs Official API ground truth validation
+- 🎯 **Custom Model Testing**: Gemini, DeepSeek, and other provider conversions
+- 🛠️ **Tool Use Validation**: 13 different tools (calculator, edit, todo, bash, etc.)
+- 📊 **Behavioral Difference Analysis**: Warns instead of failing for expected differences
+- 🌊 **Advanced Streaming Tests**: Event validation and content aggregation
+- 🧠 **Thinking Features**: Supports reasoning mode testing
 
-**Test Categories:**
-- **Simple Tests**: Basic request/response validation
-- **Tool Tests**: Function calling and tool use scenarios
-- **Thinking Tests**: Reasoning mode with `<thinking>` blocks
-- **Streaming Tests**: Real-time response processing
-- **Multi-turn Tests**: Conversation continuity
+**Test Classes:**
+- `TestBasicRequests` - Basic request functionality
+- `TestToolRequests` - Tool usage scenarios
+- `TestClaudeCodeTools` - Claude Code specific tools
+- `TestConversationFlow` - Multi-turn conversations
+- `TestStreamingSpecific` - Streaming response handling
+- `TestThinkingFeatures` - Reasoning mode tests
+- `TestErrorHandling` - Error scenarios validation
+- `TestAnthropicComparison` ⭐ - Proxy vs Official API comparison
+- `TestCustomModels` ⭐ - Custom model conversions (Gemini, DeepSeek)
+- `TestBehavioralDifferences` ⭐ - Expected behavior difference handling
+- `TestClaudeCodeWorkflows` ⭐ - Claude Code tool workflows
+- `TestStreamingAdvanced` ⭐ - Advanced streaming scenarios
+- `TestComplexScenarios` ⭐ - Complex multi-step workflows
 
 **Usage Examples:**
 ```bash
-# Run specific test categories
-python tests.py --simple                     # Basic tests only
-python tests.py --tools-only                 # Tool use tests
-python tests.py --thinking-only              # Thinking mode tests
-python tests.py --streaming-only             # Streaming tests only
-python tests.py --no-streaming               # Skip streaming tests
+# Run all unittest tests
+python tests_unittest.py
+python -m unittest tests_unittest -v
 
-# Run specific tests
-python tests.py --test calculator            # Single test
-python tests.py --test calculator --streaming-only  # Streaming version
-python tests.py --list-tests                 # Show all available tests
+# Run specific test classes
+python -m unittest tests_unittest.TestCustomModels -v
+python -m unittest tests_unittest.TestAnthropicComparison -v
 
-# Custom model testing
-python tests.py --model deepseek-v3-250324   # Test custom model
-python tests.py --model deepseek-v3-250324 --compare  # Compare with official
-python tests.py --test calculator --model deepseek-v3-250324 --compare
+# Run specific test methods
+python -m unittest tests_unittest.TestCustomModels.test_gemini_tool_conversion -v
+python -m unittest tests_unittest.TestToolRequests.test_calculator_tool -v
+
+# Run tests by pattern
+python -m unittest tests_unittest.*Custom* -v
 ```
 
-#### Available Test Cases
+#### Ground Truth Validation ⭐
 
-**Simple Tests:**
-- `hello`: Basic greeting response
-- `simple`: Text-only conversation
-- `multi_turn`: Conversation continuity
-
-**Tool Tests:**
-- `calculator`: Mathematical calculations
-- `weather`: Weather API simulation
-- `bash`: Shell command execution
-- `websearch`: Web search simulation
-- `parallel_tools`: Multiple tools in one request
-
-**Thinking Tests:**
-- `reasoning`: Complex problem solving
-- `analysis`: Text analysis with reasoning
-- `math_problem`: Mathematical reasoning
+The unittest framework includes unique **Anthropic API comparison testing**:
+- **Proxy Response vs Official Response**: Validates data conversion accuracy
+- **Tool Use Verification**: Ensures tool calling works correctly across providers
+- **Behavioral Difference Handling**: Distinguishes between bugs and expected differences
+- **Custom Model Validation**: Tests specific provider conversions (Gemini schema cleaning, etc.)
 
 #### Test Output Features
 
+Both test suites provide:
 - **Colored output** for better readability
 - **Token counting** and cost estimation
 - **Response time tracking**
 - **Error handling validation**
 - **Streaming chunk validation**
 - **Tool execution verification**
+- **Ground truth comparison** (unittest only)
+- **Behavioral difference analysis** (unittest only)
 
 ### Linting
 ```bash
@@ -146,9 +157,9 @@ make format
 claude-code-proxy/
 ├── server.py                 # Main FastAPI proxy server
 ├── models.py                 # Pydantic models and format conversion
-├── tests.py                  # Comprehensive test suite
+├── tests_unittest.py         # Modern unittest framework with API comparison ⭐
 ├── test_conversions.py       # Format conversion unit tests
-├── models.yaml.example # Example custom model config
+├── models.yaml.example       # Example custom model config
 ├── Makefile                  # Development commands
 ├── pyproject.toml           # Python project configuration
 ├── uv.lock                  # Dependency lock file
@@ -173,13 +184,15 @@ claude-code-proxy/
 - Content block processing (text, images, tool use, thinking)
 - Input validation and sanitization
 
-#### **tests.py**
-- Comprehensive test suite with 15+ test scenarios
-- Support for streaming/non-streaming modes
-- Custom model testing capabilities
-- Tool use validation and parallel execution tests
-- Thinking mode and reasoning tests
-- Multi-turn conversation testing
+#### **tests_unittest.py** ⭐ (Recommended)
+- Modern unittest framework with `IsolatedAsyncioTestCase`
+- 13 test classes with 33+ async test methods
+- **Ground truth validation** against official Anthropic API
+- **Behavioral difference analysis** for expected variations
+- **Custom model conversion testing** (Gemini, DeepSeek, etc.)
+- **Tool use validation** with 13 different tools
+- **Advanced streaming tests** with event validation
+- **Claude Code workflow testing** for development scenarios
 
 #### **models.yaml**
 - YAML configuration for custom OpenAI-compatible models
@@ -218,10 +231,10 @@ Add custom OpenAI-compatible models in `models.yaml`:
 
 3. **Development Cycle**:
    ```bash
-   make run        # Start development server
-   make test       # Run test suite
-   make lint       # Check code quality
-   make format     # Format code
+   make run            # Start development server
+   make test           # Run test suite
+   make lint           # Check code quality
+   make format         # Format code
    ```
 
 ### Adding New Models
@@ -242,17 +255,27 @@ Add custom OpenAI-compatible models in `models.yaml`:
 
 3. **Test the model**:
    ```bash
-   python tests.py --model my-new-model --test simple
-   # Test direct conversion without routing
-   python tests.py --model my-new-model --test simple --direct
+   # Modern unittest suite (recommended)
+   python -m unittest tests_unittest.TestCustomModels.test_gemini_tool_conversion -v
    ```
 
 ### Testing Workflow
 
-- **Development**: Use `--test <name>` for quick single test runs
-- **Pre-commit**: Run `make test` to validate all functionality
-- **Model validation**: Use `--compare` flag to test against official models
-- **Performance**: Monitor token counts and response times in test output
+#### Development Testing
+- **Quick validation**: `python -m unittest tests_unittest.TestBasicRequests -v`
+- **Model-specific testing**: `python -m unittest tests_unittest.TestCustomModels -v`
+- **API comparison**: `python -m unittest tests_unittest.TestAnthropicComparison -v`
+
+#### Pre-commit Testing
+- **Full validation**: `make test-unittest` (recommended)
+- **Legacy compatibility**: `make test`
+- **Code quality**: `make lint && make format`
+
+#### Model Validation
+- **Ground truth comparison**: unittest framework automatically compares with Anthropic API
+- **Behavioral analysis**: unittest distinguishes between bugs and expected differences
+- **Custom model testing**: Dedicated test classes for specific providers
+- **Performance monitoring**: Token counts and response times in test output
 
 ### Debugging
 Set `LOG_LEVEL=DEBUG` in `.env` for detailed logs.
@@ -385,6 +408,41 @@ Follows SOLID principles:
 - Secure API key handling
 - Error handling without exposing sensitive data
 
+## Testing Frameworks Summary
+
+### unittest Framework vs Legacy Tests
+
+| Feature | `tests_unittest.py` ⭐ | `tests.py` (Legacy) |
+|---------|----------------------|-------------------|
+| **Framework** | `unittest.IsolatedAsyncioTestCase` | Functional testing |
+| **Test Count** | 33+ async test methods | 39 test scenarios |
+| **Organization** | 13 organized test classes | Single file approach |
+| **API Comparison** | ✅ Proxy vs Anthropic ground truth | ❌ Proxy only |
+| **Behavioral Analysis** | ✅ Distinguishes bugs vs differences | ❌ Basic pass/fail |
+| **Custom Models** | ✅ Dedicated test classes | ✅ Command-line options |
+| **Development** | ✅ Targeted test running | ✅ Rich CLI interface |
+| **Async Support** | ✅ Native async/await | ✅ Custom event loop |
+| **Maintenance** | ✅ Standard unittest patterns | ⚠️ Custom framework |
+
+**Recommendation**: Use `tests_unittest.py` for development and CI/CD. The legacy tests remain for compatibility and specific CLI testing workflows.
+
+### Quick Testing Commands
+
+```bash
+# Development workflow
+make test-basic          # Quick validation (3 tests)
+make test-tools          # Tool functionality (6 tests)
+make test-custom         # Custom models (3 tests)
+make test-comparison     # API comparison (2 tests)
+
+# Specific tests
+make test-gemini         # Gemini conversion test
+make test-calculator     # Calculator tool test
+
+# Full suites
+make test               # Modern unittest (recommended)
+```
+
 ## Credit & Acknowledgment
 
 This project is forked from and based on [claude-code-proxy](https://github.com/1rgs/claude-code-proxy) by [@1rgs](https://github.com/1rgs). The original project provided the foundation for proxying Anthropic API requests to other model providers.
@@ -393,12 +451,13 @@ The intelligent routing feature that distributes requests to different models ba
 
 ### Key Enhancements in This Fork
 - **Removed LiteLLM dependency**: Replaced with native OpenAI SDK for better control and simplified architecture
-- Enhanced intelligent routing with background/think/long-context modes
-- Improved DeepSeek and Gemini integration
-- Extended custom model support via YAML configuration
-- Better error handling and logging
-- Additional API endpoints for token counting and statistics
-- Comprehensive testing and development tooling
-- Streamlined request processing using OpenAI SDK for all third-party model communications
+- **Enhanced testing framework**: Added modern unittest suite with ground truth API comparison
+- **Improved model support**: Enhanced DeepSeek and Gemini integration with dedicated test validation
+- **Intelligent routing**: background/think/long-context modes with comprehensive testing
+- **Extended custom model support**: YAML configuration with validation testing
+- **Better error handling**: Centralized error extraction with behavioral difference analysis
+- **Additional API endpoints**: Token counting, statistics, and test conversion endpoints
+- **Comprehensive development tooling**: Multiple test frameworks and development commands
+- **Streamlined architecture**: OpenAI SDK for all third-party model communications
 
 Special thanks to the original author for creating the initial proxy architecture that made this enhanced version possible.

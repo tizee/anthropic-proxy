@@ -32,6 +32,7 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
 )
 
+
 class ModelDefaults:
     """Default values and limits for model configurations"""
 
@@ -65,6 +66,7 @@ except Exception as e:
     enc = None
 
 # Constants for better maintainability
+
 
 class Constants:
     ROLE_USER = "user"
@@ -106,12 +108,63 @@ def generate_thinking_signature(thinking_content: str) -> str:
     signature = hash_object.hexdigest()[: ModelDefaults.THINKING_SIGNATURE_LENGTH]
     return f"thinking_{signature}"
 
+
+def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list]:
+    """Parse function calls from thinking content with custom markers.
+
+    Returns:
+        tuple: (cleaned_thinking_content, list_of_tool_calls)
+    """
+    import re
+    import json
+
+    # Pattern to match function call blocks
+    pattern = r"<\|FunctionCallBegin\|>\[(.*?)\]<\|FunctionCallEnd\|>"
+
+    tool_calls = []
+    cleaned_content = thinking_content
+
+    matches = re.findall(pattern, thinking_content, re.DOTALL)
+
+    for match in matches:
+        try:
+            # Parse the JSON array of function calls
+            function_call_data = json.loads(f"[{match}]")
+
+            for call_data in function_call_data:
+                if (
+                    isinstance(call_data, dict)
+                    and "name" in call_data
+                    and "parameters" in call_data
+                ):
+                    # Create a tool call in OpenAI format
+                    tool_call = {
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": call_data["name"],
+                            "arguments": json.dumps(call_data["parameters"]),
+                        },
+                    }
+                    tool_calls.append(tool_call)
+
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"Failed to parse function call from thinking content: {e}")
+            continue
+
+    # Remove the function call markers from thinking content
+    cleaned_content = re.sub(pattern, "", thinking_content, flags=re.DOTALL).strip()
+
+    return cleaned_content, tool_calls
+
+
 class ClaudeToolChoiceAuto(BaseModel):
     type: Literal["auto"] = "auto"
     disable_parallel_tool_use: Optional[bool] = None
 
     def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
         return "auto"
+
 
 class ClaudeToolChoiceAny(BaseModel):
     type: Literal["any"] = "any"
@@ -127,10 +180,7 @@ class ClaudeToolChoiceTool(BaseModel):
     disable_parallel_tool_use: Optional[bool] = None
 
     def to_openai(self) -> ChatCompletionNamedToolChoiceParam:
-        return {
-            "type": "function",
-            "function": {"name": self.name}
-        }
+        return {"type": "function", "function": {"name": self.name}}
 
 
 class ClaudeToolChoiceNone(BaseModel):
@@ -141,8 +191,12 @@ class ClaudeToolChoiceNone(BaseModel):
 
 
 # Union type for all tool choice options
-ClaudeToolChoice = Union[ClaudeToolChoiceAuto, ClaudeToolChoiceAny,
-                         ClaudeToolChoiceTool, ClaudeToolChoiceNone]
+ClaudeToolChoice = Union[
+    ClaudeToolChoiceAuto,
+    ClaudeToolChoiceAny,
+    ClaudeToolChoiceTool,
+    ClaudeToolChoiceNone,
+]
 
 
 class ClaudeContentBlockText(BaseModel):
@@ -159,14 +213,19 @@ class ClaudeContentBlockImageBase64Source(BaseModel):
     media_type: Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
     data: str
 
+
 class ClaudeContentBlockImageURLSource(BaseModel):
     type: Literal["url"]
     url: str
 
+
 class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
-    source: Union[ClaudeContentBlockImageBase64Source,
-                  ClaudeContentBlockImageURLSource, Dict[str, Any]]
+    source: Union[
+        ClaudeContentBlockImageBase64Source,
+        ClaudeContentBlockImageURLSource,
+        Dict[str, Any],
+    ]
 
     # only user message contains image content
     #
@@ -192,20 +251,17 @@ class ClaudeContentBlockImage(BaseModel):
             }
         }
         """
-        if isinstance(self.source, ClaudeContentBlockImageBase64Source) :
+        if isinstance(self.source, ClaudeContentBlockImageBase64Source):
             return {
                 "type": "image_url",
                 "image_url": {
-                    "url":
-                    f"data:{self.source.media_type};base64,{self.source.data}"
+                    "url": f"data:{self.source.media_type};base64,{self.source.data}"
                 },
             }
         elif isinstance(self.source, ClaudeContentBlockImageURLSource):
             return {
                 "type": "image_url",
-                "image_url": {
-                    "url": f"{self.source.url}"
-                },
+                "image_url": {"url": f"{self.source.url}"},
             }
 
         return None
@@ -243,25 +299,27 @@ class ClaudeContentBlockToolUse(BaseModel):
         import json
 
         try:
-            arguments_str = json.dumps(self.input, ensure_ascii=False, separators=(',', ':'))
+            arguments_str = json.dumps(
+                self.input, ensure_ascii=False, separators=(",", ":")
+            )
         except (TypeError, ValueError):
             arguments_str = "{}"
 
         return {
             "id": self.id,
             "type": "function",
-            "function": {
-                "name": self.name,
-                "arguments": arguments_str
-            }
+            "function": {"name": self.name, "arguments": arguments_str},
         }
+
 
 class ClaudeContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: Union[str, List[Dict[str, Any]]]
 
-    def process_content(self) -> Union[str, Iterable[ChatCompletionContentPartTextParam]]:
+    def process_content(
+        self,
+    ) -> Union[str, Iterable[ChatCompletionContentPartTextParam]]:
         """
         Process Claude tool_result content into a string format.
 
@@ -305,8 +363,9 @@ class ClaudeContentBlockToolResult(BaseModel):
         return {
             "role": "tool",
             "tool_call_id": self.tool_use_id,
-            "content": self.process_content()
+            "content": self.process_content(),
         }
+
 
 class ClaudeContentBlockThinking(BaseModel):
     type: Literal["thinking"]
@@ -315,11 +374,13 @@ class ClaudeContentBlockThinking(BaseModel):
 
     def to_openai(self) -> ChatCompletionContentPartTextParam:
         """Thinking blocks should be transformed to assistant text message"""
-        return { "type": "text", "text": self.thinking }
+        return {"type": "text", "text": self.thinking}
+
 
 class ClaudeSystemContent(BaseModel):
     type: Literal["text"]
     text: str
+
 
 class ClaudeMessage(BaseModel):
     role: Literal["user", "assistant"]
@@ -331,7 +392,7 @@ class ClaudeMessage(BaseModel):
                 ClaudeContentBlockImage,
                 ClaudeContentBlockToolUse,
                 ClaudeContentBlockToolResult,
-                ClaudeContentBlockThinking
+                ClaudeContentBlockThinking,
             ]
         ],
     ]
@@ -345,7 +406,7 @@ class ClaudeMessage(BaseModel):
         if content.startswith("[Request interrupted by user for tool use]"):
             # Split the interrupted message
             interrupted_prefix = "[Request interrupted by user for tool use]"
-            remaining_content = content[len(interrupted_prefix):].strip()
+            remaining_content = content[len(interrupted_prefix) :].strip()
             return remaining_content if remaining_content else content
 
         return content
@@ -369,7 +430,11 @@ class ClaudeMessage(BaseModel):
             return openai_messages
 
         # Process content blocks in order, maintaining structure
-        content_parts: List[Union[ChatCompletionContentPartTextParam, ChatCompletionContentPartImageParam]] = []
+        content_parts: List[
+            Union[
+                ChatCompletionContentPartTextParam, ChatCompletionContentPartImageParam
+            ]
+        ] = []
         tool_calls: List[ChatCompletionMessageToolCallParam] = []
 
         # Claude user message content blocks -> OpenAI user message content
@@ -380,7 +445,9 @@ class ClaudeMessage(BaseModel):
         # correct order: assistant message with tool_calls should always
         # be before than assistant message with tool result.
         for block in self.content:
-            if not isinstance(block, ClaudeContentBlockToolResult) and not isinstance(block, ClaudeContentBlockToolUse):
+            if not isinstance(block, ClaudeContentBlockToolResult) and not isinstance(
+                block, ClaudeContentBlockToolUse
+            ):
                 openai_part = block.to_openai()
                 if openai_part:
                     content_parts.append(openai_part)
@@ -389,7 +456,7 @@ class ClaudeMessage(BaseModel):
             elif isinstance(block, ClaudeContentBlockToolResult):
                 # CRITICAL: Split message when tool_result is encountered
                 if content_parts:
-                    current_message: Dict[str, Any] = { "role": self.role }
+                    current_message: Dict[str, Any] = {"role": self.role}
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                         current_message["content"] = content_parts[0]["text"]
                         # openai_messages.append(
@@ -414,7 +481,7 @@ class ClaudeMessage(BaseModel):
 
         # Process any remaining content
         if content_parts:
-            current_message: Dict[str, Any] = { "role": self.role }
+            current_message: Dict[str, Any] = {"role": self.role}
             if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                 current_message["content"] = content_parts[0]["text"]
                 # openai_messages.append(
@@ -437,6 +504,7 @@ class ClaudeTool(BaseModel):
     description: Optional[str] = None
     input_schema: Dict[str, Any]
 
+
 class ClaudeThinkingConfigEnabled(BaseModel):
     type: Literal["enabled"] = "enabled"
     budget_tokens: Optional[int] = None
@@ -444,6 +512,7 @@ class ClaudeThinkingConfigEnabled(BaseModel):
 
 class ClaudeThinkingConfigDisabled(BaseModel):
     type: Literal["disabled"] = "disabled"
+
 
 class ClaudeMessagesRequest(BaseModel):
     model: str
@@ -458,7 +527,9 @@ class ClaudeMessagesRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     tools: Optional[List[ClaudeTool]] = None
     tool_choice: Optional[ClaudeToolChoice] = None
-    thinking: Optional[Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled]] = None
+    thinking: Optional[
+        Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled]
+    ] = None
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
@@ -498,7 +569,9 @@ class ClaudeMessagesRequest(BaseModel):
     def to_openai_request(self) -> Dict[str, Any]:
         """Convert Anthropic API request to OpenAI API format using OpenAI SDK types for validation."""
 
-        logger.debug(f"🔄 Converting Claude request to OpenAI format for model: {self.model}")
+        logger.debug(
+            f"🔄 Converting Claude request to OpenAI format for model: {self.model}"
+        )
         logger.debug(f"🔄 Input messages count: {len(self.messages)}")
 
         # Log message types for debugging
@@ -516,7 +589,7 @@ class ClaudeMessagesRequest(BaseModel):
             )
 
         # Build OpenAI messages with type validation
-        openai_messages :List[ChatCompletionMessageParam] = []
+        openai_messages: List[ChatCompletionMessageParam] = []
 
         # --- Claude Messages -> OpenAI messages ---
         # Convert system message if present
@@ -542,7 +615,7 @@ class ClaudeMessagesRequest(BaseModel):
                 user_messages = msg.to_openai_messages()
                 openai_messages.extend(user_messages)
             elif msg.role == Constants.ROLE_ASSISTANT:
-                assistant_messages  = msg.to_openai_messages()
+                assistant_messages = msg.to_openai_messages()
                 openai_messages.extend(assistant_messages)
 
         # Claude request tools -> OpenAI request tools
@@ -611,13 +684,14 @@ class ClaudeMessagesRequest(BaseModel):
         return 0
 
 
-
 class ClaudeTokenCountRequest(BaseModel):
     model: str
     messages: List[ClaudeMessage]
     system: Optional[Union[str, List[ClaudeSystemContent]]] = None
     tools: Optional[List[ClaudeTool]] = None
-    thinking: Optional[Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled, dict]] = None
+    thinking: Optional[
+        Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled, dict]
+    ] = None
     tool_choice: Optional[Dict[str, Any]] = None
 
     @field_validator("thinking")
@@ -741,8 +815,13 @@ class GlobalUsageStats(BaseModel):
                 self.total_cache_miss_tokens += usage.prompt_cache_miss_tokens
 
             # Reasoning tokens
-            if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
-                self.total_reasoning_tokens += usage.completion_tokens_details.reasoning_tokens
+            if (
+                usage.completion_tokens_details
+                and usage.completion_tokens_details.reasoning_tokens
+            ):
+                self.total_reasoning_tokens += (
+                    usage.completion_tokens_details.reasoning_tokens
+                )
 
             # Model usage tracking
             if model not in self.model_usage_count:
@@ -790,37 +869,45 @@ global_usage_stats = GlobalUsageStats()
 
 def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
     """Extract usage data from OpenAI API response and convert to ClaudeUsage format."""
-    usage = openai_response.usage if hasattr(openai_response, 'usage') and openai_response.usage else None
+    usage = (
+        openai_response.usage
+        if hasattr(openai_response, "usage") and openai_response.usage
+        else None
+    )
 
     if not usage:
         return ClaudeUsage(input_tokens=0, output_tokens=0)
 
     # Core fields mapping
-    input_tokens = getattr(usage, 'prompt_tokens', 0)
-    output_tokens = getattr(usage, 'completion_tokens', 0)
-    total_tokens = getattr(usage, 'total_tokens', input_tokens + output_tokens)
+    input_tokens = getattr(usage, "prompt_tokens", 0)
+    output_tokens = getattr(usage, "completion_tokens", 0)
+    total_tokens = getattr(usage, "total_tokens", input_tokens + output_tokens)
 
     # Extract completion_tokens_details if present
     completion_details = None
-    if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
+    if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
         details = usage.completion_tokens_details
         completion_details = CompletionTokensDetails(
-            reasoning_tokens=getattr(details, 'reasoning_tokens', None),
-            accepted_prediction_tokens=getattr(details, 'accepted_prediction_tokens', None),
-            rejected_prediction_tokens=getattr(details, 'rejected_prediction_tokens', None)
+            reasoning_tokens=getattr(details, "reasoning_tokens", None),
+            accepted_prediction_tokens=getattr(
+                details, "accepted_prediction_tokens", None
+            ),
+            rejected_prediction_tokens=getattr(
+                details, "rejected_prediction_tokens", None
+            ),
         )
 
     # Extract prompt_tokens_details if present
     prompt_details = None
-    if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
         details = usage.prompt_tokens_details
         prompt_details = PromptTokensDetails(
-            cached_tokens=getattr(details, 'cached_tokens', None)
+            cached_tokens=getattr(details, "cached_tokens", None)
         )
 
     # Handle Deepseek-specific fields
-    prompt_cache_hit_tokens = getattr(usage, 'prompt_cache_hit_tokens', None)
-    prompt_cache_miss_tokens = getattr(usage, 'prompt_cache_miss_tokens', None)
+    prompt_cache_hit_tokens = getattr(usage, "prompt_cache_hit_tokens", None)
+    prompt_cache_miss_tokens = getattr(usage, "prompt_cache_miss_tokens", None)
 
     return ClaudeUsage(
         input_tokens=input_tokens,
@@ -831,39 +918,43 @@ def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
         prompt_cache_hit_tokens=prompt_cache_hit_tokens,
         prompt_cache_miss_tokens=prompt_cache_miss_tokens,
         completion_tokens_details=completion_details,
-        prompt_tokens_details=prompt_details
+        prompt_tokens_details=prompt_details,
     )
 
 
-def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> ClaudeUsage:
+def extract_usage_from_claude_response(
+    claude_usage_dict: Dict[str, Any],
+) -> ClaudeUsage:
     """Extract usage data from Claude API response format and convert to enhanced ClaudeUsage."""
     if not claude_usage_dict:
         return ClaudeUsage(input_tokens=0, output_tokens=0)
 
     # Core fields
-    input_tokens = claude_usage_dict.get('input_tokens', 0)
-    output_tokens = claude_usage_dict.get('output_tokens', 0)
-    cache_creation_input_tokens = claude_usage_dict.get('cache_creation_input_tokens', 0)
-    cache_read_input_tokens = claude_usage_dict.get('cache_read_input_tokens', 0)
+    input_tokens = claude_usage_dict.get("input_tokens", 0)
+    output_tokens = claude_usage_dict.get("output_tokens", 0)
+    cache_creation_input_tokens = claude_usage_dict.get(
+        "cache_creation_input_tokens", 0
+    )
+    cache_read_input_tokens = claude_usage_dict.get("cache_read_input_tokens", 0)
 
     # Handle cache_creation object
     cache_creation = None
-    if 'cache_creation' in claude_usage_dict and claude_usage_dict['cache_creation']:
-        cache_data = claude_usage_dict['cache_creation']
+    if "cache_creation" in claude_usage_dict and claude_usage_dict["cache_creation"]:
+        cache_data = claude_usage_dict["cache_creation"]
         cache_creation = CacheCreation(
-            ephemeral_1h_input_tokens=cache_data.get('ephemeral_1h_input_tokens', 0),
-            ephemeral_5m_input_tokens=cache_data.get('ephemeral_5m_input_tokens', 0)
+            ephemeral_1h_input_tokens=cache_data.get("ephemeral_1h_input_tokens", 0),
+            ephemeral_5m_input_tokens=cache_data.get("ephemeral_5m_input_tokens", 0),
         )
 
     # Handle server_tool_use object
     server_tool_use = None
-    if 'server_tool_use' in claude_usage_dict and claude_usage_dict['server_tool_use']:
-        tool_data = claude_usage_dict['server_tool_use']
+    if "server_tool_use" in claude_usage_dict and claude_usage_dict["server_tool_use"]:
+        tool_data = claude_usage_dict["server_tool_use"]
         server_tool_use = ServerToolUse(
-            web_search_requests=tool_data.get('web_search_requests', 0)
+            web_search_requests=tool_data.get("web_search_requests", 0)
         )
 
-    service_tier = claude_usage_dict.get('service_tier')
+    service_tier = claude_usage_dict.get("service_tier")
 
     return ClaudeUsage(
         input_tokens=input_tokens,
@@ -875,7 +966,7 @@ def extract_usage_from_claude_response(claude_usage_dict: Dict[str, Any]) -> Cla
         total_tokens=input_tokens + output_tokens,
         cache_creation=cache_creation,
         server_tool_use=server_tool_use,
-        service_tier=service_tier
+        service_tier=service_tier,
     )
 
 
@@ -887,7 +978,9 @@ def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = "")
     global_usage_stats.update_usage(usage, model)
 
     # Log current usage
-    logger.info(f"📊 USAGE UPDATE [{context}]: Model={model}, Input={usage.input_tokens}t, Output={usage.output_tokens}t")
+    logger.info(
+        f"📊 USAGE UPDATE [{context}]: Model={model}, Input={usage.input_tokens}t, Output={usage.output_tokens}t"
+    )
 
     # Log cache-related tokens if present
     cache_info = []
@@ -904,20 +997,33 @@ def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = "")
         logger.info(f"💾 CACHE USAGE: {', '.join(cache_info)}")
 
     # Log reasoning tokens if present
-    if usage.completion_tokens_details and usage.completion_tokens_details.reasoning_tokens:
-        logger.info(f"🧠 REASONING TOKENS: {usage.completion_tokens_details.reasoning_tokens}t")
+    if (
+        usage.completion_tokens_details
+        and usage.completion_tokens_details.reasoning_tokens
+    ):
+        logger.info(
+            f"🧠 REASONING TOKENS: {usage.completion_tokens_details.reasoning_tokens}t"
+        )
 
     # Log session totals
     summary = global_usage_stats.get_session_summary()
-    logger.info(f"📈 SESSION TOTALS: Requests={summary['total_requests']}, Input={summary['total_input_tokens']}t, Output={summary['total_output_tokens']}t, Total={summary['total_tokens']}t")
+    logger.info(
+        f"📈 SESSION TOTALS: Requests={summary['total_requests']}, Input={summary['total_input_tokens']}t, Output={summary['total_output_tokens']}t, Total={summary['total_tokens']}t"
+    )
 
     # Log reasoning and cache totals if significant
-    if summary['total_reasoning_tokens'] > 0:
+    if summary["total_reasoning_tokens"] > 0:
         logger.info(f"🧠 SESSION REASONING: {summary['total_reasoning_tokens']}t")
 
-    total_cache = summary['total_cache_hit_tokens'] + summary['total_cache_miss_tokens'] + summary['total_cache_read_tokens']
+    total_cache = (
+        summary["total_cache_hit_tokens"]
+        + summary["total_cache_miss_tokens"]
+        + summary["total_cache_read_tokens"]
+    )
     if total_cache > 0:
-        logger.info(f"💾 SESSION CACHE: Hit={summary['total_cache_hit_tokens']}t, Miss={summary['total_cache_miss_tokens']}t, Read={summary['total_cache_read_tokens']}t")
+        logger.info(
+            f"💾 SESSION CACHE: Hit={summary['total_cache_hit_tokens']}t, Miss={summary['total_cache_miss_tokens']}t, Read={summary['total_cache_read_tokens']}t"
+        )
 
 
 # see https://docs.anthropic.com/en/api/messages#response-id
@@ -926,17 +1032,31 @@ class ClaudeMessagesResponse(BaseModel):
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
     model: str
-    content: List[Union[ClaudeContentBlockText, ClaudeContentBlockToolUse, ClaudeContentBlockThinking]]
+    content: List[
+        Union[
+            ClaudeContentBlockText,
+            ClaudeContentBlockToolUse,
+            ClaudeContentBlockThinking,
+        ]
+    ]
     stop_reason: Optional[
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use",
-                "pause_turn", "refusal", "error"]
+        Literal[
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "tool_use",
+            "pause_turn",
+            "refusal",
+            "error",
+        ]
     ] = None
     stop_sequence: Optional[str] = None
     usage: ClaudeUsage
 
+
 # openai response -> claude response
 def convert_openai_response_to_anthropic(
-        openai_response: ChatCompletion, original_request: ClaudeMessagesRequest
+    openai_response: ChatCompletion, original_request: ClaudeMessagesRequest
 ) -> ClaudeMessagesResponse:
     """Convert OpenAI response back to Anthropic API format using OpenAI SDK type validation."""
     try:
@@ -958,7 +1078,7 @@ def convert_openai_response_to_anthropic(
         raw_message = message.model_dump()
 
         # Extract reasoning_content for thinking models (OpenAI format)
-        if 'reasoning_content' in raw_message:
+        if "reasoning_content" in raw_message:
             thinking_content = raw_message["reasoning_content"]
             logger.debug(
                 f"Extracted reasoning_content: {len(thinking_content)} characters"
@@ -1095,6 +1215,7 @@ def convert_openai_response_to_anthropic(
             stop_reason=Constants.STOP_ERROR,
             usage=ClaudeUsage(input_tokens=0, output_tokens=0),
         )
+
 
 # Helper function to clean schema for Gemini
 def _remove_gemini_incompatible_uri_format(schema: dict) -> dict:
@@ -1397,6 +1518,7 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
+
 def _extract_tool_call_data(tool_call) -> tuple:
     """Extract tool call data from different formats."""
     if isinstance(tool_call, dict):
@@ -1463,6 +1585,7 @@ def _parse_tool_result_content(content):
     except:
         return "Unparseable content"
 
+
 def _send_message_start_event(message_id: str, model: str):
     """Send message_start event."""
     message_data = {
@@ -1484,7 +1607,9 @@ def _send_message_start_event(message_id: str, model: str):
         },
     }
     event_str = f"event: message_start\ndata: {json.dumps(message_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: message_start - message_id: {message_id}, model: {model}")
+    logger.debug(
+        f"STREAMING_EVENT: message_start - message_id: {message_id}, model: {model}"
+    )
     return event_str
 
 
@@ -1501,9 +1626,15 @@ def _send_content_block_start_event(index: int, block_type: str, **kwargs):
             content_block["name"] = ""
         if "input" not in content_block:
             content_block["input"] = {}
-    event_data = {'type': 'content_block_start', 'index': index, 'content_block': content_block}
+    event_data = {
+        "type": "content_block_start",
+        "index": index,
+        "content_block": content_block,
+    }
     event_str = f"event: content_block_start\ndata: {json.dumps(event_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: content_block_start - index: {index}, block_type: {block_type}, kwargs: {kwargs}")
+    logger.debug(
+        f"STREAMING_EVENT: content_block_start - index: {index}, block_type: {block_type}, kwargs: {kwargs}"
+    )
     return event_str
 
 
@@ -1519,18 +1650,32 @@ def _send_content_block_delta_event(index: int, delta_type: str, content: str):
         delta["thinking"] = content
     elif delta_type == "signature_delta":
         delta["signature"] = content
-    event_data = {'type': 'content_block_delta', 'index': index, 'delta': delta}
+    event_data = {"type": "content_block_delta", "index": index, "delta": delta}
     event_str = f"event: content_block_delta\ndata: {json.dumps(event_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: content_block_delta - index: {index}, delta_type: {delta_type}, content_len: {len(content)}")
+    logger.debug(
+        f"STREAMING_EVENT: content_block_delta - index: {index}, delta_type: {delta_type}, content_len: {len(content)}"
+    )
     return event_str
 
 
 def _send_content_block_stop_event(index: int):
     """Send content_block_stop event."""
-    event_data = {'type': 'content_block_stop', 'index': index}
+    event_data = {"type": "content_block_stop", "index": index}
     event_str = f"event: content_block_stop\ndata: {json.dumps(event_data)}\n\n"
     logger.debug(f"STREAMING_EVENT: content_block_stop - index: {index}")
     return event_str
+
+
+def _send_tool_use_delta_events(
+    index: int, tool_id: str, tool_name: str, arguments: str
+):
+    """Send tool use delta events for a complete tool call."""
+    # Send input JSON delta
+    logger.debug(
+        f"STREAMING_EVENT: tool_use deltas sent - index: {index}, tool: {tool_name}"
+    )
+    return _send_content_block_delta_event(index, "input_json_delta", arguments)
+
 
 def _process_image_content_block(block, image_parts: List[Dict]) -> None:
     """Process an image content block by adding it to image_parts."""
@@ -1548,6 +1693,7 @@ def _process_image_content_block(block, image_parts: List[Dict]) -> None:
                 },
             }
         )
+
 
 def _normalize_block(block):
     if isinstance(block, BaseModel):
@@ -1568,15 +1714,17 @@ def _send_message_delta_event(
         converted_blocks = [_normalize_block(b) for b in content_blocks]
         delta["content"] = converted_blocks
 
-    event_data = {'type': 'message_delta', 'delta': delta, 'usage': usage}
+    event_data = {"type": "message_delta", "delta": delta, "usage": usage}
     event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}, content_blocks_count: {len(content_blocks) if content_blocks else 0}")
+    logger.debug(
+        f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}, content_blocks_count: {len(content_blocks) if content_blocks else 0}"
+    )
     return event_str
 
 
 def _send_message_stop_event():
     """Send message_stop event."""
-    event_data = {'type': 'message_stop'}
+    event_data = {"type": "message_stop"}
     event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
     logger.debug(f"STREAMING_EVENT: message_stop")
     return event_str
@@ -1584,7 +1732,7 @@ def _send_message_stop_event():
 
 def _send_ping_event():
     """Send ping event."""
-    event_data = {'type': 'ping'}
+    event_data = {"type": "ping"}
     event_str = f"event: ping\ndata: {json.dumps(event_data)}\n\n"
     logger.debug(f"STREAMING_EVENT: ping")
     return event_str
@@ -1606,8 +1754,13 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
     else:
         return "end_turn"
 
+
 # openai SSE -> claude SSE
-async def convert_openai_streaming_response_to_anthropic(response_generator: AsyncStream[ChatCompletionChunk], original_request: ClaudeMessagesRequest, routed_model: str = None):
+async def convert_openai_streaming_response_to_anthropic(
+    response_generator: AsyncStream[ChatCompletionChunk],
+    original_request: ClaudeMessagesRequest,
+    routed_model: str = None,
+):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
     has_sent_stop_reason = False
     is_tool_use = False
@@ -1644,7 +1797,7 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
         # Process each chunk
         async for chunk in response_generator:
             try:
-               # Count OpenAI chunks received
+                # Count OpenAI chunks received
                 openai_chunks_received += 1
 
                 # Detailed chunk logging
@@ -1665,29 +1818,38 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                         chunk_data["delta_data"] = {
                             "content": getattr(delta, "content", None),
                             "role": getattr(delta, "role", None),
-                            "tool_calls": getattr(delta, "tool_calls", None) is not None,
+                            "tool_calls": getattr(delta, "tool_calls", None)
+                            is not None,
                         }
                         if chunk_data["delta_data"]["content"]:
-                            chunk_data["delta_data"]["content_length"] = len(chunk_data["delta_data"]["content"])
+                            chunk_data["delta_data"]["content_length"] = len(
+                                chunk_data["delta_data"]["content"]
+                            )
 
                 if chunk_data["has_usage"]:
                     chunk_data["usage"] = {
                         "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
-                        "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
+                        "completion_tokens": getattr(
+                            chunk.usage, "completion_tokens", None
+                        ),
                         "total_tokens": getattr(chunk.usage, "total_tokens", None),
                     }
 
-                logger.debug(f"STREAMING_CHUNK #{openai_chunks_received}: {json.dumps(chunk_data, default=str)}")
+                logger.debug(
+                    f"STREAMING_CHUNK #{openai_chunks_received}: {json.dumps(chunk_data, default=str)}"
+                )
 
                 # Raw chunk debugging - print original chunk data when DEBUG_RAW_CHUNKS is set
                 logger.debug(f"=== RAW CHUNK #{openai_chunks_received} ===")
                 logger.debug(f"Raw chunk type: {type(chunk)}")
-                logger.debug(f"Raw chunk dict: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}")
+                logger.debug(
+                    f"Raw chunk dict: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}"
+                )
                 logger.debug("=== END RAW CHUNK ===")
 
                 # Also print raw json representation if possible
                 try:
-                    if hasattr(chunk, 'model_dump'):
+                    if hasattr(chunk, "model_dump"):
                         raw_json = json.dumps(chunk.model_dump(), indent=2, default=str)
                         logger.debug(f"Raw chunk JSON:\n{raw_json}")
                 except Exception as e:
@@ -1697,11 +1859,19 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                 if chunk.usage is not None:
                     # Extract input tokens from usage if available (for cost calculation)
                     reported_input_tokens = getattr(chunk.usage, "prompt_tokens", 0)
-                    reported_output_tokens = getattr(chunk.usage, "completion_tokens", 0)
-                    logger.debug(f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}")
+                    reported_output_tokens = getattr(
+                        chunk.usage, "completion_tokens", 0
+                    )
+                    logger.debug(
+                        f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
+                    )
                     # Update session statistics for streaming (using calculated tokens)
-                    logger.debug(f"Session stats - Input: {input_tokens}, Output: {output_tokens}")
-                    logger.debug(f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}")
+                    logger.debug(
+                        f"Session stats - Input: {input_tokens}, Output: {output_tokens}"
+                    )
+                    logger.debug(
+                        f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}"
+                    )
 
                 # Handle content from choices
                 if len(chunk.choices) > 0:
@@ -1859,7 +2029,9 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
                     if delta_reasoning is not None and delta_reasoning != "":
                         accumulated_thinking += delta_reasoning
-                        logger.debug(f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(accumulated_thinking)} chars")
+                        logger.debug(
+                            f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(accumulated_thinking)} chars"
+                        )
 
                         # Start thinking block if not started
                         if not thinking_block_started:
@@ -1891,24 +2063,70 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                             delta_content = delta["content"]
 
                         if delta_content is not None and delta_content != "":
-                            # Close thinking block and prepare for text block
-                            # Generate signature for completed thinking content
+                            # Parse function calls from thinking content before closing
+                            cleaned_thinking, function_calls = (
+                                parse_function_calls_from_thinking(accumulated_thinking)
+                            )
+
+                            # Update thinking content with cleaned version (function calls removed)
                             if content_block_index < len(current_content_blocks):
+                                current_content_blocks[content_block_index][
+                                    "thinking"
+                                ] = cleaned_thinking
+
+                                # Generate signature for cleaned thinking content
                                 thinking_signature = generate_thinking_signature(
-                                    accumulated_thinking
+                                    cleaned_thinking
                                 )
                                 current_content_blocks[content_block_index][
                                     "signature"
                                 ] = thinking_signature
+
                                 # Send signature delta before closing thinking block
                                 yield _send_content_block_delta_event(
                                     content_block_index,
                                     "signature_delta",
                                     thinking_signature,
                                 )
+
                             yield _send_content_block_stop_event(content_block_index)
                             thinking_block_closed = True
                             content_block_index += 1
+
+                            # Add function call blocks if any were found
+                            for tool_call in function_calls:
+                                logger.debug(
+                                    f"Adding tool call block: {tool_call['function']['name']}"
+                                )
+
+                                # Create tool use content block
+                                tool_block = {
+                                    "type": "tool_use",
+                                    "id": tool_call["id"],
+                                    "name": tool_call["function"]["name"],
+                                    "input": json.loads(
+                                        tool_call["function"]["arguments"]
+                                    ),
+                                }
+                                current_content_blocks.append(tool_block)
+
+                                # Send tool call events
+                                yield _send_content_block_start_event(
+                                    content_block_index,
+                                    "tool_use",
+                                    id=tool_call["id"],
+                                    name=tool_call["function"]["name"],
+                                )
+                                yield _send_tool_use_delta_events(
+                                    content_block_index,
+                                    tool_call["id"],
+                                    tool_call["function"]["name"],
+                                    tool_call["function"]["arguments"],
+                                )
+                                yield _send_content_block_stop_event(
+                                    content_block_index
+                                )
+                                content_block_index += 1
 
                     # Handle text content - check for text content first
                     delta_content = delta.content
@@ -1941,7 +2159,9 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                             thinking_content=accumulated_thinking,
                             tool_calls=[],
                         )
-                        logger.debug(f"Added text content: +{len(delta_content)} chars, total: {len(accumulated_text)} chars, tokens: {current_output_tokens}")
+                        logger.debug(
+                            f"Added text content: +{len(delta_content)} chars, total: {len(accumulated_text)} chars, tokens: {current_output_tokens}"
+                        )
 
                         # Start text block if not started
                         if not text_block_started:
@@ -1970,23 +2190,70 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
                         # Close thinking block if it was started
                         if thinking_block_started and not thinking_block_closed:
-                            # Generate signature for completed thinking content
+                            # Parse function calls from thinking content before closing
+                            cleaned_thinking, function_calls = (
+                                parse_function_calls_from_thinking(accumulated_thinking)
+                            )
+
+                            # Update thinking content with cleaned version (function calls removed)
                             if content_block_index < len(current_content_blocks):
+                                current_content_blocks[content_block_index][
+                                    "thinking"
+                                ] = cleaned_thinking
+
+                                # Generate signature for cleaned thinking content
                                 thinking_signature = generate_thinking_signature(
-                                    accumulated_thinking
+                                    cleaned_thinking
                                 )
                                 current_content_blocks[content_block_index][
                                     "signature"
                                 ] = thinking_signature
+
                                 # Send signature delta before closing thinking block
                                 yield _send_content_block_delta_event(
                                     content_block_index,
                                     "signature_delta",
                                     thinking_signature,
                                 )
+
                             yield _send_content_block_stop_event(content_block_index)
                             thinking_block_closed = True
                             content_block_index += 1
+
+                            # Add function call blocks if any were found
+                            for tool_call in function_calls:
+                                logger.debug(
+                                    f"Adding tool call block: {tool_call['function']['name']}"
+                                )
+
+                                # Create tool use content block
+                                tool_block = {
+                                    "type": "tool_use",
+                                    "id": tool_call["id"],
+                                    "name": tool_call["function"]["name"],
+                                    "input": json.loads(
+                                        tool_call["function"]["arguments"]
+                                    ),
+                                }
+                                current_content_blocks.append(tool_block)
+
+                                # Send tool call events
+                                yield _send_content_block_start_event(
+                                    content_block_index,
+                                    "tool_use",
+                                    id=tool_call["id"],
+                                    name=tool_call["function"]["name"],
+                                )
+                                yield _send_tool_use_delta_events(
+                                    content_block_index,
+                                    tool_call["id"],
+                                    tool_call["function"]["name"],
+                                    tool_call["function"]["arguments"],
+                                )
+                                yield _send_content_block_stop_event(
+                                    content_block_index
+                                )
+                                content_block_index += 1
 
                         # If we haven't started any blocks yet, start and immediately close a text block
                         if (
@@ -2010,7 +2277,10 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
                         # Calculate accurate output tokens from accumulated content
                         final_output_tokens = _calculate_accurate_output_tokens(
-                            accumulated_text, accumulated_thinking, output_tokens, "Finish reason received"
+                            accumulated_text,
+                            accumulated_thinking,
+                            output_tokens,
+                            "Finish reason received",
                         )
 
                         # Send message delta with final content and stop reason
@@ -2031,10 +2301,14 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                 continue
 
             # Validate content integrity after processing each chunk
-            if openai_chunks_received % 10 == 0:  # Every 10 chunks to avoid too much logging
+            if (
+                openai_chunks_received % 10 == 0
+            ):  # Every 10 chunks to avoid too much logging
                 validation = _validate_streaming_content_integrity(
-                    accumulated_text, accumulated_thinking, current_content_blocks,
-                    f"After chunk #{openai_chunks_received}"
+                    accumulated_text,
+                    accumulated_thinking,
+                    current_content_blocks,
+                    f"After chunk #{openai_chunks_received}",
                 )
                 if validation["has_issues"]:
                     logger.warning(f"Content integrity issues: {validation}")
@@ -2044,8 +2318,74 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
         # If we didn't get a finish reason, close any open blocks
         if not has_sent_stop_reason:
             logger.debug("No finish_reason received, closing stream manually")
+
+            # Close thinking block if it was started
+            if thinking_block_started and not thinking_block_closed:
+                # Parse function calls from thinking content before closing
+                cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+                    accumulated_thinking
+                )
+
+                # Update thinking content with cleaned version (function calls removed)
+                if content_block_index < len(current_content_blocks):
+                    current_content_blocks[content_block_index]["thinking"] = (
+                        cleaned_thinking
+                    )
+
+                    # Generate signature for cleaned thinking content
+                    thinking_signature = generate_thinking_signature(cleaned_thinking)
+                    current_content_blocks[content_block_index]["signature"] = (
+                        thinking_signature
+                    )
+
+                    # Send signature delta before closing thinking block
+                    yield _send_content_block_delta_event(
+                        content_block_index,
+                        "signature_delta",
+                        thinking_signature,
+                    )
+
+                yield _send_content_block_stop_event(content_block_index)
+                thinking_block_closed = True
+                content_block_index += 1
+
+                # Add function call blocks if any were found
+                for tool_call in function_calls:
+                    logger.debug(
+                        f"Adding tool call block: {tool_call['function']['name']}"
+                    )
+
+                    # Create tool use content block
+                    tool_block = {
+                        "type": "tool_use",
+                        "id": tool_call["id"],
+                        "name": tool_call["function"]["name"],
+                        "input": json.loads(tool_call["function"]["arguments"]),
+                    }
+                    current_content_blocks.append(tool_block)
+
+                    # Send tool call events
+                    yield _send_content_block_start_event(
+                        content_block_index,
+                        "tool_use",
+                        id=tool_call["id"],
+                        name=tool_call["function"]["name"],
+                    )
+                    yield _send_tool_use_delta_events(
+                        content_block_index,
+                        tool_call["id"],
+                        tool_call["function"]["name"],
+                        tool_call["function"]["arguments"],
+                    )
+                    yield _send_content_block_stop_event(content_block_index)
+                    content_block_index += 1
+
             # If we haven't started any blocks yet, start and immediately close a text block
-            if not text_block_started and not is_tool_use:
+            if (
+                not text_block_started
+                and not is_tool_use
+                and not thinking_block_started
+            ):
                 text_block = {"type": "text", "text": ""}
                 current_content_blocks.append(text_block)
                 yield _send_content_block_start_event(content_block_index, "text")
@@ -2056,7 +2396,10 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
             # Calculate accurate output tokens from accumulated content
             final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text, accumulated_thinking, output_tokens, "No finish_reason"
+                accumulated_text,
+                accumulated_thinking,
+                output_tokens,
+                "No finish_reason",
             )
 
             # Send final events
@@ -2085,6 +2428,43 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
 
     finally:
         if not has_sent_stop_reason:
+            # Close thinking block if it was started (fallback in finally block)
+            if thinking_block_started and not thinking_block_closed:
+                logger.debug("Finally block: closing unclosed thinking block")
+                # Parse function calls from thinking content before closing
+                cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+                    accumulated_thinking
+                )
+
+                # Update thinking content with cleaned version (function calls removed)
+                if content_block_index < len(current_content_blocks):
+                    current_content_blocks[content_block_index]["thinking"] = (
+                        cleaned_thinking
+                    )
+
+                    # Generate signature for cleaned thinking content
+                    thinking_signature = generate_thinking_signature(cleaned_thinking)
+                    current_content_blocks[content_block_index]["signature"] = (
+                        thinking_signature
+                    )
+
+                # Add function call blocks if any were found
+                for tool_call in function_calls:
+                    logger.debug(
+                        f"Finally block: Adding tool call block: {tool_call['function']['name']}"
+                    )
+
+                    # Create tool use content block
+                    tool_block = {
+                        "type": "tool_use",
+                        "id": tool_call["id"],
+                        "name": tool_call["function"]["name"],
+                        "input": json.loads(tool_call["function"]["arguments"]),
+                    }
+                    current_content_blocks.append(tool_block)
+
+                thinking_block_closed = True
+
             # Calculate accurate output tokens from accumulated content
             final_output_tokens = _calculate_accurate_output_tokens(
                 accumulated_text, accumulated_thinking, output_tokens, "Finally block"
@@ -2101,8 +2481,10 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
             )
         # Final content integrity validation
         final_validation = _validate_streaming_content_integrity(
-            accumulated_text, accumulated_thinking, current_content_blocks,
-            "Final streaming validation"
+            accumulated_text,
+            accumulated_thinking,
+            current_content_blocks,
+            "Final streaming validation",
         )
         if final_validation["has_issues"]:
             logger.error(f"FINAL CONTENT INTEGRITY ISSUES: {final_validation}")
@@ -2113,7 +2495,10 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
         try:
             final_stop_reason = "tool_use" if is_tool_use else "end_turn"
             final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text, accumulated_thinking, output_tokens, "Final debug output"
+                accumulated_text,
+                accumulated_thinking,
+                output_tokens,
+                "Final debug output",
             )
 
             complete_response = _rebuild_complete_response_from_streaming(
@@ -2122,7 +2507,7 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                 current_content_blocks=current_content_blocks,
                 output_tokens=final_output_tokens,
                 model=original_request.model,
-                stop_reason=final_stop_reason
+                stop_reason=final_stop_reason,
             )
 
             logger.info("=== STREAMING COMPLETE RESPONSE DEBUG ===")
@@ -2143,7 +2528,10 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
         try:
             # Calculate final tokens for usage tracking
             final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text, accumulated_thinking, output_tokens, "Streaming usage tracking"
+                accumulated_text,
+                accumulated_thinking,
+                output_tokens,
+                "Streaming usage tracking",
             )
 
             # Create usage object from streaming data
@@ -2154,16 +2542,23 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
                 output_tokens=final_output_tokens,
                 prompt_tokens=input_tokens if input_tokens > 0 else 0,
                 completion_tokens=final_output_tokens,
-                total_tokens=(input_tokens if input_tokens > 0 else 0) + final_output_tokens
+                total_tokens=(input_tokens if input_tokens > 0 else 0)
+                + final_output_tokens,
             )
 
             # Add reasoning tokens if we detected thinking content
             if accumulated_thinking:
                 if not streaming_usage.completion_tokens_details:
-                    streaming_usage.completion_tokens_details = CompletionTokensDetails()
+                    streaming_usage.completion_tokens_details = (
+                        CompletionTokensDetails()
+                    )
 
-                reasoning_tokens = count_tokens_in_response(thinking_content=accumulated_thinking)
-                streaming_usage.completion_tokens_details.reasoning_tokens = reasoning_tokens
+                reasoning_tokens = count_tokens_in_response(
+                    thinking_content=accumulated_thinking
+                )
+                streaming_usage.completion_tokens_details.reasoning_tokens = (
+                    reasoning_tokens
+                )
 
             # Update global usage statistics
             model_name = routed_model if routed_model else original_request.model
@@ -2172,11 +2567,12 @@ async def convert_openai_streaming_response_to_anthropic(response_generator: Asy
         except Exception as usage_error:
             logger.error(f"Error tracking streaming usage: {usage_error}")
 
+
 def _validate_streaming_content_integrity(
     accumulated_text: str,
     accumulated_thinking: str,
     current_content_blocks: List[Dict[str, Any]],
-    context: str = ""
+    context: str = "",
 ) -> Dict[str, Any]:
     """
     Validate that streaming content is being properly preserved.
@@ -2185,16 +2581,21 @@ def _validate_streaming_content_integrity(
     validation_results = {
         "has_text_content": bool(accumulated_text.strip()),
         "has_thinking_content": bool(accumulated_thinking.strip()),
-        "has_tool_calls": any(block.get("type") == "tool_use" for block in current_content_blocks),
+        "has_tool_calls": any(
+            block.get("type") == "tool_use" for block in current_content_blocks
+        ),
         "total_content_blocks": len(current_content_blocks),
         "text_length": len(accumulated_text),
         "thinking_length": len(accumulated_thinking),
-        "context": context
+        "context": context,
     }
 
     # Check for potential issues
     issues = []
-    if not validation_results["has_text_content"] and not validation_results["has_tool_calls"]:
+    if (
+        not validation_results["has_text_content"]
+        and not validation_results["has_tool_calls"]
+    ):
         issues.append("No text content or tool calls found")
 
     if validation_results["total_content_blocks"] == 0:
@@ -2205,13 +2606,14 @@ def _validate_streaming_content_integrity(
 
     return validation_results
 
+
 def _rebuild_complete_response_from_streaming(
     accumulated_text: str,
     accumulated_thinking: str,
     current_content_blocks: List[Dict[str, Any]],
     output_tokens: int,
     model: str,
-    stop_reason: str = "end_turn"
+    stop_reason: str = "end_turn",
 ) -> Dict[str, Any]:
     """
     Rebuild a complete Anthropic-format response from streaming data.
@@ -2222,17 +2624,11 @@ def _rebuild_complete_response_from_streaming(
 
     # Add thinking block if present
     if accumulated_thinking.strip():
-        content_blocks.append({
-            "type": "thinking",
-            "thinking": accumulated_thinking
-        })
+        content_blocks.append({"type": "thinking", "thinking": accumulated_thinking})
 
     # Add text block if present
     if accumulated_text.strip():
-        content_blocks.append({
-            "type": "text",
-            "text": accumulated_text
-        })
+        content_blocks.append({"type": "text", "text": accumulated_text})
 
     # Add any tool use blocks from current_content_blocks
     for block in current_content_blocks:
@@ -2248,14 +2644,18 @@ def _rebuild_complete_response_from_streaming(
         "content": content_blocks,
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "output_tokens": output_tokens
-        }
+        "usage": {"output_tokens": output_tokens},
     }
 
     return complete_response
 
-def _calculate_accurate_output_tokens(accumulated_text: str, accumulated_thinking: str, reported_tokens: int, context: str = "") -> int:
+
+def _calculate_accurate_output_tokens(
+    accumulated_text: str,
+    accumulated_thinking: str,
+    reported_tokens: int,
+    context: str = "",
+) -> int:
     """Calculate accurate output tokens using tiktoken (always use calculated, not reported)."""
     calculated_tokens = count_tokens_in_response(
         response_content=accumulated_text,
@@ -2267,11 +2667,14 @@ def _calculate_accurate_output_tokens(accumulated_text: str, accumulated_thinkin
     # for third-party models accessed through proxy APIs
     final_tokens = calculated_tokens
 
-    logger.debug(f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens} (always using calculated)")
+    logger.debug(
+        f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens} (always using calculated)"
+    )
     return final_tokens
 
+
 def count_tokens_in_response(
-    response_content: str = "", thinking_content: str = "", tool_calls: list =[]
+    response_content: str = "", thinking_content: str = "", tool_calls: list = []
 ) -> int:
     """Count tokens in response content using tiktoken"""
     if enc is None:
@@ -2294,9 +2697,9 @@ def count_tokens_in_response(
         # Count tool calls tokens
         if tool_calls:
             for tool_call in tool_calls:
-                    name = getattr(tool_call.function, "name", "")
-                    arguments = getattr(tool_call.function, "arguments", "")
-                    total_tokens += len(enc.encode(name + arguments))
+                name = getattr(tool_call.function, "name", "")
+                arguments = getattr(tool_call.function, "arguments", "")
+                total_tokens += len(enc.encode(name + arguments))
 
     except Exception as e:
         logger.error(f"Error counting response tokens: {e}")
@@ -2304,6 +2707,7 @@ def count_tokens_in_response(
         return 0
 
     return int(total_tokens)
+
 
 def _compare_request_data(
     claude_request: ClaudeMessagesRequest, openai_request: Dict[str, Any]
@@ -2315,6 +2719,14 @@ def _compare_request_data(
         claude_messages_count = len(claude_request.messages)
         claude_has_tool_choice = claude_request.tool_choice is not None
         claude_has_system = claude_request.system is not None
+        claude_has_tool_result = False
+        for msg in claude_request.messages:
+            if isinstance(msg.content, list):
+                for content in msg.content:
+                    _claude_has_tool_result = isinstance(
+                        content, ClaudeContentBlockToolResult
+                    )
+                    claude_has_tool_result = _claude_has_tool_result
 
         # Count OpenAI request data
         openai_tools_count = len(openai_request.get("tools", []))
@@ -2322,6 +2734,9 @@ def _compare_request_data(
         openai_has_tool_choice = "tool_choice" in openai_request
         openai_has_system = any(
             msg.get("role") == "system" for msg in openai_request.get("messages", [])
+        )
+        openai_has_tool_msg = any(
+            msg.get("role") == "tool" for msg in openai_request.get("messages", [])
         )
 
         # Log comparison
@@ -2338,6 +2753,9 @@ def _compare_request_data(
         logger.info(
             f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}"
         )
+        logger.info(
+            f"  Claude -> OpenAI Tool Message: {claude_has_tool_result} -> {openai_has_tool_msg}"
+        )
 
         # Check for mismatches and log errors
         errors = []
@@ -2351,7 +2769,11 @@ def _compare_request_data(
             )
 
         # Note: Messages count may differ if system message is extracted/merged
-        if claude_messages_count != openai_messages_count and not claude_has_system:
+        if (
+            claude_messages_count != openai_messages_count
+            and not claude_has_system
+            and not claude_has_tool_result
+        ):
             errors.append(
                 f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})"
             )
@@ -2365,7 +2787,9 @@ def _compare_request_data(
         logger.error(f"Error in request comparison: {e}")
 
 
-def _compare_response_data(openai_response, claude_response: ClaudeMessagesResponse) -> None:
+def _compare_response_data(
+    openai_response, claude_response: ClaudeMessagesResponse
+) -> None:
     """Compare OpenAI response with converted Claude response and log differences."""
     try:
         # Count OpenAI response data

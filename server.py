@@ -76,9 +76,7 @@ class Config:
         )
 
         # Custom models configuration file
-        self.custom_models_file = os.environ.get(
-            "CUSTOM_MODELS_FILE", "models.yaml"
-        )
+        self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", "models.yaml")
 
         # Custom API keys storage
         self.custom_api_keys = {}
