@@ -537,11 +537,15 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         """Override run to capture test results for pretty printing."""
         test_name = self._testMethodName
 
+        # Create a TestResult if none provided
+        if result is None:
+            result = unittest.TestResult()
+
         # Run the actual test
         test_result = super().run(result)
 
         # Check if test passed or failed and print accordingly
-        if result is not None:
+        if hasattr(result, 'failures') and hasattr(result, 'errors'):
             # Check if this test had any failures or errors
             test_failed = False
             test_error = False
@@ -597,6 +601,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         response.raise_for_status()
 
         chunks = []
+
         async for line in response.aiter_lines():
             if line.startswith("data: "):
                 data_part = line[6:]
@@ -660,7 +665,16 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
         content_blocks.extend(final_tool_calls)
 
-        return {"content": content_blocks, "role": "assistant", "type": "message"}
+        # Display stream statistics
+        print(f"\n{'='*50}")
+        print(f"{content_blocks}")
+        print(f"{'='*50}")
+
+        return {
+            "content": content_blocks,
+            "role": "assistant",
+            "type": "message",
+        }
 
     def assertResponseValid(self, response: dict[str, Any]):
         """Assert that a response has valid structure."""
@@ -705,6 +719,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(
             len(thinking_blocks), 0, "Response should contain thinking content"
         )
+
 
     async def make_anthropic_request(
         self, request_data: ClaudeMessagesRequest, stream: bool = False
@@ -1976,26 +1991,26 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_interruption_test(self):
         """
         Test Claude Code tool call interruption and recovery capability.
-        
+
         Test Scenario:
         - User requests configuration file creation
         - Assistant performs tool call chain: Glob → Read → exit_plan_mode
         - User interrupts exit_plan_mode with feedback: "file already exists, check first"
         - Expected: Assistant should use tools (Glob/Read) to verify existing files
-        
+
         Key Test Design:
         - Uses tool_choice=required to eliminate model behavior differences
         - DeepSeek/other models might not use tools with tool_choice=auto or None
         - Claude naturally tends to use tools in this context
         - Server now automatically adjusts tool_choice=None/auto to required for non-thinking models
         - This ensures consistent behavior across all models without manual intervention
-        
+
         Validates:
         1. Tool call interruption handling
-        2. Context understanding after interruption  
+        2. Context understanding after interruption
         3. Appropriate tool selection for verification tasks
         4. Message format conversion (Assistant→Tool→User sequence)
-        
+
         Critical Bug Fixed:
         - Original issue: Assistant messages with only tool_calls were being dropped
         - Root cause: ClaudeMessage.to_openai_messages() ignored messages without content_parts
@@ -2105,23 +2120,23 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_thinking_model_tool_choice_required_error(self):
         """
         Test that thinking models reject tool_choice=required (API limitation validation).
-        
+
         Test Discovery Process:
         1. Initial assumption: "Thinking models don't support tool_choice=required"
         2. First test without thinking=enabled: Unexpectedly succeeded
         3. Corrected test with thinking=enabled: Properly failed with 400 Bad Request
-        
+
         Key Findings:
         - Thinking models require thinking=enabled in the request configuration
         - When thinking=enabled + tool_choice=required: Anthropic API returns 400 error
         - This confirms thinking models have API-level restrictions on tool_choice=required
         - Without thinking=enabled, the model behaves like a regular model
-        
+
         Technical Details:
         - max_tokens (1024) must be >= budget_tokens (512) for thinking models
         - The 400 error comes from Anthropic API validation, not our proxy
         - This is an intentional limitation, not a bug
-        
+
         Validates:
         1. Proper error handling for unsupported model+tool_choice combinations
         2. Anthropic API validation behavior
@@ -2254,35 +2269,35 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_thinking_model_interruption_with_auto_tool_choice(self):
         """
         Test thinking model's intelligent tool selection with tool call interruption.
-        
+
         Test Scenario:
         - Same interruption scenario as the basic test
         - Uses thinking=enabled + tool_choice=auto (the supported combination)
         - User interrupts tool call with "file already exists, check first"
-        
+
         Thinking Model Intelligence:
         - Unlike regular models, thinking models exhibit advanced reasoning
         - They can infer answers from conversation context without additional tool calls
         - In this test: model already saw the file content from previous Read tool call
         - Result: Often chooses NOT to use tools, directly provides context-based answer
-        
+
         Behavioral Comparison:
         - Regular models + tool_choice=None/auto: Automatically adjusted to required by server
         - Regular models + tool_choice=required: Forced to use tools (consistent)
         - Thinking models + tool_choice=auto: Intelligent context-based decisions (unchanged by server)
         - Thinking models + tool_choice=required: API error (unsupported)
-        
+
         Server Auto-Adjustment:
         - Non-thinking models: tool_choice=None/auto → automatically changed to required
         - Thinking models: tool_choice remains unchanged (to avoid API errors)
         - This ensures optimal tool usage without manual configuration
-        
+
         Key Insights:
         1. Thinking models prioritize reasoning over tool calls when context is sufficient
         2. This is actually superior behavior - avoiding unnecessary API calls
         3. The 'no tool use' warning is expected and represents intelligent behavior
         4. Both Anthropic and Proxy exhibit consistent thinking model behavior
-        
+
         Validates:
         1. Thinking model configuration (thinking=enabled)
         2. Intelligent tool selection vs. context reasoning
@@ -3057,14 +3072,10 @@ class TestComplexScenarios(ProxyTestBase):
                 ),
             ],
         )
-        response = await self.make_request(request)
-        self.assertResponseValid(response)
-        self.assertHasTextContent(response)
-
         passed, warning = await self.make_comparison_test(
             "edit_tool_completion",
             request,
-            check_tools=False,  # This test focuses on post-tool conversation flow
+            check_tools=True,  # This test focuses on post-tool conversation flow
         )
         print(
             f"Edit tool completion test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
@@ -3115,9 +3126,15 @@ class TestComplexScenarios(ProxyTestBase):
             ],
             tools=[edit_tool],
         )
-        response = await self.make_request(request)
-        self.assertResponseValid(response)
-        self.assertHasTextContent(response)
+
+        passed, warning = await self.make_comparison_test(
+            "edit_tool_completion_stream",
+            request,
+            check_tools=True,  # This test focuses on post-tool conversation flow
+        )
+        print(
+            f"Edit tool completion stream test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
+        )
 
 
 # Main test runner
@@ -3181,7 +3198,7 @@ def main():
 
         with httpx.Client(timeout=5) as client:
             # Try a simple request to test if server is responding
-            response = client.get(f"{BASE_URL}/")
+            response = client.get(f"{BASE_URL}/test-connection")
             print(
                 f"✅ Server at {BASE_URL} is responding (status: {response.status_code})"
             )
