@@ -66,17 +66,25 @@ ANTHROPIC_BASE_URL=http://localhost:8082 claude
 
 ### Testing
 
-The project includes two comprehensive test suites with different approaches:
+The project includes comprehensive test suites using modern Python testing frameworks:
 
+#### pytest Framework (Recommended) ⭐
 
-
-#### unittest Framework (`tests_unittest.py`) ⭐
-
-A modern unittest-based test suite with comprehensive coverage:
+Modern pytest-based testing with automatic discovery:
 
 ```bash
-make test-unittest          # Run unittest suite (recommended)
-python tests_unittest.py   # Direct execution
+make test                   # Run pytest suite (recommended)
+make test-pytest           # Run pytest suite explicitly
+pytest tests/ -v           # Direct pytest execution
+```
+
+#### unittest Framework (`tests/test_unittest.py`) ⭐
+
+A comprehensive unittest-based test suite:
+
+```bash
+make test-unittest          # Run unittest suite
+python tests/test_unittest.py   # Direct execution
 ```
 
 **Features:**
@@ -105,20 +113,22 @@ python tests_unittest.py   # Direct execution
 
 **Usage Examples:**
 ```bash
+# Run all tests with pytest
+pytest tests/ -v
+pytest tests/test_unittest.py -v    # Specific file
+pytest tests/test_conversions.py -v # Conversion tests
+
 # Run all unittest tests
-python tests_unittest.py
-python -m unittest tests_unittest -v
+python tests/test_unittest.py
+python -m unittest tests.test_unittest -v
 
 # Run specific test classes
-python -m unittest tests_unittest.TestCustomModels -v
-python -m unittest tests_unittest.TestAnthropicComparison -v
+python -m unittest tests.test_unittest.TestCustomModels -v
+python -m unittest tests.test_unittest.TestAnthropicComparison -v
 
 # Run specific test methods
-python -m unittest tests_unittest.TestCustomModels.test_gemini_tool_conversion -v
-python -m unittest tests_unittest.TestToolRequests.test_calculator_tool -v
-
-# Run tests by pattern
-python -m unittest tests_unittest.*Custom* -v
+python -m unittest tests.test_unittest.TestCustomModels.test_gemini_tool_conversion -v
+python -m unittest tests.test_unittest.TestToolRequests.test_calculator_tool -v
 ```
 
 #### Ground Truth Validation ⭐
@@ -157,11 +167,12 @@ make format
 claude-code-proxy/
 ├── server.py                 # Main FastAPI proxy server
 ├── models.py                 # Pydantic models and format conversion
-├── tests_unittest.py         # Modern unittest framework with API comparison ⭐
-├── test_conversions.py       # Format conversion unit tests
+├── tests/                    # Test directory
+│   ├── test_unittest.py      # Modern unittest framework with API comparison ⭐
+│   └── test_conversions.py   # Format conversion unit tests
 ├── models.yaml.example       # Example custom model config
 ├── Makefile                  # Development commands
-├── pyproject.toml           # Python project configuration
+├── pyproject.toml           # Python project configuration (pytest & ruff)
 ├── uv.lock                  # Dependency lock file
 ├── .env.example             # Environment variables template
 └── README.md                # This file
@@ -184,7 +195,7 @@ claude-code-proxy/
 - Content block processing (text, images, tool use, thinking)
 - Input validation and sanitization
 
-#### **tests_unittest.py** ⭐ (Recommended)
+#### **tests/test_unittest.py** ⭐ (Recommended)
 - Modern unittest framework with `IsolatedAsyncioTestCase`
 - 13 test classes with 33+ async test methods
 - **Ground truth validation** against official Anthropic API
@@ -193,6 +204,12 @@ claude-code-proxy/
 - **Tool use validation** with 13 different tools
 - **Advanced streaming tests** with event validation
 - **Claude Code workflow testing** for development scenarios
+
+#### **tests/test_conversions.py**
+- Format conversion unit tests between Claude and OpenAI formats
+- Message processing validation
+- Content block conversion testing
+- Tool use and result conversion validation
 
 #### **models.yaml**
 - YAML configuration for custom OpenAI-compatible models
@@ -255,20 +272,22 @@ Add custom OpenAI-compatible models in `models.yaml`:
 
 3. **Test the model**:
    ```bash
-   # Modern unittest suite (recommended)
-   python -m unittest tests_unittest.TestCustomModels.test_gemini_tool_conversion -v
+   # Modern pytest suite (recommended)
+   pytest tests/test_unittest.py::TestCustomModels::test_gemini_tool_conversion -v
+   # Or unittest
+   python -m unittest tests.test_unittest.TestCustomModels.test_gemini_tool_conversion -v
    ```
 
 ### Testing Workflow
 
 #### Development Testing
-- **Quick validation**: `python -m unittest tests_unittest.TestBasicRequests -v`
-- **Model-specific testing**: `python -m unittest tests_unittest.TestCustomModels -v`
-- **API comparison**: `python -m unittest tests_unittest.TestAnthropicComparison -v`
+- **Quick validation**: `python -m unittest tests.test_unittest.TestBasicRequests -v`
+- **Model-specific testing**: `python -m unittest tests.test_unittest.TestCustomModels -v`
+- **API comparison**: `python -m unittest tests.test_unittest.TestAnthropicComparison -v`
 
 #### Pre-commit Testing
-- **Full validation**: `make test-unittest` (recommended)
-- **Legacy compatibility**: `make test`
+- **Full validation**: `make test` (pytest, recommended)
+- **Alternative**: `make test-unittest` (unittest framework)
 - **Code quality**: `make lint && make format`
 
 #### Model Validation
@@ -410,21 +429,22 @@ Follows SOLID principles:
 
 ## Testing Frameworks Summary
 
-### unittest Framework vs Legacy Tests
+### pytest vs unittest Frameworks
 
-| Feature | `tests_unittest.py` ⭐ | `tests.py` (Legacy) |
-|---------|----------------------|-------------------|
-| **Framework** | `unittest.IsolatedAsyncioTestCase` | Functional testing |
-| **Test Count** | 33+ async test methods | 39 test scenarios |
-| **Organization** | 13 organized test classes | Single file approach |
-| **API Comparison** | ✅ Proxy vs Anthropic ground truth | ❌ Proxy only |
-| **Behavioral Analysis** | ✅ Distinguishes bugs vs differences | ❌ Basic pass/fail |
-| **Custom Models** | ✅ Dedicated test classes | ✅ Command-line options |
-| **Development** | ✅ Targeted test running | ✅ Rich CLI interface |
-| **Async Support** | ✅ Native async/await | ✅ Custom event loop |
-| **Maintenance** | ✅ Standard unittest patterns | ⚠️ Custom framework |
+| Feature | `pytest` ⭐ (Recommended) | `unittest` |
+|---------|-------------------------|------------|
+| **Framework** | Modern pytest with auto-discovery | `unittest.IsolatedAsyncioTestCase` |
+| **Test Count** | 33+ async test methods | 33+ async test methods |
+| **Organization** | Automatic test discovery in `tests/` | 13 organized test classes |
+| **Configuration** | `pyproject.toml` integration | Standard unittest patterns |
+| **API Comparison** | ✅ Proxy vs Anthropic ground truth | ✅ Proxy vs Anthropic ground truth |
+| **Behavioral Analysis** | ✅ Distinguishes bugs vs differences | ✅ Distinguishes bugs vs differences |
+| **Custom Models** | ✅ Dedicated test classes | ✅ Dedicated test classes |
+| **Development** | ✅ Flexible test running | ✅ Targeted test running |
+| **Async Support** | ✅ pytest-asyncio integration | ✅ Native async/await |
+| **Maintenance** | ✅ Industry standard | ✅ Python standard library |
 
-**Recommendation**: Use `tests_unittest.py` for development and CI/CD. The legacy tests remain for compatibility and specific CLI testing workflows.
+**Recommendation**: Use `pytest` for development and CI/CD as it provides better test discovery, reporting, and integration with modern Python tooling.
 
 ### Quick Testing Commands
 
@@ -440,7 +460,7 @@ make test-gemini         # Gemini conversion test
 make test-calculator     # Calculator tool test
 
 # Full suites
-make test               # Modern unittest (recommended)
+make test               # Modern pytest (recommended)
 ```
 
 ## Credit & Acknowledgment

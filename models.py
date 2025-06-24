@@ -3,34 +3,32 @@ Pydantic models for Claude proxy API requests and responses.
 This module contains only the model definitions without any server startup code.
 """
 
-from openai import AsyncStream
-from pydantic import BaseModel, field_validator
-from typing import Dict, List, Optional, Required, Union, Literal, Any, Iterable
-import re
-import json
-import uuid
-import logging
-import tiktoken
 import hashlib
+import json
+import logging
+import re
 import threading
+import uuid
+from collections.abc import Iterable
 from datetime import datetime
+from typing import Any, Literal, Union
 
+import tiktoken
+from openai import AsyncStream
 from openai.types.chat import (
     ChatCompletion,
-    ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
     ChatCompletionContentPartImageParam,
     ChatCompletionContentPartTextParam,
     ChatCompletionMessageParam,
     ChatCompletionMessageToolCallParam,
     ChatCompletionNamedToolChoiceParam,
-    ChatCompletionTool,
     ChatCompletionSystemMessageParam,
     ChatCompletionToolChoiceOptionParam,
     ChatCompletionToolMessageParam,
     ChatCompletionToolParam,
-    ChatCompletionUserMessageParam,
 )
+from pydantic import BaseModel, field_validator
 
 
 class ModelDefaults:
@@ -115,7 +113,6 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
     Returns:
         tuple: (cleaned_thinking_content, list_of_tool_calls)
     """
-    import re
     import json
 
     # Pattern to match function call blocks
@@ -160,7 +157,7 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
 
 class ClaudeToolChoiceAuto(BaseModel):
     type: Literal["auto"] = "auto"
-    disable_parallel_tool_use: Optional[bool] = None
+    disable_parallel_tool_use: bool | None = None
 
     def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
         return "auto"
@@ -168,7 +165,7 @@ class ClaudeToolChoiceAuto(BaseModel):
 
 class ClaudeToolChoiceAny(BaseModel):
     type: Literal["any"] = "any"
-    disable_parallel_tool_use: Optional[bool] = None
+    disable_parallel_tool_use: bool | None = None
 
     def to_openai(self) -> ChatCompletionToolChoiceOptionParam:
         return "required"
@@ -177,7 +174,7 @@ class ClaudeToolChoiceAny(BaseModel):
 class ClaudeToolChoiceTool(BaseModel):
     type: Literal["tool"] = "tool"
     name: str
-    disable_parallel_tool_use: Optional[bool] = None
+    disable_parallel_tool_use: bool | None = None
 
     def to_openai(self) -> ChatCompletionNamedToolChoiceParam:
         return {"type": "function", "function": {"name": self.name}}
@@ -221,15 +218,11 @@ class ClaudeContentBlockImageURLSource(BaseModel):
 
 class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
-    source: Union[
-        ClaudeContentBlockImageBase64Source,
-        ClaudeContentBlockImageURLSource,
-        Dict[str, Any],
-    ]
+    source: ClaudeContentBlockImageBase64Source | ClaudeContentBlockImageURLSource | dict[str, Any]
 
     # only user message contains image content
     #
-    def to_openai(self) -> Optional[ChatCompletionContentPartImageParam]:
+    def to_openai(self) -> ChatCompletionContentPartImageParam | None:
         """
         Convert Claude image block to OpenAI image_url format.
 
@@ -271,7 +264,7 @@ class ClaudeContentBlockToolUse(BaseModel):
     type: Literal["tool_use"]
     id: str
     name: str
-    input: Dict[str, Any]
+    input: dict[str, Any]
 
     # only assistant message contains tool_calls
     def to_openai(self) -> ChatCompletionMessageToolCallParam:
@@ -315,11 +308,11 @@ class ClaudeContentBlockToolUse(BaseModel):
 class ClaudeContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
-    content: Union[str, List[Dict[str, Any]]]
+    content: str | list[dict[str, Any]]
 
     def process_content(
         self,
-    ) -> Union[str, Iterable[ChatCompletionContentPartTextParam]]:
+    ) -> str | Iterable[ChatCompletionContentPartTextParam]:
         """
         Process Claude tool_result content into a string format.
 
@@ -333,7 +326,7 @@ class ClaudeContentBlockToolResult(BaseModel):
             return self.content
         elif isinstance(self.content, list):
             # Handle list content by extracting all text
-            content_parts: List[ChatCompletionContentPartTextParam] = []
+            content_parts: list[ChatCompletionContentPartTextParam] = []
             for item in self.content:
                 content_parts.append({"type": "text", "text": item["content"]})
             return content_parts
@@ -370,7 +363,7 @@ class ClaudeContentBlockToolResult(BaseModel):
 class ClaudeContentBlockThinking(BaseModel):
     type: Literal["thinking"]
     thinking: str
-    signature: Optional[str] = None
+    signature: str | None = None
 
     def to_openai(self) -> ChatCompletionContentPartTextParam:
         """Thinking blocks should be transformed to assistant text message"""
@@ -384,18 +377,7 @@ class ClaudeSystemContent(BaseModel):
 
 class ClaudeMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: Union[
-        str,
-        List[
-            Union[
-                ClaudeContentBlockText,
-                ClaudeContentBlockImage,
-                ClaudeContentBlockToolUse,
-                ClaudeContentBlockToolResult,
-                ClaudeContentBlockThinking,
-            ]
-        ],
-    ]
+    content: str | list[ClaudeContentBlockText | ClaudeContentBlockImage | ClaudeContentBlockToolUse | ClaudeContentBlockToolResult | ClaudeContentBlockThinking]
 
     def process_interrupted_content(self) -> str:
         """Process Claude Code interrupted messages."""
@@ -411,7 +393,7 @@ class ClaudeMessage(BaseModel):
 
         return content
 
-    def to_openai_messages(self) -> List[ChatCompletionMessageParam]:
+    def to_openai_messages(self) -> list[ChatCompletionMessageParam]:
         """
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
         Handles complex logic including tool_result splitting, content block ordering, etc.
@@ -430,12 +412,10 @@ class ClaudeMessage(BaseModel):
             return openai_messages
 
         # Process content blocks in order, maintaining structure
-        content_parts: List[
-            Union[
-                ChatCompletionContentPartTextParam, ChatCompletionContentPartImageParam
-            ]
+        content_parts: list[
+            ChatCompletionContentPartTextParam | ChatCompletionContentPartImageParam
         ] = []
-        tool_calls: List[ChatCompletionMessageToolCallParam] = []
+        tool_calls: list[ChatCompletionMessageToolCallParam] = []
 
         # Claude user message content blocks -> OpenAI user message content
         # parts
@@ -456,7 +436,7 @@ class ClaudeMessage(BaseModel):
             elif isinstance(block, ClaudeContentBlockToolResult):
                 # CRITICAL: Split message when tool_result is encountered
                 if content_parts:
-                    current_message: Dict[str, Any] = {"role": self.role}
+                    current_message: dict[str, Any] = {"role": self.role}
                     if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                         current_message["content"] = content_parts[0]["text"]
                         # openai_messages.append(
@@ -481,7 +461,7 @@ class ClaudeMessage(BaseModel):
 
         # Process any remaining content
         if content_parts or (self.role == "assistant" and len(tool_calls) > 0):
-            current_message: Dict[str, Any] = {"role": self.role}
+            current_message: dict[str, Any] = {"role": self.role}
             if content_parts:
                 if len(content_parts) == 1 and content_parts[0]["type"] == "text":
                     current_message["content"] = content_parts[0]["text"]
@@ -490,7 +470,7 @@ class ClaudeMessage(BaseModel):
             else:
                 # Assistant message with only tool_calls, no content
                 current_message["content"] = ""
-            
+
             if self.role == "assistant" and len(tool_calls) > 0:
                 current_message["tool_calls"] = tool_calls
             openai_messages.append(current_message)
@@ -500,13 +480,13 @@ class ClaudeMessage(BaseModel):
 
 class ClaudeTool(BaseModel):
     name: str
-    description: Optional[str] = None
-    input_schema: Dict[str, Any]
+    description: str | None = None
+    input_schema: dict[str, Any]
 
 
 class ClaudeThinkingConfigEnabled(BaseModel):
     type: Literal["enabled"] = "enabled"
-    budget_tokens: Optional[int] = None
+    budget_tokens: int | None = None
 
 
 class ClaudeThinkingConfigDisabled(BaseModel):
@@ -516,19 +496,17 @@ class ClaudeThinkingConfigDisabled(BaseModel):
 class ClaudeMessagesRequest(BaseModel):
     model: str
     max_tokens: int
-    messages: List[ClaudeMessage]
-    system: Optional[Union[str, List[ClaudeSystemContent]]] = None
-    stop_sequences: Optional[List[str]] = None
-    stream: Optional[bool] = False
-    temperature: Optional[float] = 1.0
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
-    tools: Optional[List[ClaudeTool]] = None
-    tool_choice: Optional[ClaudeToolChoice] = None
-    thinking: Optional[
-        Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled]
-    ] = None
+    messages: list[ClaudeMessage]
+    system: str | list[ClaudeSystemContent] | None = None
+    stop_sequences: list[str] | None = None
+    stream: bool | None = False
+    temperature: float | None = 1.0
+    top_p: float | None = None
+    top_k: int | None = None
+    metadata: dict[str, Any] | None = None
+    tools: list[ClaudeTool] | None = None
+    tool_choice: ClaudeToolChoice | None = None
+    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | None = None
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
@@ -565,7 +543,7 @@ class ClaudeMessagesRequest(BaseModel):
         return ""
 
     # see https://platform.openai.com/docs/api-reference/chat/create
-    def to_openai_request(self) -> Dict[str, Any]:
+    def to_openai_request(self) -> dict[str, Any]:
         """Convert Anthropic API request to OpenAI API format using OpenAI SDK types for validation."""
 
         logger.debug(
@@ -588,7 +566,7 @@ class ClaudeMessagesRequest(BaseModel):
             )
 
         # Build OpenAI messages with type validation
-        openai_messages: List[ChatCompletionMessageParam] = []
+        openai_messages: list[ChatCompletionMessageParam] = []
 
         # --- Claude Messages -> OpenAI messages ---
         # Convert system message if present
@@ -622,7 +600,7 @@ class ClaudeMessagesRequest(BaseModel):
         # https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools
         openai_tools = []
         if self.tools:
-            openai_tools: List[ChatCompletionToolParam] = []
+            openai_tools: list[ChatCompletionToolParam] = []
             for tool in self.tools:
                 tool_params: ChatCompletionToolParam = {
                     "type": "function",
@@ -671,8 +649,8 @@ class ClaudeMessagesRequest(BaseModel):
         logger.debug(f"🔄 Original request: {raw_json}")
         logger.debug(f"🔄 OpenAI request: {request_params}")
 
-        # Note: OpenAI API requires that messages with role 'tool' must be a response 
-        # to a preceding message with 'tool_calls'. The current message conversion 
+        # Note: OpenAI API requires that messages with role 'tool' must be a response
+        # to a preceding message with 'tool_calls'. The current message conversion
         # logic naturally produces the correct sequence: Assistant(tool_calls) → Tool → User
 
         # Compare request data and log any mismatches
@@ -689,13 +667,11 @@ class ClaudeMessagesRequest(BaseModel):
 
 class ClaudeTokenCountRequest(BaseModel):
     model: str
-    messages: List[ClaudeMessage]
-    system: Optional[Union[str, List[ClaudeSystemContent]]] = None
-    tools: Optional[List[ClaudeTool]] = None
-    thinking: Optional[
-        Union[ClaudeThinkingConfigEnabled, ClaudeThinkingConfigDisabled, dict]
-    ] = None
-    tool_choice: Optional[Dict[str, Any]] = None
+    messages: list[ClaudeMessage]
+    system: str | list[ClaudeSystemContent] | None = None
+    tools: list[ClaudeTool] | None = None
+    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | dict | None = None
+    tool_choice: dict[str, Any] | None = None
 
     @field_validator("thinking")
     def validate_thinking_field(cls, v):
@@ -724,13 +700,13 @@ class ClaudeTokenCountResponse(BaseModel):
 
 # Supporting models for detailed token breakdown
 class CompletionTokensDetails(BaseModel):
-    reasoning_tokens: Optional[int] = None
-    accepted_prediction_tokens: Optional[int] = None
-    rejected_prediction_tokens: Optional[int] = None
+    reasoning_tokens: int | None = None
+    accepted_prediction_tokens: int | None = None
+    rejected_prediction_tokens: int | None = None
 
 
 class PromptTokensDetails(BaseModel):
-    cached_tokens: Optional[int] = None
+    cached_tokens: int | None = None
 
 
 class CacheCreation(BaseModel):
@@ -746,22 +722,22 @@ class ClaudeUsage(BaseModel):
     # Core Claude fields (existing)
     input_tokens: int
     output_tokens: int
-    cache_creation_input_tokens: Optional[int] = 0
-    cache_read_input_tokens: Optional[int] = 0
+    cache_creation_input_tokens: int | None = 0
+    cache_read_input_tokens: int | None = 0
 
     # OpenAI/Deepseek additional fields for compatibility
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    prompt_cache_hit_tokens: Optional[int] = None
-    prompt_cache_miss_tokens: Optional[int] = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    prompt_cache_hit_tokens: int | None = None
+    prompt_cache_miss_tokens: int | None = None
 
     # Detailed breakdown objects
-    completion_tokens_details: Optional[CompletionTokensDetails] = None
-    prompt_tokens_details: Optional[PromptTokensDetails] = None
-    cache_creation: Optional[CacheCreation] = None
-    server_tool_use: Optional[ServerToolUse] = None
-    service_tier: Optional[str] = None
+    completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails | None = None
+    cache_creation: CacheCreation | None = None
+    server_tool_use: ServerToolUse | None = None
+    service_tier: str | None = None
 
 
 class GlobalUsageStats(BaseModel):
@@ -786,7 +762,7 @@ class GlobalUsageStats(BaseModel):
     total_reasoning_tokens: int = 0
 
     # Model usage breakdown
-    model_usage_count: Dict[str, int] = {}
+    model_usage_count: dict[str, int] = {}
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -831,7 +807,7 @@ class GlobalUsageStats(BaseModel):
                 self.model_usage_count[model] = 0
             self.model_usage_count[model] += 1
 
-    def get_session_summary(self) -> Dict[str, Any]:
+    def get_session_summary(self) -> dict[str, Any]:
         """Get a comprehensive summary of the session statistics."""
         with self._lock:
             session_duration = datetime.now() - self.session_start_time
@@ -926,7 +902,7 @@ def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
 
 
 def extract_usage_from_claude_response(
-    claude_usage_dict: Dict[str, Any],
+    claude_usage_dict: dict[str, Any],
 ) -> ClaudeUsage:
     """Extract usage data from Claude API response format and convert to enhanced ClaudeUsage."""
     if not claude_usage_dict:
@@ -1035,25 +1011,11 @@ class ClaudeMessagesResponse(BaseModel):
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
     model: str
-    content: List[
-        Union[
-            ClaudeContentBlockText,
-            ClaudeContentBlockToolUse,
-            ClaudeContentBlockThinking,
-        ]
+    content: list[
+        ClaudeContentBlockText | ClaudeContentBlockToolUse | ClaudeContentBlockThinking
     ]
-    stop_reason: Optional[
-        Literal[
-            "end_turn",
-            "max_tokens",
-            "stop_sequence",
-            "tool_use",
-            "pause_turn",
-            "refusal",
-            "error",
-        ]
-    ] = None
-    stop_sequence: Optional[str] = None
+    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "error"] | None = None
+    stop_sequence: str | None = None
     usage: ClaudeUsage
 
 
@@ -1160,9 +1122,7 @@ def convert_openai_response_to_anthropic(
         # Map finish reason to Anthropic format
         if finish_reason == "length":
             stop_reason = Constants.STOP_MAX_TOKENS
-        elif finish_reason == "tool_calls":
-            stop_reason = Constants.STOP_TOOL_USE
-        elif finish_reason is None and tool_calls:
+        elif finish_reason == "tool_calls" or finish_reason is None and tool_calls:
             stop_reason = Constants.STOP_TOOL_USE
         else:
             stop_reason = Constants.STOP_END_TURN
@@ -1680,7 +1640,7 @@ def _send_tool_use_delta_events(
     return _send_content_block_delta_event(index, "input_json_delta", arguments)
 
 
-def _process_image_content_block(block, image_parts: List[Dict]) -> None:
+def _process_image_content_block(block, image_parts: list[dict]) -> None:
     """Process an image content block by adding it to image_parts."""
     if (
         isinstance(block.source, dict)
@@ -1729,7 +1689,7 @@ def _send_message_stop_event():
     """Send message_stop event."""
     event_data = {"type": "message_stop"}
     event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: message_stop")
+    logger.debug("STREAMING_EVENT: message_stop")
     return event_str
 
 
@@ -1737,14 +1697,14 @@ def _send_ping_event():
     """Send ping event."""
     event_data = {"type": "ping"}
     event_str = f"event: ping\ndata: {json.dumps(event_data)}\n\n"
-    logger.debug(f"STREAMING_EVENT: ping")
+    logger.debug("STREAMING_EVENT: ping")
     return event_str
 
 
 def _send_done_event():
     """Send [DONE] marker to terminate stream."""
     event_str = "data: [DONE]\n\n"
-    logger.debug(f"STREAMING_EVENT: [DONE]")
+    logger.debug("STREAMING_EVENT: [DONE]")
     return event_str
 
 
@@ -2520,7 +2480,7 @@ async def convert_openai_streaming_response_to_anthropic(
             logger.info(f"Current content blocks count: {len(current_content_blocks)}")
             logger.info(f"Is tool use: {is_tool_use}")
             logger.info(f"Final stop reason: {final_stop_reason}")
-            logger.info(f"Complete rebuilt response:")
+            logger.info("Complete rebuilt response:")
             logger.info(json.dumps(complete_response, indent=2, ensure_ascii=False))
             logger.info("=== END STREAMING RESPONSE DEBUG ===")
 
@@ -2574,9 +2534,9 @@ async def convert_openai_streaming_response_to_anthropic(
 def _validate_streaming_content_integrity(
     accumulated_text: str,
     accumulated_thinking: str,
-    current_content_blocks: List[Dict[str, Any]],
+    current_content_blocks: list[dict[str, Any]],
     context: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Validate that streaming content is being properly preserved.
     Returns validation results for logging.
@@ -2613,11 +2573,11 @@ def _validate_streaming_content_integrity(
 def _rebuild_complete_response_from_streaming(
     accumulated_text: str,
     accumulated_thinking: str,
-    current_content_blocks: List[Dict[str, Any]],
+    current_content_blocks: list[dict[str, Any]],
     output_tokens: int,
     model: str,
     stop_reason: str = "end_turn",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Rebuild a complete Anthropic-format response from streaming data.
     This helps debug streaming issues by showing what the final response looks like.
@@ -2714,7 +2674,7 @@ def count_tokens_in_response(
 
 
 def _compare_request_data(
-    claude_request: ClaudeMessagesRequest, openai_request: Dict[str, Any]
+    claude_request: ClaudeMessagesRequest, openai_request: dict[str, Any]
 ) -> None:
     """Compare original Claude request with converted OpenAI request and log differences."""
     try:
@@ -2764,14 +2724,14 @@ def _compare_request_data(
 
         # Check for unexpected conversion issues
         warnings = []
-        
+
         # Tools count should always match exactly
         if claude_tools_count != openai_tools_count:
             warnings.append(
                 f"Unexpected tools count difference: {claude_tools_count} -> {openai_tools_count}"
             )
-            
-        # Tool choice should always match exactly  
+
+        # Tool choice should always match exactly
         if claude_has_tool_choice != openai_has_tool_choice:
             warnings.append(
                 f"Unexpected tool choice difference: {claude_has_tool_choice} -> {openai_has_tool_choice}"

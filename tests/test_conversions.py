@@ -6,27 +6,27 @@ Test script for Claude<->OpenAI message conversion functionality.
 Tests both Claude request to OpenAI request conversion and OpenAI response to Claude response conversion.
 """
 
-import sys
 import json
-import uuid
-from typing import Any, Dict, List
+import sys
+
+# Add parent directory to path for imports
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import our conversion functions and models
 from models import (
-    ClaudeMessagesRequest,
-    ClaudeMessagesResponse,
-    ClaudeMessage,
-    ClaudeContentBlockText,
     ClaudeContentBlockImage,
-    ClaudeContentBlockToolUse,
-    ClaudeContentBlockToolResult,
+    ClaudeContentBlockText,
     ClaudeContentBlockThinking,
-    ClaudeTool,
-    ClaudeThinkingConfigEnabled,
+    ClaudeContentBlockToolResult,
+    ClaudeContentBlockToolUse,
+    ClaudeMessage,
+    ClaudeMessagesRequest,
     ClaudeThinkingConfigDisabled,
-    ClaudeUsage,
+    ClaudeThinkingConfigEnabled,
+    ClaudeTool,
     convert_openai_response_to_anthropic,
-    Constants,
 )
 
 
@@ -288,7 +288,7 @@ class TestOpenAIToClaudeConversion(unittest.TestCase):
 
         # Validate thinking block
         self.assertIsNotNone(thinking_block, "Should have thinking content block")
-        self.assertEqual(thinking_block.thinking, reasoning_text, 
+        self.assertEqual(thinking_block.thinking, reasoning_text,
             "Thinking content should match reasoning_content")
         self.assertTrue(hasattr(thinking_block, "signature"), "Should have thinking signature")
 
@@ -404,7 +404,7 @@ class TestMessageProcessing(unittest.TestCase):
         self.assertEqual(user_message["role"], "user",
             f"Second message should be user role, got {user_message['role']}")
         self.assertEqual(user_message["content"], "Thanks! Now let's try something else.",
-            f"User content should match")
+            "User content should match")
 
         print("✅ Tool result message ordering test passed")
 
@@ -827,7 +827,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
     def test_tool_sequence_interruption_conversion(self):
         """Test the specific tool message sequence conversion that's failing in the interruption test."""
         print("🔧 Testing tool message sequence conversion for interruption case...")
-        
+
         # Mock tool definition
         exit_plan_mode_tool = ClaudeTool(
             name="exit_plan_mode",
@@ -840,7 +840,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
                 "required": ["plan"]
             }
         )
-        
+
         # Create the Claude request that mimics the failing test
         claude_request = ClaudeMessagesRequest(
             model="claude-3-5-sonnet-20241022",
@@ -882,72 +882,72 @@ Let me create a new MultiEdit operation with these precise changes for the first
             ],
             tools=[exit_plan_mode_tool],
         )
-        
+
         print(f"📝 Claude request has {len(claude_request.messages)} messages")
-        
+
         # Debug: Print each Claude message
         for i, msg in enumerate(claude_request.messages):
             print(f"  Claude Message {i}: role={msg.role}, content_blocks={len(msg.content) if isinstance(msg.content, list) else 1}")
             if isinstance(msg.content, list):
                 for j, block in enumerate(msg.content):
                     print(f"    Block {j}: type={block.type}")
-        
+
         # Convert to OpenAI format
         openai_request = claude_request.to_openai_request()
         openai_messages = openai_request["messages"]
-        
+
         print(f"📤 Converted to {len(openai_messages)} OpenAI messages:")
         for i, msg in enumerate(openai_messages):
             role = msg.get("role", "unknown")
             has_tool_calls = msg.get("tool_calls") is not None and len(msg.get("tool_calls", [])) > 0
             has_content = bool(msg.get("content"))
             print(f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, has_content={has_content}")
-            
+
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id", "unknown")
                 print(f"    Tool message: tool_call_id={tool_call_id}")
-        
+
         # Check if the sequence follows OpenAI rules
         valid_sequence = True
         last_had_tool_calls = False
-        
+
         for i, msg in enumerate(openai_messages):
             if msg.get("role") == "tool":
                 if not last_had_tool_calls:
                     print(f"❌ Invalid sequence: Tool message at index {i} doesn't follow assistant message with tool_calls")
                     valid_sequence = False
                     break
-            
+
             last_had_tool_calls = (
-                msg.get("role") == "assistant" 
-                and msg.get("tool_calls") is not None 
+                msg.get("role") == "assistant"
+                and msg.get("tool_calls") is not None
                 and len(msg.get("tool_calls", [])) > 0
             )
-        
+
         if valid_sequence:
             print("✅ Message sequence is valid for OpenAI API")
         else:
             print("❌ Message sequence violates OpenAI API rules")
-            
+
         # Assert that the sequence is valid - this will make the test fail if it's not
         self.assertTrue(valid_sequence, "Tool message sequence should be valid for OpenAI API")
-        
+
         # Additional assertions to verify the specific structure
         self.assertGreaterEqual(len(openai_messages), 3, "Should have at least 3 messages: assistant + tool + user")
-        
+
         # First message should be assistant with tool_calls
         self.assertEqual(openai_messages[0]["role"], "assistant")
         self.assertIn("tool_calls", openai_messages[0])
         self.assertEqual(len(openai_messages[0]["tool_calls"]), 1)
         self.assertEqual(openai_messages[0]["tool_calls"][0]["id"], "call_jkl345mno678")
-        
+
         # Second message should be tool result
         self.assertEqual(openai_messages[1]["role"], "tool")
         self.assertEqual(openai_messages[1]["tool_call_id"], "call_jkl345mno678")
-        
+
         # Third message should be user
         self.assertEqual(openai_messages[2]["role"], "user")
-        
+
         print("✅ Tool sequence interruption conversion test passed")
 
     @staticmethod

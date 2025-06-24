@@ -12,38 +12,38 @@ Usage:
   python -m unittest tests_unittest.TestBasicRequests.test_simple_request  # Run specific test
 """
 
-import os
 import json
-import time
-import httpx
-import asyncio
-import unittest
-import sys
-import yaml
 import logging
+import os
+import unittest
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Set
+from typing import Any
+
+import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
 # Setup logger
 logger = logging.getLogger(__name__)
 
+# Add parent directory to path for imports
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Import Pydantic models from models.py
 from models import (
-    ClaudeToolChoice,
-    ClaudeTool,
-    ClaudeMessagesRequest,
-    ClaudeThinkingConfigEnabled,
-    ClaudeThinkingConfigDisabled,
     ClaudeContentBlockText,
-    ClaudeContentBlockToolUse,
     ClaudeContentBlockToolResult,
+    ClaudeContentBlockToolUse,
     ClaudeMessage,
-    ClaudeSystemContent,
-    ClaudeToolChoiceAuto,
+    ClaudeMessagesRequest,
+    ClaudeThinkingConfigDisabled,
+    ClaudeThinkingConfigEnabled,
+    ClaudeTool,
     ClaudeToolChoiceAny,
-    ClaudeToolChoiceTool,
+    ClaudeToolChoiceAuto,
 )
 
 # Load environment variables
@@ -374,7 +374,7 @@ REQUIRED_EVENT_TYPES = {
 }
 
 
-def serialize_request_data(data) -> Dict[str, Any]:
+def serialize_request_data(data) -> dict[str, Any]:
     """Convert Pydantic models to dictionaries for JSON serialization."""
     if isinstance(data, BaseModel):
         serialized = data.model_dump(exclude_none=True)
@@ -474,7 +474,7 @@ class StreamStats:
 
     def summarize(self):
         """Print a summary of the stream statistics."""
-        print(f"📊 Stream Statistics")
+        print("📊 Stream Statistics")
         print(f"   📦 Total chunks: {self.total_chunks}")
         print(f"   🔄 Event types: {sorted(list(self.event_types))}")
         print(f"   📈 Event counts: {json.dumps(self.event_counts, indent=2)}")
@@ -522,7 +522,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(timeout=TEST_TIMEOUT)
         self.base_url = BASE_URL
         self.headers = HEADERS.copy()
-        
+
         # Pretty print test start
         test_name = self._testMethodName
         class_name = self.__class__.__name__
@@ -535,41 +535,41 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
     def run(self, result=None):
         """Override run to capture test results for pretty printing."""
-        test_name = self._testMethodName 
-        
+        test_name = self._testMethodName
+
         # Run the actual test
         test_result = super().run(result)
-        
+
         # Check if test passed or failed and print accordingly
         if result is not None:
             # Check if this test had any failures or errors
             test_failed = False
             test_error = False
-            
+
             # Check for failures
             for failure in result.failures:
                 if failure[0] == self:
                     test_failed = True
                     break
-                    
-            # Check for errors  
+
+            # Check for errors
             for error in result.errors:
                 if error[0] == self:
                     test_error = True
                     break
-                    
+
             if test_failed:
                 print(f"❌ {test_name} failed")
             elif test_error:
-                print(f"💥 {test_name} error")  
+                print(f"💥 {test_name} error")
             else:
                 print(f"✅ {test_name} passed")
-        
+
         return test_result
 
     async def make_request(
         self, request_data: ClaudeMessagesRequest, stream: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make a request to the proxy server."""
         serialized_data = serialize_request_data(request_data)
 
@@ -592,7 +592,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
                 "content": response.text,
             }
 
-    async def _process_streaming_response(self, response) -> Dict[str, Any]:
+    async def _process_streaming_response(self, response) -> dict[str, Any]:
         """Process streaming response and return aggregated result."""
         response.raise_for_status()
 
@@ -662,7 +662,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
         return {"content": content_blocks, "role": "assistant", "type": "message"}
 
-    def assertResponseValid(self, response: Dict[str, Any]):
+    def assertResponseValid(self, response: dict[str, Any]):
         """Assert that a response has valid structure."""
         self.assertIn("content", response)
         self.assertIn("role", response)
@@ -670,7 +670,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(response["content"], list)
         self.assertGreater(len(response["content"]), 0)
 
-    def assertHasTextContent(self, response: Dict[str, Any], min_length: int = 1):
+    def assertHasTextContent(self, response: dict[str, Any], min_length: int = 1):
         """Assert that response contains text content."""
         text_blocks = [
             block for block in response["content"] if block.get("type") == "text"
@@ -684,7 +684,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             f"Text content should be at least {min_length} characters",
         )
 
-    def assertHasToolUse(self, response: Dict[str, Any], tool_name: str = None):
+    def assertHasToolUse(self, response: dict[str, Any], tool_name: str = None):
         """Assert that response contains tool use."""
         tool_blocks = [
             block for block in response["content"] if block.get("type") == "tool_use"
@@ -697,7 +697,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
                 tool_name, tool_names, f"Response should use tool '{tool_name}'"
             )
 
-    def assertHasThinking(self, response: Dict[str, Any]):
+    def assertHasThinking(self, response: dict[str, Any]):
         """Assert that response contains thinking content."""
         thinking_blocks = [
             block for block in response["content"] if block.get("type") == "thinking"
@@ -708,7 +708,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
     async def make_anthropic_request(
         self, request_data: ClaudeMessagesRequest, stream: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make a request to the official Anthropic API."""
         serialized_data = serialize_request_data(request_data)
 
@@ -733,7 +733,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
     async def make_proxy_test_conversion_request(
         self, request_data: ClaudeMessagesRequest
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Make a request to the proxy test conversion endpoint
         without routing and using the request_data.model as model_id
@@ -761,13 +761,13 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
     def compare_responses(
         self,
-        anthropic_response: Dict[str, Any],
-        proxy_response: Dict[str, Any],
+        anthropic_response: dict[str, Any],
+        proxy_response: dict[str, Any],
         check_tools: bool = False,
         compare_content: bool = False,
         test_name: str = None,
         has_thinking: bool = False,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Compare the two responses using Anthropic as ground truth.
 
@@ -1045,7 +1045,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
         # Print failure summary if any
         if not test_passed:
-            print(f"\n❌ Test failed due to missing features:")
+            print("\n❌ Test failed due to missing features:")
             for reason in failure_reasons:
                 print(f"  - {reason}")
         else:
@@ -1059,7 +1059,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         request_data: ClaudeMessagesRequest,
         check_tools: bool = False,
         has_thinking: bool = False,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """Run a comparison test between proxy and Anthropic API."""
         print(f"\n{'=' * 20} RUNNING COMPARISON TEST: {test_name} {'=' * 20}")
 
@@ -1082,7 +1082,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         request_data: ClaudeMessagesRequest,
         check_tools: bool = False,
         compare_with_anthropic: bool = True,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """Run a direct conversion test using the test_conversion endpoint."""
         print(f"\n{'=' * 20} RUNNING DIRECT CONVERSION TEST: {test_name} {'=' * 20}")
 
@@ -1130,7 +1130,7 @@ class TestBasicRequests(ProxyTestBase):
 
     async def test_simple_request(self):
         """Test simple text request without tools."""
-        
+
         request = ClaudeMessagesRequest(
             model=MODEL,
             max_tokens=100,
@@ -1157,7 +1157,7 @@ class TestBasicRequests(ProxyTestBase):
 
     async def test_simple_streaming_request(self):
         """Test simple streaming text request."""
-        
+
         request = ClaudeMessagesRequest(
             model=MODEL,
             max_tokens=100,
@@ -1175,7 +1175,7 @@ class TestBasicRequests(ProxyTestBase):
 
     async def test_system_message(self):
         """Test request with system message."""
-        
+
         request = ClaudeMessagesRequest(
             model=MODEL,
             max_tokens=100,
@@ -2072,8 +2072,8 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
                         )
                     ],
                 ),
-                # User interrupts with mixed content - tool result + user message 
-                # This tests the critical message conversion: ClaudeMessage(tool_result + text) 
+                # User interrupts with mixed content - tool result + user message
+                # This tests the critical message conversion: ClaudeMessage(tool_result + text)
                 # converts to OpenAI sequence: Assistant(tool_calls) → Tool(tool_result) → User(text)
                 ClaudeMessage(
                     role="user",
@@ -2215,9 +2215,9 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tools=[glob_tool, read_tool, exit_plan_mode_tool],
             tool_choice=tool_choice_required,  # This should cause an error for thinking models
         )
-        
+
         print("🧠 Testing thinking model with tool_choice=required (expecting error)...")
-        
+
         # Test with a request that clearly requires tool use to isolate the tool_choice validation
         tool_request = ClaudeMessagesRequest(
             model=MODEL_THINKING,
@@ -2229,17 +2229,17 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tools=[glob_tool],
             tool_choice=tool_choice_required,
         )
-        
+
         # Make the comparison test to see if Anthropic API vs our proxy behave differently
         try:
             passed, warning = await self.make_comparison_test("test_thinking_model_tool_choice_required", tool_request, check_tools=True)
             print(f"🧠 Thinking model tool_choice=required test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}")
-            
+
             if passed:
                 print("✅ Both Anthropic and Proxy handle thinking model + tool_choice=required correctly")
             else:
                 print("⚠️ Different behavior between Anthropic and Proxy for thinking model + tool_choice=required")
-                
+
         except Exception as e:
             error_message = str(e)
             print(f"🧠 Comparison test failed: {error_message}")
@@ -2378,15 +2378,15 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tools=[glob_tool, read_tool, exit_plan_mode_tool],
             tool_choice=tool_choice_auto,  # Use auto for thinking models
         )
-        
+
         print("🧠 Testing thinking model interruption behavior with tool_choice=auto...")
-        
+
         try:
             passed, warning = await self.make_comparison_test("test_thinking_model_interruption_stream", request, check_tools=False)
             print(
                 f"thinking model interruption test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
             )
-            
+
             # Note: Thinking models often exhibit different behavior from regular models:
             # - They may choose NOT to use tools when they can infer answers from context
             # - This is actually intelligent behavior - avoiding unnecessary tool calls
@@ -2394,7 +2394,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             if "Neither response contains tool use" in str(warning):
                 print("✅ Expected behavior: Thinking model intelligently avoided unnecessary tool calls")
                 print("🧠 Thinking model used context reasoning instead of tools")
-            
+
         except Exception as e:
             print(f"❌ Thinking model test failed with error: {e}")
             # This is acceptable - we're exploring the behavior

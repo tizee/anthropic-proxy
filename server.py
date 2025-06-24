@@ -1,43 +1,42 @@
-import yaml
-from typing import Dict, Optional, Any
-import os.path
-
-from fastapi import FastAPI, Request, HTTPException
-import uvicorn
-import logging
 import json
+import logging
 import os
+import os.path
+import sys
+import time
+from datetime import datetime
+from typing import Any
+
+import tiktoken
+import uvicorn
+import yaml
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from openai import AsyncOpenAI, AsyncStream
 from openai import (
-    APIError,
     APIConnectionError,
+    APIError,
     APITimeoutError,
-    RateLimitError,
+    AsyncOpenAI,
+    AsyncStream,
     AuthenticationError,
+    RateLimitError,
 )
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionChunk,
 )
 
-import time
-from dotenv import load_dotenv
-from datetime import datetime
-import sys
-import tiktoken
-
 from models import (
-    ModelDefaults,
     ClaudeMessagesRequest,
     ClaudeTokenCountRequest,
     ClaudeTokenCountResponse,
-    global_usage_stats,
-    update_global_usage_stats,
+    ModelDefaults,
     convert_openai_response_to_anthropic,
     convert_openai_streaming_response_to_anthropic,
+    global_usage_stats,
+    update_global_usage_stats,
 )
-
 
 # Load environment variables from .env file
 load_dotenv()
@@ -94,7 +93,7 @@ class Config:
         """Add a custom API key"""
         self.custom_api_keys[key_name] = key_value
 
-    def get_api_key_for_provider(self, provider: str) -> Optional[str]:
+    def get_api_key_for_provider(self, provider: str) -> str | None:
         """Get API key for a specific provider"""
         if provider in self.custom_api_keys:
             return self.custom_api_keys[provider]
@@ -207,7 +206,7 @@ def load_custom_models(config_file=None):
         return
 
     try:
-        with open(config_file, "r") as file:
+        with open(config_file) as file:
             models = yaml.safe_load(file)
 
         if not models:
@@ -391,7 +390,7 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-def _extract_error_details(e: Exception) -> Dict[str, Any]:
+def _extract_error_details(e: Exception) -> dict[str, Any]:
     """Extract comprehensive error details from an exception, ensuring all values are JSON serializable."""
     import traceback
 
@@ -451,7 +450,7 @@ def _extract_error_details(e: Exception) -> Dict[str, Any]:
     return error_details
 
 
-def _format_error_message(e: Exception, error_details: Dict[str, Any]) -> str:
+def _format_error_message(e: Exception, error_details: dict[str, Any]) -> str:
     """Format error message for response."""
     error_message = f"Error: {str(e)}"
     if "message" in error_details and error_details["message"]:
@@ -526,13 +525,13 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         if not has_thinking and openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
             current_tool_choice = openai_request.get("tool_choice")
             if current_tool_choice is None:
-                logger.debug(f"🔧 Setting tool_choice to 'required' for better model consistency (was None)")
+                logger.debug("🔧 Setting tool_choice to 'required' for better model consistency (was None)")
                 openai_request["tool_choice"] = "required"
             elif current_tool_choice == "auto":
-                logger.debug(f"🔧 Adjusting tool_choice from 'auto' to 'required' for better model consistency")
+                logger.debug("🔧 Adjusting tool_choice from 'auto' to 'required' for better model consistency")
                 openai_request["tool_choice"] = "required"
         elif has_thinking and openai_request.get("tools"):
-            logger.debug(f"🧠 Keeping tool_choice as-is for thinking model (required not supported)")
+            logger.debug("🧠 Keeping tool_choice as-is for thinking model (required not supported)")
 
         # doubao-seed models use "thinking" field as the same as Anthropic's
         #  options:
