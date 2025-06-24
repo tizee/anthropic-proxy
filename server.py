@@ -592,11 +592,6 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             ] in ["low", "medium", "high"]:
                 openai_request["reasoning_effort"] = model_config["reasoning_effort"]
             openai_request["extra_body"]["thinking"] = {"type": "enabled"}
-        elif model_config["reasoning_effort"] and model_config[
-                "reasoning_effort"
-            ] in ["low", "medium", "high"]:
-            # enable the model to think automatically
-            openai_request["extra_body"]["thinking"] = {"type": "auto"}
         else:
             # thinking not supported
             openai_request["extra_body"]["thinking"] = {"type": "disabled"}

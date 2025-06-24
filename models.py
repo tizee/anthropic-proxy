@@ -393,6 +393,39 @@ class ClaudeMessage(BaseModel):
 
         return content
 
+    def _merge_text_content_parts(self, content_parts: list) -> str | list:
+        """
+        Smart content merging for OpenAI API compatibility.
+        
+        Args:
+            content_parts: List of OpenAI content parts (text/image/function_call/etc.)
+            
+        Returns:
+            - If single text part: string content  
+            - If multiple pure text parts: merged string
+            - If mixed content (text + non-text): original list for OpenAI API compatibility
+        """
+        if not content_parts:
+            return ""
+            
+        # Special case: single text part -> extract string directly
+        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+            return content_parts[0].get("text", "")
+            
+        # Check if ALL parts are text (no images, tool calls, etc.)
+        all_text = all(part.get("type") == "text" for part in content_parts)
+        
+        if all_text and len(content_parts) > 1:
+            # Multiple text parts -> merge into single string
+            merged_text = ""
+            for part in content_parts:
+                if part.get("text"):
+                    merged_text += part["text"]
+            return merged_text
+        else:
+            # Mixed content or other cases -> return as-is for OpenAI API
+            return content_parts
+
     def to_openai_messages(self) -> list[ChatCompletionMessageParam]:
         """
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
@@ -437,10 +470,7 @@ class ClaudeMessage(BaseModel):
                 # CRITICAL: Split message when tool_result is encountered
                 if content_parts:
                     current_message: dict[str, Any] = {"role": self.role}
-                    if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                        current_message["content"] = content_parts[0]["text"]
-                    else:
-                        current_message["content"] = content_parts
+                    current_message["content"] = self._merge_text_content_parts(content_parts)
                     if self.role == "assistant" and len(tool_calls) > 0:
                         current_message["tool_calls"] = tool_calls
                         tool_calls.clear()
@@ -460,10 +490,7 @@ class ClaudeMessage(BaseModel):
         if content_parts or (self.role == "assistant" and len(tool_calls) > 0):
             current_message: dict[str, Any] = {"role": self.role}
             if content_parts:
-                if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                    current_message["content"] = content_parts[0]["text"]
-                else:
-                    current_message["content"] = content_parts
+                current_message["content"] = self._merge_text_content_parts(content_parts)
             else:
                 # Assistant message with only tool_calls, no content
                 # Don't set content field when there's no content (OpenAI API allows omitting it)
@@ -1666,7 +1693,7 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
 async def convert_openai_streaming_response_to_anthropic(
     response_generator: AsyncStream[ChatCompletionChunk],
     original_request: ClaudeMessagesRequest,
-    routed_model: str = None,
+    routed_model: str | None = None,
 ):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
     has_sent_stop_reason = False
@@ -1920,8 +1947,13 @@ async def convert_openai_streaming_response_to_anthropic(
                     # Handle reasoning/thinking content first (from deepseek reasoning models)
                     delta_reasoning = None
                     raw_delta = delta.model_dump()
-                    if isinstance(raw_delta, dict) and "reasoning_content" in raw_delta:
-                        delta_reasoning = raw_delta["reasoning_content"]
+                    logger.debug(
+                        f"raw delta: {raw_delta}"
+                    )
+                    if isinstance(raw_delta, dict) and ("reasoning_content" in raw_delta or "reasoning" in raw_delta):
+                        # reasoning_content for deepseek-like models
+                        # reasoning for Gemini models
+                        delta_reasoning = raw_delta.get("reasoning_content") or raw_delta.get("reasoning")
 
                     if delta_reasoning is not None and delta_reasoning != "":
                         accumulated_thinking += delta_reasoning

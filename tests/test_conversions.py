@@ -433,17 +433,9 @@ class TestMessageProcessing(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         user_message = messages[0]
         self.assertEqual(user_message["role"], "user")
-        # Content should be a list with both text and converted thinking content
-        self.assertIsInstance(user_message["content"], list)
-        self.assertEqual(len(user_message["content"]), 2)
-
-        # First item should be the regular text
-        self.assertEqual(user_message["content"][0]["type"], "text")
-        self.assertEqual(user_message["content"][0]["text"], "Regular user message")
-
-        # Second item should be the converted thinking content
-        self.assertEqual(user_message["content"][1]["type"], "text")
-        self.assertEqual(user_message["content"][1]["text"], "This is internal thinking")
+        # Text + thinking content should now be merged into a single string
+        self.assertIsInstance(user_message["content"], str)
+        self.assertEqual(user_message["content"], "Regular user messageThis is internal thinking")
 
         print("✅ Thinking content conversion test passed")
 
@@ -772,11 +764,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         openai_mixed = mixed_message.to_openai_messages()
         self.assertEqual(len(openai_mixed), 1)
         self.assertEqual(openai_mixed[0]["role"], "user")
-        self.assertIsInstance(openai_mixed[0]["content"], list)
-        self.assertEqual(len(openai_mixed[0]["content"]), 2)
-        self.assertEqual(openai_mixed[0]["content"][0]["type"], "text")
-        self.assertEqual(openai_mixed[0]["content"][0]["text"], "Hello ")
-        self.assertEqual(openai_mixed[0]["content"][1]["text"], "world!")
+        # Multiple text blocks should now be merged into a single string
+        self.assertIsInstance(openai_mixed[0]["content"], str)
+        self.assertEqual(openai_mixed[0]["content"], "Hello world!")
 
         # Test assistant message with tool use conversion
         assistant_message = ClaudeMessage(
