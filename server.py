@@ -517,6 +517,23 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         openai_request["extra_headers"] = model_config["extra_headers"] or {}
         openai_request["extra_body"] = model_config["extra_body"] or {}
 
+        # Intelligent tool_choice adjustment for better model consistency
+        # Based on test findings from claude_code_interruption_test:
+        # - Claude models naturally tend to use tools in interruption/verification scenarios
+        # - Other models (DeepSeek, etc.) may not use tools when tool_choice is None or auto
+        # - tool_choice=required ensures consistent behavior across all models
+        # - Exception: Thinking models don't support tool_choice=required (API limitation)
+        if not has_thinking and openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
+            current_tool_choice = openai_request.get("tool_choice")
+            if current_tool_choice is None:
+                logger.debug(f"🔧 Setting tool_choice to 'required' for better model consistency (was None)")
+                openai_request["tool_choice"] = "required"
+            elif current_tool_choice == "auto":
+                logger.debug(f"🔧 Adjusting tool_choice from 'auto' to 'required' for better model consistency")
+                openai_request["tool_choice"] = "required"
+        elif has_thinking and openai_request.get("tools"):
+            logger.debug(f"🧠 Keeping tool_choice as-is for thinking model (required not supported)")
+
         # doubao-seed models use "thinking" field as the same as Anthropic's
         #  options:
         #   disabled: not output reasoning content

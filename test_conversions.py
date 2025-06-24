@@ -98,10 +98,11 @@ def create_mock_openai_response(
     )
 
 
-class TestMessageConversion(unittest.TestCase):
+class TestClaudeToOpenAIConversion(unittest.TestCase):
+    """Test conversion from Claude format to OpenAI format."""
     def test_basic_claude_to_openai(self):
         """Test basic Claude message conversion to OpenAI format."""
-        print("🧪 Testing basic Claude to OpenAI conversion...")
+        # Test basic Claude message conversion to OpenAI format
 
         test_request = ClaudeMessagesRequest(
             model="test-model",
@@ -112,19 +113,19 @@ class TestMessageConversion(unittest.TestCase):
         result = test_request.to_openai_request()
 
         # Validate structure
-        assert "model" in result
-        assert "messages" in result
-        assert "max_tokens" in result
-        assert result["model"] == "test-model"
-        assert len(result["messages"]) == 1
-        assert result["messages"][0]["role"] == "user"
-        assert result["messages"][0]["content"] == "Hello, world!"
+        self.assertIn("model", result)
+        self.assertIn("messages", result)
+        self.assertIn("max_tokens", result)
+        self.assertEqual(result["model"], "test-model")
+        self.assertEqual(len(result["messages"]), 1)
+        self.assertEqual(result["messages"][0]["role"], "user")
+        self.assertEqual(result["messages"][0]["content"], "Hello, world!")
 
-        print("✅ Basic Claude to OpenAI conversion test passed")
+        # Basic conversion test completed
 
     def test_system_message_conversion(self):
         """Test system message conversion."""
-        print("🧪 Testing system message conversion...")
+        # Test system message conversion
 
         test_request = ClaudeMessagesRequest(
             model="test-model",
@@ -136,13 +137,13 @@ class TestMessageConversion(unittest.TestCase):
         result = test_request.to_openai_request()
 
         # Should have system message first
-        assert len(result["messages"]) == 2
-        assert result["messages"][0]["role"] == "system"
-        assert result["messages"][0]["content"] == "You are a helpful assistant."
-        assert result["messages"][1]["role"] == "user"
-        assert result["messages"][1]["content"] == "Hello!"
+        self.assertEqual(len(result["messages"]), 2)
+        self.assertEqual(result["messages"][0]["role"], "system")
+        self.assertEqual(result["messages"][0]["content"], "You are a helpful assistant.")
+        self.assertEqual(result["messages"][1]["role"], "user")
+        self.assertEqual(result["messages"][1]["content"], "Hello!")
 
-        print("✅ System message conversion test passed")
+        # System message conversion test completed
 
     def test_tool_conversion(self):
         """Test tool conversion from Claude to OpenAI format."""
@@ -173,17 +174,21 @@ class TestMessageConversion(unittest.TestCase):
         result = test_request.to_openai_request()
 
         # Validate tools conversion
-        assert "tools" in result
-        assert len(result["tools"]) == 1
+        self.assertIn("tools", result)
+        self.assertEqual(len(result["tools"]), 1)
 
         tool = result["tools"][0]
-        assert tool["type"] == "function"
-        assert "function" in tool
-        assert tool["function"]["name"] == "calculator"
-        assert tool["function"]["description"] == "Evaluate mathematical expressions"
-        assert "parameters" in tool["function"]
+        self.assertEqual(tool["type"], "function")
+        self.assertIn("function", tool)
+        self.assertEqual(tool["function"]["name"], "calculator")
+        self.assertEqual(tool["function"]["description"], "Evaluate mathematical expressions")
+        self.assertIn("parameters", tool["function"])
 
         print("✅ Tool conversion test passed")
+
+
+class TestOpenAIToClaudeConversion(unittest.TestCase):
+    """Test conversion from OpenAI format to Claude format."""
 
     def test_openai_to_claude_basic(self):
         """Test basic OpenAI to Claude response conversion."""
@@ -201,12 +206,12 @@ class TestMessageConversion(unittest.TestCase):
         result = convert_openai_response_to_anthropic(mock_response, original_request)
 
         # Validate structure
-        assert result.role == "assistant"
-        assert len(result.content) >= 1
-        assert result.content[0].type == "text"
-        assert result.content[0].text == "Hello! How can I help you?"
-        assert result.usage.input_tokens == 10
-        assert result.usage.output_tokens == 20
+        self.assertEqual(result.role, "assistant")
+        self.assertGreaterEqual(len(result.content), 1)
+        self.assertEqual(result.content[0].type, "text")
+        self.assertEqual(result.content[0].text, "Hello! How can I help you?")
+        self.assertEqual(result.usage.input_tokens, 10)
+        self.assertEqual(result.usage.output_tokens, 20)
 
         print("✅ Basic OpenAI to Claude conversion test passed")
 
@@ -229,7 +234,7 @@ class TestMessageConversion(unittest.TestCase):
         result = convert_openai_response_to_anthropic(mock_response, original_request)
 
         # Should have text content and tool use
-        assert len(result.content) >= 2
+        self.assertGreaterEqual(len(result.content), 2)
 
         # Find text and tool blocks
         text_block = None
@@ -241,11 +246,11 @@ class TestMessageConversion(unittest.TestCase):
             elif block.type == "tool_use":
                 tool_block = block
 
-        assert text_block is not None
-        assert tool_block is not None
-        assert text_block.text == "I'll calculate that for you."
-        assert tool_block.name == "calculator"
-        assert tool_block.input == {"expression": "2+2"}
+        self.assertIsNotNone(text_block)
+        self.assertIsNotNone(tool_block)
+        self.assertEqual(text_block.text, "I'll calculate that for you.")
+        self.assertEqual(tool_block.name, "calculator")
+        self.assertEqual(tool_block.input, {"expression": "2+2"})
 
         print("✅ OpenAI to Claude tool conversion test passed")
 
@@ -269,7 +274,7 @@ class TestMessageConversion(unittest.TestCase):
         result = convert_openai_response_to_anthropic(mock_response, original_request)
 
         # Should have both thinking and text content blocks
-        assert len(result.content) >= 2
+        self.assertGreaterEqual(len(result.content), 2)
 
         # Find thinking and text blocks
         thinking_block = None
@@ -282,19 +287,21 @@ class TestMessageConversion(unittest.TestCase):
                 text_block = block
 
         # Validate thinking block
-        assert thinking_block is not None, "Should have thinking content block"
-        assert thinking_block.thinking == reasoning_text, (
-            "Thinking content should match reasoning_content"
-        )
-        assert hasattr(thinking_block, "signature"), "Should have thinking signature"
+        self.assertIsNotNone(thinking_block, "Should have thinking content block")
+        self.assertEqual(thinking_block.thinking, reasoning_text, 
+            "Thinking content should match reasoning_content")
+        self.assertTrue(hasattr(thinking_block, "signature"), "Should have thinking signature")
 
         # Validate text block
-        assert text_block is not None, "Should have text content block"
-        assert text_block.text == "The answer is 4.", (
-            "Text content should match response content"
-        )
+        self.assertIsNotNone(text_block, "Should have text content block")
+        self.assertEqual(text_block.text, "The answer is 4.",
+            "Text content should match response content")
 
         print("✅ Reasoning content to thinking conversion test passed")
+
+
+class TestMessageProcessing(unittest.TestCase):
+    """Test message processing and content block handling."""
 
     def test_mixed_content_message_conversion(self):
         """Test conversion of messages with mixed content types."""
@@ -324,28 +331,28 @@ class TestMessageConversion(unittest.TestCase):
         result = test_request.to_openai_request()
         messages = result["messages"]
 
-        assert len(messages) == 1
+        self.assertEqual(len(messages), 1)
         user_message = messages[0]
-        assert user_message["role"] == "user"
-        assert isinstance(user_message["content"], list)
-        assert len(user_message["content"]) == 3
+        self.assertEqual(user_message["role"], "user")
+        self.assertIsInstance(user_message["content"], list)
+        self.assertEqual(len(user_message["content"]), 3)
 
         # Check text content
         text_parts = [
             part for part in user_message["content"] if part["type"] == "text"
         ]
-        assert len(text_parts) == 2
-        assert text_parts[0]["text"] == "Look at this image: "
-        assert text_parts[1]["text"] == " What do you see?"
+        self.assertEqual(len(text_parts), 2)
+        self.assertEqual(text_parts[0]["text"], "Look at this image: ")
+        self.assertEqual(text_parts[1]["text"], " What do you see?")
 
         # Check image content
         image_parts = [
             part for part in user_message["content"] if part["type"] == "image_url"
         ]
-        assert len(image_parts) == 1
-        assert (
-            "data:image/jpeg;base64,fake_image_data"
-            in image_parts[0]["image_url"]["url"]
+        self.assertEqual(len(image_parts), 1)
+        self.assertIn(
+            "data:image/jpeg;base64,fake_image_data",
+            image_parts[0]["image_url"]["url"]
         )
 
         print("✅ Mixed content message conversion test passed")
@@ -381,28 +388,23 @@ class TestMessageConversion(unittest.TestCase):
         messages = result["messages"]
 
         # Should have exactly 2 messages in correct order
-        assert len(messages) == 2, f"Expected exactly 2 messages, got {len(messages)}"
+        self.assertEqual(len(messages), 2, f"Expected exactly 2 messages, got {len(messages)}")
 
         # First message should be the tool result
         tool_message = messages[0]
-        assert tool_message["role"] == "tool", (
-            f"First message should be tool role, got {tool_message['role']}"
-        )
-        assert tool_message["tool_call_id"] == "call_test_123", (
-            "Tool call ID should match"
-        )
-        assert "Tool operation completed successfully" in tool_message["content"], (
-            "Tool result content should match"
-        )
+        self.assertEqual(tool_message["role"], "tool",
+            f"First message should be tool role, got {tool_message['role']}")
+        self.assertEqual(tool_message["tool_call_id"], "call_test_123",
+            "Tool call ID should match")
+        self.assertIn("Tool operation completed successfully", tool_message["content"],
+            "Tool result content should match")
 
         # Second message should be the user content
         user_message = messages[1]
-        assert user_message["role"] == "user", (
-            f"Second message should be user role, got {user_message['role']}"
-        )
-        assert user_message["content"] == "Thanks! Now let's try something else.", (
-            f"User content should match"
-        )
+        self.assertEqual(user_message["role"], "user",
+            f"Second message should be user role, got {user_message['role']}")
+        self.assertEqual(user_message["content"], "Thanks! Now let's try something else.",
+            f"User content should match")
 
         print("✅ Tool result message ordering test passed")
 
@@ -428,22 +430,26 @@ class TestMessageConversion(unittest.TestCase):
         result = test_request.to_openai_request()
         messages = result["messages"]
 
-        assert len(messages) == 1
+        self.assertEqual(len(messages), 1)
         user_message = messages[0]
-        assert user_message["role"] == "user"
+        self.assertEqual(user_message["role"], "user")
         # Content should be a list with both text and converted thinking content
-        assert isinstance(user_message["content"], list)
-        assert len(user_message["content"]) == 2
+        self.assertIsInstance(user_message["content"], list)
+        self.assertEqual(len(user_message["content"]), 2)
 
         # First item should be the regular text
-        assert user_message["content"][0]["type"] == "text"
-        assert user_message["content"][0]["text"] == "Regular user message"
+        self.assertEqual(user_message["content"][0]["type"], "text")
+        self.assertEqual(user_message["content"][0]["text"], "Regular user message")
 
         # Second item should be the converted thinking content
-        assert user_message["content"][1]["type"] == "text"
-        assert user_message["content"][1]["text"] == "This is internal thinking"
+        self.assertEqual(user_message["content"][1]["type"], "text")
+        self.assertEqual(user_message["content"][1]["text"], "This is internal thinking")
 
         print("✅ Thinking content conversion test passed")
+
+
+class TestContentBlockMethods(unittest.TestCase):
+    """Test individual content block conversion methods."""
 
     def test_content_block_methods(self):
         """Test individual content block conversion methods."""
@@ -452,7 +458,7 @@ class TestMessageConversion(unittest.TestCase):
         # Test text block
         text_block = ClaudeContentBlockText(type="text", text="Test text")
         text_result = text_block.to_openai()
-        assert text_result == {"type": "text", "text": "Test text"}
+        self.assertEqual(text_result, {"type": "text", "text": "Test text"})
 
         # Test image block
         image_block = ClaudeContentBlockImage(
@@ -464,9 +470,9 @@ class TestMessageConversion(unittest.TestCase):
             },
         )
         image_result = image_block.to_openai()
-        assert image_result["type"] == "image_url"
-        assert (
-            image_result["image_url"]["url"] == "data:image/png;base64,test_image_data"
+        self.assertEqual(image_result["type"], "image_url")
+        self.assertEqual(
+            image_result["image_url"]["url"], "data:image/png;base64,test_image_data"
         )
 
         # Test thinking block (should return text block)
@@ -474,8 +480,8 @@ class TestMessageConversion(unittest.TestCase):
             type="thinking", thinking="Internal thoughts"
         )
         thinking_result = thinking_block.to_openai()
-        assert thinking_result["type"] == "text"
-        assert thinking_result["text"] == "Internal thoughts"
+        self.assertEqual(thinking_result["type"], "text")
+        self.assertEqual(thinking_result["text"], "Internal thoughts")
 
         # Test tool use block
         tool_use_block = ClaudeContentBlockToolUse(
@@ -485,19 +491,23 @@ class TestMessageConversion(unittest.TestCase):
             input={"expression": "2+2"},
         )
         tool_use_result = tool_use_block.to_openai()
-        assert tool_use_result["id"] == "call_456"
-        assert tool_use_result["function"]["name"] == "calculator"
+        self.assertEqual(tool_use_result["id"], "call_456")
+        self.assertEqual(tool_use_result["function"]["name"], "calculator")
 
         # Test tool result block
         tool_result_block = ClaudeContentBlockToolResult(
             type="tool_result", tool_use_id="call_456", content="4"
         )
         tool_result_result = tool_result_block.to_openai_message()
-        assert tool_result_result["role"] == "tool"
-        assert tool_result_result["tool_call_id"] == "call_456"
-        assert tool_result_result["content"] == "4"
+        self.assertEqual(tool_result_result["role"], "tool")
+        self.assertEqual(tool_result_result["tool_call_id"], "call_456")
+        self.assertEqual(tool_result_result["content"], "4")
 
         print("✅ Content block methods test passed")
+
+
+class TestAdvancedFeatures(unittest.TestCase):
+    """Test advanced features like function call parsing and complex scenarios."""
 
     def test_function_call_parsing(self):
         """Test function call parsing from thinking content."""
@@ -678,33 +688,32 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         # Validate message structure - should be 5 messages due to message splitting
         # user -> assistant -> tool -> user -> assistant
-        assert len(messages) == 5, f"Expected 5 messages, got {len(messages)}"
+        self.assertEqual(len(messages), 5, f"Expected 5 messages, got {len(messages)}")
 
         # Check message roles and order
         expected_roles = ["user", "assistant", "tool", "user", "assistant"]
         actual_roles = [msg["role"] for msg in messages]
-        assert actual_roles == expected_roles, (
-            f"Expected roles {expected_roles}, got {actual_roles}"
-        )
+        self.assertEqual(actual_roles, expected_roles,
+            f"Expected roles {expected_roles}, got {actual_roles}")
 
         # Validate assistant message with tool calls
         assistant_msg = messages[1]
-        assert assistant_msg["role"] == "assistant"
-        assert assistant_msg["content"] == "I'll check the weather for you."
-        assert "tool_calls" in assistant_msg
-        assert len(assistant_msg["tool_calls"]) == 1
-        assert assistant_msg["tool_calls"][0]["function"]["name"] == "get_weather"
+        self.assertEqual(assistant_msg["role"], "assistant")
+        self.assertEqual(assistant_msg["content"], "I'll check the weather for you.")
+        self.assertIn("tool_calls", assistant_msg)
+        self.assertEqual(len(assistant_msg["tool_calls"]), 1)
+        self.assertEqual(assistant_msg["tool_calls"][0]["function"]["name"], "get_weather")
 
         # Validate tool result
         tool_msg = messages[2]
-        assert tool_msg["role"] == "tool"
-        assert tool_msg["tool_call_id"] == "toolu_weather_123"
-        assert tool_msg["content"] == "Sunny, 75°F"
+        self.assertEqual(tool_msg["role"], "tool")
+        self.assertEqual(tool_msg["tool_call_id"], "toolu_weather_123")
+        self.assertEqual(tool_msg["content"], "Sunny, 75°F")
 
         # Validate follow-up user message
         followup_user_msg = messages[3]
-        assert followup_user_msg["role"] == "user"
-        assert followup_user_msg["content"] == "That's nice! What about tomorrow?"
+        self.assertEqual(followup_user_msg["role"], "user")
+        self.assertEqual(followup_user_msg["content"], "That's nice! What about tomorrow?")
 
         print("✅ Complex conversation flow test passed")
 
@@ -724,8 +733,8 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         result_enabled = test_request_enabled.to_openai_request()
         # Should still convert normally (thinking is handled in routing)
-        assert "messages" in result_enabled
-        assert len(result_enabled["messages"]) == 1
+        self.assertIn("messages", result_enabled)
+        self.assertEqual(len(result_enabled["messages"]), 1)
 
         # Test with thinking disabled
         test_request_disabled = ClaudeMessagesRequest(
@@ -736,8 +745,8 @@ Let me create a new MultiEdit operation with these precise changes for the first
         )
 
         result_disabled = test_request_disabled.to_openai_request()
-        assert "messages" in result_disabled
-        assert len(result_disabled["messages"]) == 1
+        self.assertIn("messages", result_disabled)
+        self.assertEqual(len(result_disabled["messages"]), 1)
 
         print("✅ Thinking configuration test passed")
 
@@ -748,9 +757,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # Test simple text message conversion
         text_message = ClaudeMessage(role="user", content="Simple text")
         openai_messages = text_message.to_openai_messages()
-        assert len(openai_messages) == 1
-        assert openai_messages[0]["role"] == "user"
-        assert openai_messages[0]["content"] == "Simple text"
+        self.assertEqual(len(openai_messages), 1)
+        self.assertEqual(openai_messages[0]["role"], "user")
+        self.assertEqual(openai_messages[0]["content"], "Simple text")
 
         # Test mixed content message conversion
         mixed_message = ClaudeMessage(
@@ -761,13 +770,13 @@ Let me create a new MultiEdit operation with these precise changes for the first
             ],
         )
         openai_mixed = mixed_message.to_openai_messages()
-        assert len(openai_mixed) == 1
-        assert openai_mixed[0]["role"] == "user"
-        assert isinstance(openai_mixed[0]["content"], list)
-        assert len(openai_mixed[0]["content"]) == 2
-        assert openai_mixed[0]["content"][0]["type"] == "text"
-        assert openai_mixed[0]["content"][0]["text"] == "Hello "
-        assert openai_mixed[0]["content"][1]["text"] == "world!"
+        self.assertEqual(len(openai_mixed), 1)
+        self.assertEqual(openai_mixed[0]["role"], "user")
+        self.assertIsInstance(openai_mixed[0]["content"], list)
+        self.assertEqual(len(openai_mixed[0]["content"]), 2)
+        self.assertEqual(openai_mixed[0]["content"][0]["type"], "text")
+        self.assertEqual(openai_mixed[0]["content"][0]["text"], "Hello ")
+        self.assertEqual(openai_mixed[0]["content"][1]["text"], "world!")
 
         # Test assistant message with tool use conversion
         assistant_message = ClaudeMessage(
@@ -783,13 +792,13 @@ Let me create a new MultiEdit operation with these precise changes for the first
             ],
         )
         openai_assistant = assistant_message.to_openai_messages()
-        assert len(openai_assistant) == 1
-        assert openai_assistant[0]["role"] == "assistant"
-        assert openai_assistant[0]["content"] == "Let me help you."
-        assert "tool_calls" in openai_assistant[0]
-        assert len(openai_assistant[0]["tool_calls"]) == 1
-        assert openai_assistant[0]["tool_calls"][0]["id"] == "tool_123"
-        assert openai_assistant[0]["tool_calls"][0]["function"]["name"] == "helper"
+        self.assertEqual(len(openai_assistant), 1)
+        self.assertEqual(openai_assistant[0]["role"], "assistant")
+        self.assertEqual(openai_assistant[0]["content"], "Let me help you.")
+        self.assertIn("tool_calls", openai_assistant[0])
+        self.assertEqual(len(openai_assistant[0]["tool_calls"]), 1)
+        self.assertEqual(openai_assistant[0]["tool_calls"][0]["id"], "tool_123")
+        self.assertEqual(openai_assistant[0]["tool_calls"][0]["function"]["name"], "helper")
 
         # Test user message with tool result conversion (should split into multiple messages)
         user_message = ClaudeMessage(
@@ -802,18 +811,144 @@ Let me create a new MultiEdit operation with these precise changes for the first
             ],
         )
         openai_user = user_message.to_openai_messages()
-        assert len(openai_user) == 2  # Should split into tool message + user message
+        self.assertEqual(len(openai_user), 2)  # Should split into tool message + user message
 
         # First should be tool result message
-        assert openai_user[0]["role"] == "tool"
-        assert openai_user[0]["tool_call_id"] == "tool_123"
-        assert openai_user[0]["content"] == "Success"
+        self.assertEqual(openai_user[0]["role"], "tool")
+        self.assertEqual(openai_user[0]["tool_call_id"], "tool_123")
+        self.assertEqual(openai_user[0]["content"], "Success")
 
         # Second should be user text message
-        assert openai_user[1]["role"] == "user"
-        assert openai_user[1]["content"] == "Thanks!"
+        self.assertEqual(openai_user[1]["role"], "user")
+        self.assertEqual(openai_user[1]["content"], "Thanks!")
 
         print("✅ Message to_openai conversion test passed")
+
+    def test_tool_sequence_interruption_conversion(self):
+        """Test the specific tool message sequence conversion that's failing in the interruption test."""
+        print("🔧 Testing tool message sequence conversion for interruption case...")
+        
+        # Mock tool definition
+        exit_plan_mode_tool = ClaudeTool(
+            name="exit_plan_mode",
+            description="Exit plan mode tool",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "plan": {"type": "string", "description": "The plan to exit"}
+                },
+                "required": ["plan"]
+            }
+        )
+        
+        # Create the Claude request that mimics the failing test
+        claude_request = ClaudeMessagesRequest(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            messages=[
+                # Assistant message with tool use
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="call_jkl345mno678",
+                            name="exit_plan_mode",
+                            input={
+                                "plan": "I will create an example configuration file with placeholder values for each field, maintaining the same structure and adding helpful comments."
+                            },
+                        )
+                    ],
+                ),
+                # User message with tool_result first, then text (critical test case)
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="call_jkl345mno678",
+                            content="The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+                        ),
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="[Request interrupted by user for tool use]",
+                        ),
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="Actually, the example file already exists. Please check before creating new files.",
+                        ),
+                    ],
+                ),
+            ],
+            tools=[exit_plan_mode_tool],
+        )
+        
+        print(f"📝 Claude request has {len(claude_request.messages)} messages")
+        
+        # Debug: Print each Claude message
+        for i, msg in enumerate(claude_request.messages):
+            print(f"  Claude Message {i}: role={msg.role}, content_blocks={len(msg.content) if isinstance(msg.content, list) else 1}")
+            if isinstance(msg.content, list):
+                for j, block in enumerate(msg.content):
+                    print(f"    Block {j}: type={block.type}")
+        
+        # Convert to OpenAI format
+        openai_request = claude_request.to_openai_request()
+        openai_messages = openai_request["messages"]
+        
+        print(f"📤 Converted to {len(openai_messages)} OpenAI messages:")
+        for i, msg in enumerate(openai_messages):
+            role = msg.get("role", "unknown")
+            has_tool_calls = msg.get("tool_calls") is not None and len(msg.get("tool_calls", [])) > 0
+            has_content = bool(msg.get("content"))
+            print(f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, has_content={has_content}")
+            
+            if role == "tool":
+                tool_call_id = msg.get("tool_call_id", "unknown")
+                print(f"    Tool message: tool_call_id={tool_call_id}")
+        
+        # Check if the sequence follows OpenAI rules
+        valid_sequence = True
+        last_had_tool_calls = False
+        
+        for i, msg in enumerate(openai_messages):
+            if msg.get("role") == "tool":
+                if not last_had_tool_calls:
+                    print(f"❌ Invalid sequence: Tool message at index {i} doesn't follow assistant message with tool_calls")
+                    valid_sequence = False
+                    break
+            
+            last_had_tool_calls = (
+                msg.get("role") == "assistant" 
+                and msg.get("tool_calls") is not None 
+                and len(msg.get("tool_calls", [])) > 0
+            )
+        
+        if valid_sequence:
+            print("✅ Message sequence is valid for OpenAI API")
+        else:
+            print("❌ Message sequence violates OpenAI API rules")
+            
+        # Assert that the sequence is valid - this will make the test fail if it's not
+        self.assertTrue(valid_sequence, "Tool message sequence should be valid for OpenAI API")
+        
+        # Additional assertions to verify the specific structure
+        self.assertGreaterEqual(len(openai_messages), 3, "Should have at least 3 messages: assistant + tool + user")
+        
+        # First message should be assistant with tool_calls
+        self.assertEqual(openai_messages[0]["role"], "assistant")
+        self.assertIn("tool_calls", openai_messages[0])
+        self.assertEqual(len(openai_messages[0]["tool_calls"]), 1)
+        self.assertEqual(openai_messages[0]["tool_calls"][0]["id"], "call_jkl345mno678")
+        
+        # Second message should be tool result
+        self.assertEqual(openai_messages[1]["role"], "tool")
+        self.assertEqual(openai_messages[1]["tool_call_id"], "call_jkl345mno678")
+        
+        # Third message should be user
+        self.assertEqual(openai_messages[2]["role"], "user")
+        
+        print("✅ Tool sequence interruption conversion test passed")
 
     @staticmethod
     def create_mock_openai_response(

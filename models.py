@@ -480,18 +480,17 @@ class ClaudeMessage(BaseModel):
                 openai_messages.append(tool_message)
 
         # Process any remaining content
-        if content_parts:
+        if content_parts or (self.role == "assistant" and len(tool_calls) > 0):
             current_message: Dict[str, Any] = {"role": self.role}
-            if len(content_parts) == 1 and content_parts[0]["type"] == "text":
-                current_message["content"] = content_parts[0]["text"]
-                # openai_messages.append(
-                #     {"role": self.role, "content": content_parts[0]["text"]}
-                # )
+            if content_parts:
+                if len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                    current_message["content"] = content_parts[0]["text"]
+                else:
+                    current_message["content"] = content_parts
             else:
-                current_message["content"] = content_parts
-                # openai_messages.append(
-                #     {"role": self.role, "content": content_parts}
-                # )
+                # Assistant message with only tool_calls, no content
+                current_message["content"] = ""
+            
             if self.role == "assistant" and len(tool_calls) > 0:
                 current_message["tool_calls"] = tool_calls
             openai_messages.append(current_message)
@@ -671,6 +670,10 @@ class ClaudeMessagesRequest(BaseModel):
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
         logger.debug(f"🔄 Original request: {raw_json}")
         logger.debug(f"🔄 OpenAI request: {request_params}")
+
+        # Note: OpenAI API requires that messages with role 'tool' must be a response 
+        # to a preceding message with 'tool_calls'. The current message conversion 
+        # logic naturally produces the correct sequence: Assistant(tool_calls) → Tool → User
 
         # Compare request data and log any mismatches
         _compare_request_data(self, request_params)
@@ -2709,6 +2712,7 @@ def count_tokens_in_response(
     return int(total_tokens)
 
 
+
 def _compare_request_data(
     claude_request: ClaudeMessagesRequest, openai_request: Dict[str, Any]
 ) -> None:
@@ -2723,10 +2727,11 @@ def _compare_request_data(
         for msg in claude_request.messages:
             if isinstance(msg.content, list):
                 for content in msg.content:
-                    _claude_has_tool_result = isinstance(
-                        content, ClaudeContentBlockToolResult
-                    )
-                    claude_has_tool_result = _claude_has_tool_result
+                    if isinstance(content, ClaudeContentBlockToolResult):
+                        claude_has_tool_result = True
+                        break
+            if claude_has_tool_result:
+                break
 
         # Count OpenAI request data
         openai_tools_count = len(openai_request.get("tools", []))
@@ -2739,52 +2744,59 @@ def _compare_request_data(
             msg.get("role") == "tool" for msg in openai_request.get("messages", [])
         )
 
-        # Log comparison
-        logger.info("REQUEST CONVERSION COMPARISON:")
-        logger.info(
-            f"  Claude -> OpenAI Tools: {claude_tools_count} -> {openai_tools_count}"
+        # Log conversion summary
+        logger.debug("CONVERSION SUMMARY:")
+        logger.debug(
+            f"  Tools: {claude_tools_count} -> {openai_tools_count}"
         )
-        logger.info(
-            f"  Claude -> OpenAI Messages: {claude_messages_count} -> {openai_messages_count}"
+        logger.debug(
+            f"  Messages: {claude_messages_count} -> {openai_messages_count}"
         )
-        logger.info(
-            f"  Claude -> OpenAI Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
+        logger.debug(
+            f"  Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
         )
-        logger.info(
-            f"  Claude -> OpenAI System: {claude_has_system} -> {openai_has_system}"
+        logger.debug(
+            f"  System Message: {claude_has_system} -> {openai_has_system}"
         )
-        logger.info(
-            f"  Claude -> OpenAI Tool Message: {claude_has_tool_result} -> {openai_has_tool_msg}"
+        logger.debug(
+            f"  Tool Results: {claude_has_tool_result} -> {openai_has_tool_msg}"
         )
 
-        # Check for mismatches and log errors
-        errors = []
+        # Check for unexpected conversion issues
+        warnings = []
+        
+        # Tools count should always match exactly
         if claude_tools_count != openai_tools_count:
-            errors.append(
-                f"Tools count mismatch: Claude({claude_tools_count}) != OpenAI({openai_tools_count})"
+            warnings.append(
+                f"Unexpected tools count difference: {claude_tools_count} -> {openai_tools_count}"
             )
+            
+        # Tool choice should always match exactly  
         if claude_has_tool_choice != openai_has_tool_choice:
-            errors.append(
-                f"Tool choice mismatch: Claude({claude_has_tool_choice}) != OpenAI({openai_has_tool_choice})"
+            warnings.append(
+                f"Unexpected tool choice difference: {claude_has_tool_choice} -> {openai_has_tool_choice}"
             )
 
-        # Note: Messages count may differ if system message is extracted/merged
+        # Message count differences are expected in certain cases:
+        # - System messages get extracted to separate OpenAI system message
+        # - Tool results get converted to separate tool role messages
+        # Only warn if message count differs in unexpected scenarios
         if (
             claude_messages_count != openai_messages_count
-            and not claude_has_system
-            and not claude_has_tool_result
+            and not claude_has_system  # System message extraction expected
+            and not claude_has_tool_result  # Tool result splitting expected
         ):
-            errors.append(
-                f"Messages count mismatch (no system): Claude({claude_messages_count}) != OpenAI({openai_messages_count})"
+            warnings.append(
+                f"Unexpected message count difference: {claude_messages_count} -> {openai_messages_count} (no system/tool_result expected)"
             )
 
-        if errors:
-            logger.error(f"REQUEST CONVERSION ERRORS: {'; '.join(errors)}")
+        if warnings:
+            logger.warning(f"CONVERSION ISSUES: {'; '.join(warnings)}")
         else:
-            logger.info("REQUEST CONVERSION: All counts match ✓")
+            logger.debug("CONVERSION: All transformations completed successfully ✓")
 
     except Exception as e:
-        logger.error(f"Error in request comparison: {e}")
+        logger.error(f"Error during conversion validation: {e}")
 
 
 def _compare_response_data(
