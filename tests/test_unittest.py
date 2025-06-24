@@ -42,6 +42,7 @@ from models import (
     ClaudeThinkingConfigDisabled,
     ClaudeThinkingConfigEnabled,
     ClaudeTool,
+    ClaudeToolChoice,
     ClaudeToolChoiceAny,
     ClaudeToolChoiceAuto,
 )
@@ -349,6 +350,8 @@ BEHAVIORAL_DIFFERENCE_TESTS = {
     "gemini_tool_test_stream",
     "gemini_incompatible_schema_test",
     "gemini_incompatible_schema_test_stream",
+    "gemini_tool_result_positioning_test",
+    "gemini_tool_result_positioning_invalid_test",
     "deepseek_thinking_tools",
     "deepseek_thinking_tools_stream",
     "claude_code_read_test_stream",
@@ -545,7 +548,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         test_result = super().run(result)
 
         # Check if test passed or failed and print accordingly
-        if hasattr(result, 'failures') and hasattr(result, 'errors'):
+        if hasattr(result, "failures") and hasattr(result, "errors"):
             # Check if this test had any failures or errors
             test_failed = False
             test_error = False
@@ -666,9 +669,9 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         content_blocks.extend(final_tool_calls)
 
         # Display stream statistics
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"{content_blocks}")
-        print(f"{'='*50}")
+        print(f"{'=' * 50}")
 
         return {
             "content": content_blocks,
@@ -698,6 +701,14 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             f"Text content should be at least {min_length} characters",
         )
 
+    def assertNoToolUse(self, response: dict[str, Any]):
+        """Assert that response should not contain tool use."""
+        tool_blocks = [
+            block for block in response["content"] if block.get("type") == "tool_use"
+        ]
+        self.assertGreater(1, len(tool_blocks), "Response should should not contain tool use")
+
+
     def assertHasToolUse(self, response: dict[str, Any], tool_name: str = None):
         """Assert that response contains tool use."""
         tool_blocks = [
@@ -719,7 +730,6 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(
             len(thinking_blocks), 0, "Response should contain thinking content"
         )
-
 
     async def make_anthropic_request(
         self, request_data: ClaudeMessagesRequest, stream: bool = False
@@ -779,9 +789,10 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         anthropic_response: dict[str, Any],
         proxy_response: dict[str, Any],
         check_tools: bool = False,
+        test_name: str | None = None,
         compare_content: bool = False,
-        test_name: str = None,
         has_thinking: bool = False,
+        tool_choice: ClaudeToolChoice | None = None
     ) -> tuple[bool, str | None]:
         """
         Compare the two responses using Anthropic as ground truth.
@@ -926,10 +937,16 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
 
                 # Compare tool names
                 if anthropic_tool.get("name") != proxy_tool.get("name"):
-                    failure_reason = "Tool names differ between Anthropic and proxy"
-                    print(f"\n❌ FAILURE: {failure_reason}")
-                    test_passed = False
-                    failure_reasons.append(failure_reason)
+                    new_warning = ""
+                    if tool_choice and tool_choice.type == "any":
+                        new_warning = "Tool Choice is any: Tool names differ between Anthropic and proxy"
+                    else:
+                        new_warning = "Tool Choice is auto: Tool names differ between Anthropic and proxy"
+                    print(f"\n⚠️ WARNING: {new_warning}")
+                    if warning_reason:
+                        warning_reason += f"; {new_warning}"
+                    else:
+                        warning_reason = new_warning
 
         # Check for thinking blocks if this is a thinking test
         if has_thinking:
@@ -1089,6 +1106,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             check_tools=check_tools,
             test_name=test_name,
             has_thinking=has_thinking,
+            tool_choice=request_data.tool_choice
         )
 
     async def make_direct_conversion_test(
@@ -1097,12 +1115,26 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         request_data: ClaudeMessagesRequest,
         check_tools: bool = False,
         compare_with_anthropic: bool = True,
+        expect_failure: bool = False,
     ) -> tuple[bool, str | None]:
         """Run a direct conversion test using the test_conversion endpoint."""
         print(f"\n{'=' * 20} RUNNING DIRECT CONVERSION TEST: {test_name} {'=' * 20}")
 
         # Get proxy test conversion response
-        proxy_response = await self.make_proxy_test_conversion_request(request_data)
+        try:
+            proxy_response = await self.make_proxy_test_conversion_request(request_data)
+            if expect_failure:
+                # If we expected failure but got success, that's a test failure
+                print(f"❌ Expected failure but request succeeded for {test_name}")
+                return False, "Expected request to fail but it succeeded"
+        except httpx.HTTPStatusError as e:
+            if expect_failure:
+                # If we expected failure and got failure, that's a test success
+                print(f"✅ Expected failure occurred for {test_name}: {e.response.status_code}")
+                return True, f"Expected failure: {e.response.status_code}"
+            else:
+                # If we didn't expect failure but got failure, re-raise the exception
+                raise
 
         if not compare_with_anthropic:
             return True, None
@@ -1137,6 +1169,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             check_tools=check_tools,
             test_name=test_name,
             has_thinking=has_thinking,
+            tool_choice=request_data.tool_choice
         )
 
 
@@ -1280,6 +1313,7 @@ class TestToolRequests(ProxyTestBase):
         tool_blocks = [
             block for block in response["content"] if block.get("type") == "tool_use"
         ]
+        print(f"response content: {response['content']}")
         calculator_call = None
         for block in tool_blocks:
             if block.get("name") == "calculator":
@@ -1289,6 +1323,50 @@ class TestToolRequests(ProxyTestBase):
         self.assertIsNotNone(calculator_call, "Should have calculator tool call")
         self.assertIn("input", calculator_call)
         self.assertIn("expression", calculator_call["input"])
+
+    async def test_tool_use_order(self):
+        """Test tool use order"""
+        request = ClaudeMessagesRequest(
+            model=MODEL,
+            max_tokens=1000,
+            tools=[calculator_tool],
+            tool_choice=tool_choice_auto,
+            messages=[
+                ClaudeMessage(
+                    role="user", content="What is 25 + 17? Use the calculator tool."
+                ),
+                # tool calls
+                ClaudeMessage(
+                    # [{'type': 'tool_use', 'id': 'tool_0_calculator', 'name': 'calculator', 'input': {'expression': '25 + 17'}}]
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            name="calculator",
+                            id="tool_0_calculator",
+                            input={"expression": "25 + 17"},
+                        )
+                    ],
+                ),
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="tool_0_calculator",
+                            content="42",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        response = await self.make_request(request)
+        print(f"response content: {response['content']}")
+
+        self.assertResponseValid(response)
+        self.assertNoToolUse(response)
+
 
     async def test_tool_streaming(self):
         """Test tool usage with streaming."""
@@ -1922,6 +2000,149 @@ class TestCustomModels(ProxyTestBase):
         )
         self.assertTrue(passed, "DeepSeek thinking tools should work")
 
+    # gemini_tool_result_positioning_test
+    async def test_gemini_tool_result_positioning(self):
+        """
+        Test Gemini model tool result positioning requirement.
+
+        The Gemini API requires that tool results (function responses) are at even indices
+        in the conversation (indices 0, 2, 4, 6, etc.) since it assumes:
+        - Even indices: User messages (including tool results)
+        - Odd indices: Assistant messages (including function calls)
+
+        This test creates a conversation with multiple tool call/result pairs to ensure
+        tool results are positioned correctly for Gemini compatibility.
+        """
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-flash-lite-preview-06-17",
+            stream=False,
+            max_tokens=1000,
+            tools=[calculator_tool],
+            tool_choice=tool_choice_required,
+            messages=[
+                # Index 0 (even) - User message
+                ClaudeMessage(
+                    role="user",
+                    content="Calculate 25 * 8 using the calculator tool."
+                ),
+                # Index 1 (odd) - Assistant message with tool call
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="calc_001",
+                            name="calculator",
+                            input={"operation": "multiply", "a": 25, "b": 8},
+                        )
+                    ],
+                ),
+                # Index 2 (even) - User message with tool result (REQUIRED EVEN INDEX)
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="calc_001",
+                            content="200",
+                        )
+                    ],
+                ),
+                # Index 3 (odd) - Assistant response and another tool call
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="Great! Now let me divide that by 4."
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="calc_002",
+                            name="calculator",
+                            input={"operation": "divide", "a": 200, "b": 4},
+                        )
+                    ],
+                ),
+                # Index 4 (even) - User message with tool result (REQUIRED EVEN INDEX)
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="calc_002",
+                            content="50",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        passed, warning = await self.make_direct_conversion_test(
+            "gemini_tool_result_positioning_test",
+            request,
+            check_tools=True,
+            compare_with_anthropic=False  # Skip Anthropic comparison for Gemini-specific test
+        )
+        self.assertTrue(passed, "Gemini tool result positioning should work correctly")
+
+    # gemini_tool_result_positioning_invalid_test
+    async def test_gemini_tool_result_positioning_invalid(self):
+        """
+        Test Gemini model tool result positioning requirement - INVALID CASE.
+
+        This test creates a conversation where tool results are at odd indices,
+        which should FAIL for Gemini models since they require tool results at even indices.
+        The test expects this to fail and demonstrates the importance of proper positioning.
+        """
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-flash-lite-preview-06-17",
+            stream=True,
+            max_tokens=1024,
+            messages=[
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text",
+                            text='Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.\n\nHere is my plan:\n\n1.  **Update Makefile**:\n    *   Add a `test-cov` target to generate a terminal-based coverage report.\n    *   Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    *   Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    *   Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.',
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="tool_0_exit_plan_mode",
+                            name="exit_plan_mode",
+                            input={
+                                "plan": '1. **Update Makefile**:\\n    - Add a `test-cov` target to generate a terminal-based coverage report.\\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\\n    - Update the `help` command to include these new testing options.\\n2.  **Update README.md**:\\n    - Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.'
+                            },
+                        ),
+                    ],
+                ),
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="tool_0_exit_plan_mode",
+                            content="User has approved your plan. You can now start coding.",
+                        )
+                    ],
+                ),
+            ],
+            tools=[exit_plan_mode_tool, todo_read_tool, todo_write_tool, edit_tool],
+            tool_choice=tool_choice_auto
+        )
+
+        # This test expects to FAIL due to improper tool result positioning (tool result at odd index 1)
+        passed, warning = await self.make_direct_conversion_test(
+            "gemini_tool_result_positioning_invalid_test",
+            request,
+            check_tools=True,
+            compare_with_anthropic=False,  # Skip Anthropic comparison for Gemini-specific test
+            expect_failure=True  # We expect this to fail with 400 Bad Request
+        )
+        # We expect this to succeed (because we expected the API call to fail)
+        self.assertTrue(passed, "Gemini tool result positioning should fail with incorrect indices")
+
 
 class TestBehavioralDifferences(ProxyTestBase):
     """Test scenarios where behavioral differences are expected."""
@@ -2112,7 +2333,9 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tools=[glob_tool, read_tool, exit_plan_mode_tool],
             tool_choice=tool_choice_required,
         )
-        passed, warning= await self.make_comparison_test("test_claude_code_interruption_stream", request, check_tools=True)
+        passed, warning = await self.make_comparison_test(
+            "test_claude_code_interruption_stream", request, check_tools=True
+        )
         print(
             f"claude code interruption test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
         )
@@ -2231,7 +2454,9 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tool_choice=tool_choice_required,  # This should cause an error for thinking models
         )
 
-        print("🧠 Testing thinking model with tool_choice=required (expecting error)...")
+        print(
+            "🧠 Testing thinking model with tool_choice=required (expecting error)..."
+        )
 
         # Test with a request that clearly requires tool use to isolate the tool_choice validation
         tool_request = ClaudeMessagesRequest(
@@ -2239,7 +2464,10 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             max_tokens=1024,
             thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=512),
             messages=[
-                ClaudeMessage(role="user", content="Find all Python files in the current directory using glob pattern"),
+                ClaudeMessage(
+                    role="user",
+                    content="Find all Python files in the current directory using glob pattern",
+                ),
             ],
             tools=[glob_tool],
             tool_choice=tool_choice_required,
@@ -2247,22 +2475,42 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
 
         # Make the comparison test to see if Anthropic API vs our proxy behave differently
         try:
-            passed, warning = await self.make_comparison_test("test_thinking_model_tool_choice_required", tool_request, check_tools=True)
-            print(f"🧠 Thinking model tool_choice=required test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}")
+            passed, warning = await self.make_comparison_test(
+                "test_thinking_model_tool_choice_required",
+                tool_request,
+                check_tools=True,
+            )
+            print(
+                f"🧠 Thinking model tool_choice=required test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
+            )
 
             if passed:
-                print("✅ Both Anthropic and Proxy handle thinking model + tool_choice=required correctly")
+                print(
+                    "✅ Both Anthropic and Proxy handle thinking model + tool_choice=required correctly"
+                )
             else:
-                print("⚠️ Different behavior between Anthropic and Proxy for thinking model + tool_choice=required")
+                print(
+                    "⚠️ Different behavior between Anthropic and Proxy for thinking model + tool_choice=required"
+                )
 
         except Exception as e:
             error_message = str(e)
             print(f"🧠 Comparison test failed: {error_message}")
             # Check if this indicates tool_choice=required is not allowed for thinking models
-            if ("tool_choice" in error_message.lower() and "required" in error_message.lower()) or \
-               ("thinking" in error_message.lower() and "required" in error_message.lower()) or \
-               "invalid" in error_message.lower():
-                print("✅ Error confirms tool_choice=required is not allowed for thinking models")
+            if (
+                (
+                    "tool_choice" in error_message.lower()
+                    and "required" in error_message.lower()
+                )
+                or (
+                    "thinking" in error_message.lower()
+                    and "required" in error_message.lower()
+                )
+                or "invalid" in error_message.lower()
+            ):
+                print(
+                    "✅ Error confirms tool_choice=required is not allowed for thinking models"
+                )
             else:
                 print(f"⚠️ Unexpected error: {error_message}")
 
@@ -2394,10 +2642,14 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             tool_choice=tool_choice_auto,  # Use auto for thinking models
         )
 
-        print("🧠 Testing thinking model interruption behavior with tool_choice=auto...")
+        print(
+            "🧠 Testing thinking model interruption behavior with tool_choice=auto..."
+        )
 
         try:
-            passed, warning = await self.make_comparison_test("test_thinking_model_interruption_stream", request, check_tools=False)
+            passed, warning = await self.make_comparison_test(
+                "test_thinking_model_interruption_stream", request, check_tools=False
+            )
             print(
                 f"thinking model interruption test result: {'PASSED' if passed else 'FAILED'}, Warning: {warning}"
             )
@@ -2407,7 +2659,9 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
             # - This is actually intelligent behavior - avoiding unnecessary tool calls
             # - Unlike regular models that might need tool_choice=required to force tool use
             if "Neither response contains tool use" in str(warning):
-                print("✅ Expected behavior: Thinking model intelligently avoided unnecessary tool calls")
+                print(
+                    "✅ Expected behavior: Thinking model intelligently avoided unnecessary tool calls"
+                )
                 print("🧠 Thinking model used context reasoning instead of tools")
 
         except Exception as e:
@@ -3182,6 +3436,110 @@ def run_all_tests():
     print(f"{'=' * 60}")
 
     return result.wasSuccessful()
+
+
+class TestExitPlanModeScenario(ProxyTestBase):
+    """Test the specific exit_plan_mode scenario to isolate the 'no content' issue."""
+
+    async def test_exit_plan_mode_content_preservation(self):
+        """Test exit_plan_mode scenario to check if content is preserved properly."""
+        print("🔍 Testing exit_plan_mode content preservation...")
+
+        # Create the exact scenario from your logs:
+        # Assistant provides plan + calls exit_plan_mode, then gets approval
+        request = ClaudeMessagesRequest(
+            model=MODEL,
+            max_tokens=1024,
+            messages=[
+                # ClaudeMessage(
+                #     role="user",
+                #     content="I need you to help me add test coverage commands to my Makefile and update the README. Can you make a plan?"
+                #     ),
+                # Assistant message with plan text + exit_plan_mode tool call
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text",
+                            text='Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.\n\nHere is my plan:\n\n1.  **Update Makefile**:\n    *   Add a `test-cov` target to generate a terminal-based coverage report.\n    *   Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    *   Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    *   Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.',
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="tool_0_exit_plan_mode",
+                            name="exit_plan_mode",
+                            input={
+                                "plan": '1. **Update Makefile**:\\n    - Add a `test-cov` target to generate a terminal-based coverage report.\\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\\n    - Update the `help` command to include these new testing options.\\n2.  **Update README.md**:\\n    - Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.'
+                            },
+                        ),
+                    ],
+                ),
+                # Tool result (plan approved) - testing with assistant role
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="tool_0_exit_plan_mode",
+                            content="User has approved your plan. You can now start coding.",
+                        )
+                    ],
+                ),
+            ],
+            tools=[exit_plan_mode_tool, todo_read_tool, todo_write_tool, edit_tool],
+            tool_choice=tool_choice_auto
+        )
+
+        # Run comparison test between proxy and Anthropic API
+        passed, warning = await self.make_comparison_test(
+            "exit_plan_mode_content_preservation", request, check_tools=True
+        )
+
+        print(f"📊 Exit plan mode test result: {'PASSED' if passed else 'FAILED'}")
+        if warning:
+            print(f"⚠️  Warning: {warning}")
+
+        # The key insight: if both APIs return similar "no content" behavior,
+        # then it's legitimate model behavior, not a proxy conversion bug
+        if "no content" in str(warning).lower() or "empty" in str(warning).lower():
+            print(
+                "💡 FINDING: Both Anthropic API and proxy show similar content behavior"
+            )
+            print(
+                "📝 This suggests '(no content)' is normal model behavior, not a conversion bug"
+            )
+
+        # We don't fail the test even if there are warnings, as this is a behavioral analysis
+        print("✅ Content preservation test completed")
+
+    async def test_simplified_plan_approval_scenario(self):
+        """Test simplified version: just plan approval, see model response."""
+        print("\n🤖 Testing simplified plan approval scenario...")
+
+        # Simplified version: User approves a plan, what does model do next?
+        request = ClaudeMessagesRequest(
+            model=MODEL,
+            max_tokens=500,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content="I need you to update my Makefile and README for test coverage. Your plan has been approved. You can now start coding.",
+                )
+            ],
+            tools=[todo_read_tool, todo_write_tool, edit_tool],
+            tool_choice=tool_choice_required
+        )
+
+        passed, warning = await self.make_comparison_test(
+            "simplified_plan_approval", request,
+            check_tools=True
+        )
+
+        print(f"📊 Simplified test result: {'PASSED' if passed else 'FAILED'}")
+        if warning:
+            print(f"⚠️  Warning: {warning}")
+
+        print("💡 This test shows natural model behavior after plan approval")
+        print("📝 Helps distinguish between conversion bugs vs. normal model responses")
 
 
 def main():

@@ -1,7 +1,25 @@
 run:
-	-uv run uvicorn server:app --host 0.0.0.0 --port 8082 --reload
+	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
 
-.PHONY: run test test-unittest lint format
+stop:
+		@if [ -f uvicorn.pid ]; then \
+	  PID=$$(cat uvicorn.pid); \
+	  if ps -p $$PID > /dev/null; then \
+	    CMDLINE=$$(ps -p $$PID -o args=); \
+	    echo "$$CMDLINE" | grep -q "server:app" && echo "$$CMDLINE" | grep -q "8082" && kill $$PID && rm uvicorn.pid || echo 'pid exists but is not the fastapi API'; \
+	  else \
+	    echo "No running process with PID"; \
+	    rm uvicorn.pid; \
+	  fi \
+	else \
+	  echo "No PID file found"; \
+	fi
+
+restart: stop
+	sleep 1
+	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
+
+.PHONY:stop restart run test test-unittest lint format
 
 # Modern pytest framework (recommended)
 test-pytest:
@@ -10,6 +28,13 @@ test-pytest:
 # Modern unittest framework
 test-unittest:
 	-uv run python tests/test_unittest.py
+
+# Test Coverage
+test-cov:
+	uv run pytest --cov=server --cov=models tests/ -v
+
+test-cov-html:
+	uv run pytest --cov=server --cov=models tests/ --cov-report html
 
 # Default test command (pytest)
 test: test-pytest
@@ -61,7 +86,8 @@ help:
 	@echo "  make test-comparison  - Proxy vs Anthropic API comparison"
 	@echo "  make test-gemini      - Gemini model conversion test"
 	@echo "  make test-calculator  - Calculator tool test"
-	@echo "  make test-conversion  - Format conversion tests"
+	@echo "  make test-cov         - Generate terminal test coverage report"
+	@echo "  make test-cov-html  - Generate HTML test coverage report""
 	@echo "  make lint             - Check code quality with ruff"
 	@echo "  make format           - Format code with ruff"
 	@echo "  make help             - Show this help message"

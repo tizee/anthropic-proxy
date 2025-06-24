@@ -1,14 +1,12 @@
 # Example custom OpenAI-compatible model configurations
 # Required fields: model_id, api_base, api_key_name
-# Optional fields: model_name, can_stream, max_tokens, input_cost_per_token, output_cost_per_token, max_input_tokens, enable_thinking, reasoning_effort, extra_headers, extra_body
+# Optional fields: model_name, can_stream, max_tokens, max_input_tokens, enable_thinking, reasoning_effort, extra_headers, extra_body
 - model_id: example-model-1
   model_name: example-name-1
   api_base: "https://example.com/api/v1"
   api_key_name: EXAMPLE_API_KEY
   can_stream: true
   max_tokens: 16384
-  input_cost_per_token: 0.00000050  # $0.50/1M tokens
-  output_cost_per_token: 0.00000200  # $2.00/1M tokens
   reasoning_effort: "medium"
 
 - model_id: example-model-2
@@ -17,8 +15,6 @@
   api_key_name: EXAMPLE_API_KEY
   can_stream: true
   max_tokens: 16384
-  input_cost_per_token: 0.00000025  # $0.25/1M tokens
-  output_cost_per_token: 0.00000100  # $1.00/1M tokens
   reasoning_effort: null
 
 - model_id: gemini-2.5-pro
@@ -27,8 +23,6 @@
   api_key_name: OPENROUTER_API_KEY
   can_stream: true
   max_tokens: 65536
-  input_cost_per_token: 0.000001875 # $1.875/1M tokens
-  output_cost_per_token: 0.00001250  # $12.50/1M tokens
   reasoning_effort: "medium"
   extra_headers:
     HTTP-Referer: "https://localhost:8082"

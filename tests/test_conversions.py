@@ -949,6 +949,259 @@ Let me create a new MultiEdit operation with these precise changes for the first
         self.assertEqual(openai_messages[2]["role"], "user")
 
         print("✅ Tool sequence interruption conversion test passed")
+    
+    def test_streaming_tool_id_consistency_bug(self):
+        """Test the specific tool use ID consistency bug in streaming responses."""
+        print("🐛 Testing streaming tool use ID consistency bug...")
+
+        # This test reproduces the bug where assistant message content gets lost
+        # when converting streaming responses that contain both text and tool_calls
+        
+        # Create a Claude message that has both text content and tool_use (like the bug scenario)
+        mixed_assistant_message = ClaudeMessage(
+            role="assistant",
+            content=[
+                ClaudeContentBlockText(
+                    type="text",
+                    text="Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly."
+                ),
+                ClaudeContentBlockToolUse(
+                    type="tool_use",
+                    id="tool_0_exit_plan_mode",  # This is the Claude Code frontend format
+                    name="exit_plan_mode",
+                    input={
+                        "plan": "1. **Update Makefile**:\n    - Add a `test-cov` target to generate a terminal-based coverage report.\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    - Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    - Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
+                    }
+                )
+            ]
+        )
+
+        # Convert to OpenAI format
+        openai_messages = mixed_assistant_message.to_openai_messages()
+        
+        # Should have exactly 1 message (no splitting needed since no tool_result)
+        self.assertEqual(len(openai_messages), 1, f"Expected 1 message, got {len(openai_messages)}")
+        
+        message = openai_messages[0]
+        
+        # Check basic structure
+        self.assertEqual(message["role"], "assistant")
+        self.assertIn("content", message)
+        self.assertIn("tool_calls", message)
+        
+        # CRITICAL: Content should NOT be empty or None - it should contain the text
+        self.assertIsNotNone(message["content"], "Assistant message content should not be None")
+        self.assertNotEqual(message["content"], "", "Assistant message content should not be empty")
+        self.assertIn("I will add commands", message["content"], "Content should contain the original text")
+        
+        # Tool calls should be properly formatted
+        self.assertEqual(len(message["tool_calls"]), 1)
+        tool_call = message["tool_calls"][0]
+        self.assertEqual(tool_call["id"], "tool_0_exit_plan_mode")  # ID should be preserved
+        self.assertEqual(tool_call["function"]["name"], "exit_plan_mode")
+        
+        print("✅ Streaming tool use ID consistency bug test passed")
+
+    def test_complete_tool_use_flow_with_mixed_content(self):
+        """Test the complete flow: Claude request → OpenAI request → OpenAI response → Claude response."""
+        print("🔄 Testing complete tool use flow with mixed content...")
+
+        # 1. Create Claude request with mixed content (text + tool_use)
+        claude_request = ClaudeMessagesRequest(
+            model="claude-3-5-sonnet-20241022", 
+            max_tokens=1024,
+            messages=[
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="I'll help you implement those features. Let me create a plan first."
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="tool_0_exit_plan_mode",
+                            name="exit_plan_mode",
+                            input={"plan": "Implementation plan for the requested features"}
+                        )
+                    ]
+                )
+            ]
+        )
+
+        # 2. Convert Claude → OpenAI
+        openai_request = claude_request.to_openai_request()
+        openai_messages = openai_request["messages"]
+
+        # Verify OpenAI format
+        self.assertEqual(len(openai_messages), 1)
+        assistant_msg = openai_messages[0]
+        self.assertEqual(assistant_msg["role"], "assistant")
+        
+        # CRITICAL: Content should be preserved
+        self.assertIn("content", assistant_msg)
+        self.assertIn("I'll help you implement", assistant_msg["content"])
+        
+        # Tool calls should be present
+        self.assertIn("tool_calls", assistant_msg)
+        self.assertEqual(len(assistant_msg["tool_calls"]), 1)
+        self.assertEqual(assistant_msg["tool_calls"][0]["id"], "tool_0_exit_plan_mode")
+
+        # 3. Simulate OpenAI response (what would come back from OpenAI API)
+        mock_openai_response = create_mock_openai_response(
+            content="I'll help you implement those features. Let me create a plan first.",
+            tool_calls=[{
+                "name": "exit_plan_mode", 
+                "arguments": {"plan": "Implementation plan for the requested features"}
+            }]
+        )
+
+        # 4. Convert OpenAI response → Claude response
+        claude_response = convert_openai_response_to_anthropic(mock_openai_response, claude_request)
+
+        # Verify Claude response format
+        self.assertEqual(claude_response.role, "assistant")
+        self.assertGreaterEqual(len(claude_response.content), 2)  # Should have text + tool_use
+
+        # Find content blocks
+        text_blocks = [block for block in claude_response.content if block.type == "text"]
+        tool_blocks = [block for block in claude_response.content if block.type == "tool_use"]
+
+        # Verify content preservation
+        self.assertEqual(len(text_blocks), 1)
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertIn("I'll help you implement", text_blocks[0].text)
+        self.assertEqual(tool_blocks[0].name, "exit_plan_mode")
+
+        print("✅ Complete tool use flow with mixed content test passed")
+
+    def test_exit_plan_mode_scenario_from_logs(self):
+        """Test the exact exit_plan_mode scenario from user's logs to isolate the 'no content' issue."""
+        print("🔍 Testing exit_plan_mode scenario from logs...")
+
+        # Recreate the exact scenario from the user's logs
+        # This tests whether the issue is in model behavior or proxy conversion
+
+        # 1. Create the Claude request that would be sent to OpenAI
+        # This represents the conversation state when exit_plan_mode is called
+        claude_request = ClaudeMessagesRequest(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            messages=[
+                # Previous assistant message with exit_plan_mode tool call
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.\n\nHere is my plan:\n\n1.  **Update Makefile**:\n    *   Add a `test-cov` target to generate a terminal-based coverage report.\n    *   Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    *   Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    *   Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="tool_0_exit_plan_mode",
+                            name="exit_plan_mode",
+                            input={
+                                "plan": "1. **Update Makefile**:\\n    - Add a `test-cov` target to generate a terminal-based coverage report.\\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\\n    - Update the `help` command to include these new testing options.\\n2.  **Update README.md**:\\n    - Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
+                            }
+                        )
+                    ]
+                ),
+                # Tool result message (exit_plan_mode approved)
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="tool_0_exit_plan_mode",
+                            content="User has approved your plan. You can now start coding."
+                        )
+                    ]
+                ),
+                # User's follow-up message
+                ClaudeMessage(
+                    role="user",
+                    content="重试一下"
+                )
+            ]
+        )
+
+        print(f"📝 Created Claude request with {len(claude_request.messages)} messages")
+
+        # 2. Convert to OpenAI format (this is what gets sent to the actual model)
+        openai_request = claude_request.to_openai_request()
+        openai_messages = openai_request["messages"]
+
+        print(f"📤 Converted to {len(openai_messages)} OpenAI messages:")
+        for i, msg in enumerate(openai_messages):
+            role = msg.get("role", "unknown")
+            has_tool_calls = "tool_calls" in msg and msg["tool_calls"]
+            content_preview = ""
+            if "content" in msg and msg["content"]:
+                content_str = str(msg["content"])
+                content_preview = content_str[:50] + "..." if len(content_str) > 50 else content_str
+            
+            print(f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, content='{content_preview}'")
+
+        # 3. Verify the OpenAI request structure matches expectations
+        # This should match the problematic sequence from the logs
+        
+        # The first message should be assistant with both content and tool_calls
+        self.assertGreaterEqual(len(openai_messages), 3, "Should have at least assistant + tool + user messages")
+        
+        # Check first message (assistant with tool call)
+        first_msg = openai_messages[0]
+        self.assertEqual(first_msg["role"], "assistant")
+        self.assertIn("content", first_msg, "Assistant message should have content")
+        self.assertIn("tool_calls", first_msg, "Assistant message should have tool_calls")
+        
+        # CRITICAL: Check if content is preserved
+        if "content" in first_msg:
+            content = first_msg["content"]
+            if content is None or content == "" or content == "(no content)":
+                print(f"❌ FOUND THE BUG: Assistant message content is '{content}' - should contain the plan text!")
+                self.fail(f"Assistant message content should not be empty/None, got: '{content}'")
+            else:
+                print(f"✅ Assistant message content preserved: '{content[:100]}...'")
+                self.assertIn("I will add commands", content, "Content should contain the original text")
+        
+        # Check tool call structure
+        tool_calls = first_msg["tool_calls"]
+        self.assertEqual(len(tool_calls), 1)
+        self.assertEqual(tool_calls[0]["id"], "tool_0_exit_plan_mode")
+        self.assertEqual(tool_calls[0]["function"]["name"], "exit_plan_mode")
+
+        # 4. Simulate what happens when this gets sent to an actual model
+        # Create a mock response that simulates the model's behavior after exit_plan_mode
+        mock_model_response = create_mock_openai_response(
+            content="",  # This simulates the potential model behavior of returning empty content
+            tool_calls=[{
+                "name": "Read",
+                "arguments": {"file_path": "/Users/tizee/projects/project-AI/tools/claude-code-proxy.tizee/Makefile"}
+            }],
+            finish_reason="tool_calls"
+        )
+
+        # 5. Convert the mock response back to Claude format
+        claude_response = convert_openai_response_to_anthropic(mock_model_response, claude_request)
+
+        print(f"🔄 Mock model response converted back to Claude format:")
+        print(f"   Role: {claude_response.role}")
+        print(f"   Content blocks: {len(claude_response.content)}")
+        
+        for i, block in enumerate(claude_response.content):
+            if hasattr(block, 'type'):
+                if block.type == "text":
+                    text_preview = block.text[:50] + "..." if len(block.text) > 50 else block.text
+                    print(f"   Block {i}: text = '{text_preview}'")
+                elif block.type == "tool_use":
+                    print(f"   Block {i}: tool_use = {block.name}")
+
+        # 6. The key test: Check if the conversion preserves the expected behavior
+        # If the original model returns empty content with tool_calls, that might be normal
+        # But if our conversion is losing non-empty content, that's our bug
+        
+        print("🎯 Test completed - check the output above to see if content is properly preserved")
+        print("✅ Exit plan mode scenario test completed")
 
     @staticmethod
     def create_mock_openai_response(

@@ -65,6 +65,7 @@ class Config:
         self.host = os.environ.get("HOST", ModelDefaults.DEFAULT_HOST)
         self.port = int(os.environ.get("PORT", str(ModelDefaults.DEFAULT_PORT)))
         self.log_level = os.environ.get("LOG_LEVEL", ModelDefaults.DEFAULT_LOG_LEVEL)
+        self.log_file_path = os.environ.get("LOG_FILE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"))
 
         # Request limits and timeouts
         self.max_tokens_limit = int(
@@ -107,6 +108,10 @@ try:
         # DEBUG mode - OpenAI SDK uses standard logging
         logging.getLogger("openai").setLevel(logging.DEBUG)
         logging.getLogger("httpx").setLevel(logging.INFO)
+    # Ensure log directory exists
+    log_dir = os.path.dirname(config.log_file_path)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
     print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
     print(
         f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
@@ -116,10 +121,22 @@ except Exception as e:
     sys.exit(1)
 
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.log_level.upper()),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+logger = logging.getLogger()
+logger.setLevel(getattr(logging, config.log_level.upper()))
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+# File handler
+file_handler = logging.FileHandler(config.log_file_path, mode='w')
+file_handler.setFormatter(formatter)
+
+# Stream handler
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+
+# Add handlers to logger
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
+
 logger = logging.getLogger(__name__)
 
 # Initialize tiktoken encoder for token counting
@@ -516,23 +533,6 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         openai_request["extra_headers"] = model_config["extra_headers"] or {}
         openai_request["extra_body"] = model_config["extra_body"] or {}
 
-        # Intelligent tool_choice adjustment for better model consistency
-        # Based on test findings from claude_code_interruption_test:
-        # - Claude models naturally tend to use tools in interruption/verification scenarios
-        # - Other models (DeepSeek, etc.) may not use tools when tool_choice is None or auto
-        # - tool_choice=required ensures consistent behavior across all models
-        # - Exception: Thinking models don't support tool_choice=required (API limitation)
-        if not has_thinking and openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
-            current_tool_choice = openai_request.get("tool_choice")
-            if current_tool_choice is None:
-                logger.debug("🔧 Setting tool_choice to 'required' for better model consistency (was None)")
-                openai_request["tool_choice"] = "required"
-            elif current_tool_choice == "auto":
-                logger.debug("🔧 Adjusting tool_choice from 'auto' to 'required' for better model consistency")
-                openai_request["tool_choice"] = "required"
-        elif has_thinking and openai_request.get("tools"):
-            logger.debug("🧠 Keeping tool_choice as-is for thinking model (required not supported)")
-
         # doubao-seed models use "thinking" field as the same as Anthropic's
         #  options:
         #   disabled: not output reasoning content
@@ -544,9 +544,27 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             ] in ["low", "medium", "high"]:
                 openai_request["reasoning_effort"] = model_config["reasoning_effort"]
             openai_request["extra_body"]["thinking"] = {"type": "enabled"}
+        elif model_config["reasoning_effort"] and model_config[
+                "reasoning_effort"
+            ] in ["low", "medium", "high"]:
+            # enable the model to think automatically
+            openai_request["extra_body"]["thinking"] = {"type": "auto"}
         else:
-            # only enable when required
+            # thinking not supported
             openai_request["extra_body"]["thinking"] = {"type": "disabled"}
+
+        # Intelligent tool_choice adjustment for better model consistency
+        # Based on test findings from claude_code_interruption_test:
+        # - Claude models naturally tend to use tools in interruption/verification scenarios
+        # - Other models (DeepSeek, etc.) may not use tools when tool_choice is None or auto
+        # - tool_choice=required ensures consistent behavior across all models
+        # - Exception: Thinking models don't support tool_choice=required (API limitation)
+        if not has_thinking and openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
+            current_tool_choice = openai_request.get("tool_choice")
+            if current_tool_choice is None and openai_request["extra_body"]["thinking"] and openai_request["extra_body"]["thinking"]["type"] == "disabled" :
+                logger.debug("🔧 Setting tool_choice to 'auto' for better model consistency (was None)")
+                openai_request["tool_choice"] = "auto"
+
         # Only log basic info about the request, not the full details
         logger.debug(
             f"Request for model: {openai_request.get('model')},stream: {openai_request.get('stream', False)},thinking_mode:{openai_request['extra_body'].get('thinking')}"
@@ -567,9 +585,7 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
 
         # Build complete request with OpenAI SDK type validation
         # Handle max_tokens for custom models vs standard models
-        max_tokens = min(
-            model_config.get("max_tokens", request.max_tokens), request.max_tokens
-        )
+        max_tokens = max(model_config.get("max_tokens"), request.max_tokens)
         openai_request["max_tokens"] = max_tokens
 
         # Handle streaming mode

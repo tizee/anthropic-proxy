@@ -466,7 +466,8 @@ class ClaudeMessage(BaseModel):
                     current_message["content"] = content_parts
             else:
                 # Assistant message with only tool_calls, no content
-                current_message["content"] = ""
+                # Don't set content field when there's no content (OpenAI API allows omitting it)
+                pass  # content field will not be set
 
             if self.role == "assistant" and len(tool_calls) > 0:
                 current_message["tool_calls"] = tool_calls
@@ -645,6 +646,9 @@ class ClaudeMessagesRequest(BaseModel):
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
         logger.debug(f"🔄 Original request: {raw_json}")
         logger.debug(f"🔄 OpenAI request: {request_params}")
+
+        # DEBUG: Validate and debug OpenAI message sequence for tool call ordering
+        debug_openai_message_sequence(openai_messages, f"Claude->OpenAI conversion for model {self.model}")
 
         # Note: OpenAI API requires that messages with role 'tool' must be a response
         # to a preceding message with 'tool_calls'. The current message conversion
@@ -1094,6 +1098,7 @@ def convert_openai_response_to_anthropic(
             )
 
         # Process tool calls
+        # OpenAI tool calls -> Claude Tool Use
         if tool_calls:
             for tool_call in tool_calls:
                 try:
@@ -1478,24 +1483,6 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
-
-def _extract_tool_call_data(tool_call) -> tuple:
-    """Extract tool call data from different formats."""
-    if isinstance(tool_call, dict):
-        tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
-        function_data = tool_call.get(Constants.TOOL_FUNCTION, {})
-        name = function_data.get("name", "")
-        arguments_str = function_data.get("arguments", "{}")
-    elif hasattr(tool_call, "id") and hasattr(tool_call, Constants.TOOL_FUNCTION):
-        tool_id = tool_call.id
-        name = tool_call.function.name
-        arguments_str = tool_call.function.arguments
-    else:
-        return None, None, None
-
-    return tool_id, name, arguments_str
-
-
 def _parse_tool_arguments(arguments_str: str) -> dict:
     """Parse tool arguments safely."""
     try:
@@ -1505,46 +1492,6 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
         return arguments_dict
     except json.JSONDecodeError:
         return {"raw_arguments": arguments_str}
-
-
-def _parse_tool_result_content(content):
-    """Parse and normalize tool result content into a string format."""
-    if content is None:
-        return "No content provided"
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        result_parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                result_parts.append(item.get("text", ""))
-            elif isinstance(item, str):
-                result_parts.append(item)
-            elif isinstance(item, dict):
-                if "text" in item:
-                    result_parts.append(item.get("text", ""))
-                else:
-                    try:
-                        result_parts.append(json.dumps(item))
-                    except:
-                        result_parts.append(str(item))
-        return "\n".join(result_parts).strip()
-
-    if isinstance(content, dict):
-        if content.get("type") == "text":
-            return content.get("text", "")
-        try:
-            return json.dumps(content)
-        except:
-            return str(content)
-
-    try:
-        return str(content)
-    except:
-        return "Unparseable content"
-
 
 def _send_message_start_event(message_id: str, model: str):
     """Send message_start event."""
@@ -1888,18 +1835,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                     )
                                     text_block_closed = True
                                     content_block_index += 1
-                                elif not text_block_started and not text_block_closed:
-                                    # Even if no text, we might need to close the implicit text block
-                                    text_block = {"type": "text", "text": ""}
-                                    current_content_blocks.append(text_block)
-                                    yield _send_content_block_start_event(
-                                        content_block_index, "text"
-                                    )
-                                    yield _send_content_block_stop_event(
-                                        content_block_index
-                                    )
-                                    text_block_closed = True
-                                    content_block_index += 1
+                                # Don't create empty text blocks - only create text blocks when we have actual text content
 
                                 # Now start the tool use block
                                 is_tool_use = True
@@ -2608,6 +2544,108 @@ def _rebuild_complete_response_from_streaming(
     }
 
     return complete_response
+
+
+def debug_openai_message_sequence(messages: list[dict], context: str = "") -> None:
+    """
+    Debug and validate OpenAI message sequence for tool call ordering issues.
+
+    Prints detailed information about message sequence and detects common issues:
+    - Tool messages not immediately following their tool calls
+    - Missing tool_call_id references
+    - Invalid role sequences
+
+    Args:
+        messages: List of OpenAI format messages
+        context: Optional context string for logging
+    """
+    logger.debug(f"🔍 DEBUG MESSAGE SEQUENCE {context}")
+    logger.debug(f"📝 Total messages: {len(messages)}")
+
+    # Track tool calls and their resolution
+    pending_tool_calls = {}  # tool_call_id -> message_index
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+
+        # Basic message info
+        content_summary = ""
+        if "content" in msg:
+            content = msg["content"]
+            if isinstance(content, str):
+                content_summary = f"'{content[:50]}...'" if len(content) > 50 else f"'{content}'"
+            else:
+                content_summary = f"[{type(content).__name__}]"
+
+        logger.debug(f"  Message {i}: role={role}, content={content_summary}")
+
+        # Check for tool calls (assistant messages)
+        if role == "assistant" and "tool_calls" in msg:
+            tool_calls = msg.get("tool_calls", [])
+            logger.debug(f"    📞 Has {len(tool_calls)} tool calls:")
+            for j, tool_call in enumerate(tool_calls):
+                tool_id = tool_call.get("id", "NO_ID")
+                tool_name = tool_call.get("function", {}).get("name", "NO_NAME")
+                logger.debug(f"      Tool {j}: id={tool_id}, name={tool_name}")
+
+                # Track this tool call as pending
+                if tool_id != "NO_ID":
+                    pending_tool_calls[tool_id] = i
+                else:
+                    logger.error(f"❌ Tool call missing ID at message {i}")
+
+        # Check for tool results (tool messages)
+        elif role == "tool":
+            tool_call_id = msg.get("tool_call_id", "NO_ID")
+            logger.debug(f"    🔧 Tool result for: {tool_call_id}")
+
+            # Check for Gemini API tool result positioning requirement (must be at even index)
+            if i % 2 == 1:  # Odd index
+                logger.error(f"❌ GEMINI API ERROR: Tool result at odd index {i} (Gemini requires tool results at even indices)")
+                logger.error(f"    🔧 Complete tool message: {json.dumps(msg, indent=2)}")
+                logger.error(f"    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)")
+
+            if tool_call_id == "NO_ID":
+                logger.error(f"❌ Tool message missing tool_call_id at message {i}")
+            elif tool_call_id in pending_tool_calls:
+                # Check if this tool result comes immediately after its tool call
+                tool_call_msg_index = pending_tool_calls[tool_call_id]
+                expected_index = tool_call_msg_index + 1
+
+                if i == expected_index:
+                    logger.debug(f"    ✅ Tool result correctly follows tool call (msg {tool_call_msg_index} -> {i})")
+                else:
+                    logger.error(f"❌ SEQUENCE ERROR: Tool result at msg {i} should follow tool call at msg {tool_call_msg_index} (expected at {expected_index})")
+
+                    # Show what's between the tool call and tool result
+                    if i > expected_index:
+                        logger.error(f"    📋 Messages between tool call and result:")
+                        for gap_i in range(expected_index, i):
+                            gap_msg = messages[gap_i]
+                            gap_role = gap_msg.get("role", "unknown")
+                            logger.error(f"      Gap msg {gap_i}: role={gap_role}")
+
+                # Remove from pending
+                del pending_tool_calls[tool_call_id]
+            else:
+                logger.error(f"❌ Tool result references unknown tool_call_id: {tool_call_id}")
+
+        # Check for user messages interrupting tool flows
+        elif role == "user" and pending_tool_calls:
+            logger.error(f"❌ SEQUENCE ERROR: User message at {i} interrupts pending tool calls: {list(pending_tool_calls.keys())}")
+
+    # Check for unresolved tool calls
+    if pending_tool_calls:
+        logger.error(f"❌ UNRESOLVED TOOL CALLS: {pending_tool_calls}")
+
+    # Summary
+    errors_found = False
+    if any("❌" in line for line in []):  # We'll check the actual logs
+        errors_found = True
+        logger.error(f"🚨 MESSAGE SEQUENCE VALIDATION FAILED for {context}")
+        logger.error(f"📋 This will likely cause Google AI Studio/OpenAI API errors")
+    else:
+        logger.debug(f"✅ Message sequence appears valid for {context}")
 
 
 def _calculate_accurate_output_tokens(

@@ -300,6 +300,8 @@ Add custom OpenAI-compatible models in `models.yaml`:
 Set `LOG_LEVEL=DEBUG` in `.env` for detailed logs.
 
 ### Log Files
+The default log file path can be configured using the `LOG_FILE_PATH` environment variable in your `.env` file, defaulting to the directory containing `server.py` if not specified.
+
 The server generates several log files for debugging:
 - `server.log`: General server operations
 - `simple.log`: Simple test executions
