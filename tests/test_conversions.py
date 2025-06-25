@@ -1276,7 +1276,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
             mock_model_response, claude_request
         )
 
-        print(f"🔄 Mock model response converted back to Claude format:")
+        print("🔄 Mock model response converted back to Claude format:")
         print(f"   Role: {claude_response.role}")
         print(f"   Content blocks: {len(claude_response.content)}")
 

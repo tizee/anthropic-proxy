@@ -11,7 +11,6 @@ import tiktoken
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from hook import hook_manager, load_all_plugins
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import (
@@ -28,6 +27,7 @@ from openai.types.chat import (
     ChatCompletionChunk,
 )
 
+from hook import hook_manager, load_all_plugins
 from models import (
     ClaudeMessagesRequest,
     ClaudeTokenCountRequest,

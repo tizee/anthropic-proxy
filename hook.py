@@ -1,7 +1,7 @@
 import importlib
-import os
 import pkgutil
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 # Define hook specifications
 request_hook_spec = "request_hook"
@@ -10,8 +10,8 @@ response_hook_spec = "response_hook"
 
 class HookManager:
     def __init__(self):
-        self.request_hooks: List[Callable[[Dict[str, Any]], Dict[str, Any]]] = []
-        self.response_hooks: List[Callable[[Dict[str, Any]], Dict[str, Any]]] = []
+        self.request_hooks: list[Callable[[dict[str, Any]], dict[str, Any]]] = []
+        self.response_hooks: list[Callable[[dict[str, Any]], dict[str, Any]]] = []
 
     def load_plugins(self, package):
         """Loads plugins from the given package."""
@@ -33,13 +33,13 @@ class HookManager:
         if hasattr(module, response_hook_spec):
             self.response_hooks.append(getattr(module, response_hook_spec))
 
-    def trigger_request_hooks(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def trigger_request_hooks(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Triggers all registered request hooks on a payload."""
         for hook in self.request_hooks:
             payload = hook(payload)
         return payload
 
-    def trigger_response_hooks(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def trigger_response_hooks(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Triggers all registered response hooks on a payload."""
         for hook in self.response_hooks:
             payload = hook(payload)

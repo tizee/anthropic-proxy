@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import Pydantic models from models.py
 from models import (
     ClaudeContentBlockText,
+    ClaudeContentBlockThinking,
     ClaudeContentBlockToolResult,
     ClaudeContentBlockToolUse,
     ClaudeMessage,
@@ -45,7 +46,6 @@ from models import (
     ClaudeToolChoice,
     ClaudeToolChoiceAny,
     ClaudeToolChoiceAuto,
-    ClaudeContentBlockThinking,
 )
 
 # Load environment variables

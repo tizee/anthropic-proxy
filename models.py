@@ -9,7 +9,6 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Literal, Union
 
@@ -2700,7 +2699,7 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
                     f"    🔧 Complete tool message: {json.dumps(msg, indent=2)}"
                 )
                 logger.error(
-                    f"    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)"
+                    "    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)"
                 )
 
             if tool_call_id == "NO_ID":
@@ -2721,7 +2720,7 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
 
                     # Show what's between the tool call and tool result
                     if i > expected_index:
-                        logger.error(f"    📋 Messages between tool call and result:")
+                        logger.error("    📋 Messages between tool call and result:")
                         for gap_i in range(expected_index, i):
                             gap_msg = messages[gap_i]
                             gap_role = gap_msg.get("role", "unknown")
@@ -2749,7 +2748,7 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
     if any("❌" in line for line in []):  # We'll check the actual logs
         errors_found = True
         logger.error(f"🚨 MESSAGE SEQUENCE VALIDATION FAILED for {context}")
-        logger.error(f"📋 This will likely cause Google AI Studio/OpenAI API errors")
+        logger.error("📋 This will likely cause Google AI Studio/OpenAI API errors")
     else:
         logger.debug(f"✅ Message sequence appears valid for {context}")
 
