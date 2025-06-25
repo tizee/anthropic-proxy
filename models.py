@@ -17,6 +17,7 @@ import tiktoken
 from openai import AsyncStream
 from openai.types.chat import (
     ChatCompletion,
+    ChatCompletionAssistantMessageParam,
     ChatCompletionChunk,
     ChatCompletionContentPartImageParam,
     ChatCompletionContentPartTextParam,
@@ -27,6 +28,7 @@ from openai.types.chat import (
     ChatCompletionToolChoiceOptionParam,
     ChatCompletionToolMessageParam,
     ChatCompletionToolParam,
+    ChatCompletionUserMessageParam,
 )
 from pydantic import BaseModel, field_validator
 
@@ -71,6 +73,7 @@ def generate_unique_tool_id() -> str:
     This ensures uniqueness across all tool use instances.
     """
     import time
+
     timestamp_ms = int(time.time() * 1000)
     random_suffix = uuid.uuid4().hex[:8]
     return f"toolu_{timestamp_ms}_{random_suffix}"
@@ -231,7 +234,11 @@ class ClaudeContentBlockImageURLSource(BaseModel):
 
 class ClaudeContentBlockImage(BaseModel):
     type: Literal["image"]
-    source: ClaudeContentBlockImageBase64Source | ClaudeContentBlockImageURLSource | dict[str, Any]
+    source: (
+        ClaudeContentBlockImageBase64Source
+        | ClaudeContentBlockImageURLSource
+        | dict[str, Any]
+    )
 
     # only user message contains image content
     #
@@ -321,11 +328,11 @@ class ClaudeContentBlockToolUse(BaseModel):
 class ClaudeContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
-    content: str | list[dict[str, Any]]
+    content: str | list[dict[str, Any]] | dict[str, Any]
 
     def process_content(
         self,
-    ) -> str | Iterable[ChatCompletionContentPartTextParam]:
+    ) -> str | list:
         """
         Process Claude tool_result content into a string format.
 
@@ -339,13 +346,17 @@ class ClaudeContentBlockToolResult(BaseModel):
             return self.content
         elif isinstance(self.content, list):
             # Handle list content by extracting all text
-            content_parts: list[ChatCompletionContentPartTextParam] = []
+            content_parts = []
             for item in self.content:
                 content_parts.append({"type": "text", "text": item["content"]})
             return content_parts
         else:
-            # Fallback: serialize anything else
-            return ""
+            try:
+                return json.dumps(
+                    self.content, ensure_ascii=False, separators=(",", ":")
+                )
+            except (TypeError, ValueError):
+                return "{}"
 
     # Claude Tool Result content block -> OpenAI Tool Role Message
     def to_openai_message(self) -> ChatCompletionToolMessageParam:
@@ -390,7 +401,16 @@ class ClaudeSystemContent(BaseModel):
 
 class ClaudeMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str | list[ClaudeContentBlockText | ClaudeContentBlockImage | ClaudeContentBlockToolUse | ClaudeContentBlockToolResult | ClaudeContentBlockThinking]
+    content: (
+        str
+        | list[
+            ClaudeContentBlockText
+            | ClaudeContentBlockImage
+            | ClaudeContentBlockToolUse
+            | ClaudeContentBlockToolResult
+            | ClaudeContentBlockThinking
+        ]
+    )
 
     def process_interrupted_content(self) -> str:
         """Process Claude Code interrupted messages."""
@@ -406,39 +426,6 @@ class ClaudeMessage(BaseModel):
 
         return content
 
-    def _merge_text_content_parts(self, content_parts: list) -> str | list:
-        """
-        Smart content merging for OpenAI API compatibility.
-        
-        Args:
-            content_parts: List of OpenAI content parts (text/image/function_call/etc.)
-            
-        Returns:
-            - If single text part: string content  
-            - If multiple pure text parts: merged string
-            - If mixed content (text + non-text): original list for OpenAI API compatibility
-        """
-        if not content_parts:
-            return ""
-            
-        # Special case: single text part -> extract string directly
-        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-            return content_parts[0].get("text", "")
-            
-        # Check if ALL parts are text (no images, tool calls, etc.)
-        all_text = all(part.get("type") == "text" for part in content_parts)
-        
-        if all_text and len(content_parts) > 1:
-            # Multiple text parts -> merge into single string
-            merged_text = ""
-            for part in content_parts:
-                if part.get("text"):
-                    merged_text += part["text"]
-            return merged_text
-        else:
-            # Mixed content or other cases -> return as-is for OpenAI API
-            return content_parts
-
     def to_openai_messages(self) -> list[ChatCompletionMessageParam]:
         """
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
@@ -449,6 +436,11 @@ class ClaudeMessage(BaseModel):
             For Claude user message, there is no tool call and thinking content.
             tool call content block and thinking content is for assistant message only
         """
+
+        # Debug: Pretty print Claude message before conversion
+        logger.debug("📨 Raw Claude Message")
+        logger.debug(f"   {self.model_dump_json(indent=2)}")
+
         openai_messages = []
 
         # Handle simple string content
@@ -458,11 +450,6 @@ class ClaudeMessage(BaseModel):
             return openai_messages
 
         # Process content blocks in order, maintaining structure
-        content_parts: list[
-            ChatCompletionContentPartTextParam | ChatCompletionContentPartImageParam
-        ] = []
-        tool_calls: list[ChatCompletionMessageToolCallParam] = []
-
         # Claude user message content blocks -> OpenAI user message content
         # parts
         # https://docs.anthropic.com/en/api/messages#body-messages-content
@@ -470,48 +457,91 @@ class ClaudeMessage(BaseModel):
 
         # correct order: assistant message with tool_calls should always
         # be before than assistant message with tool result.
-        for block in self.content:
-            if not isinstance(block, ClaudeContentBlockToolResult) and not isinstance(
-                block, ClaudeContentBlockToolUse
-            ):
-                openai_part = block.to_openai()
-                if openai_part:
-                    content_parts.append(openai_part)
-            elif isinstance(block, ClaudeContentBlockToolUse):
-                tool_calls.append(block.to_openai())
-            elif isinstance(block, ClaudeContentBlockToolResult):
-                # CRITICAL: Split message when tool_result is encountered
-                if content_parts:
-                    current_message: dict[str, Any] = {"role": self.role}
-                    current_message["content"] = self._merge_text_content_parts(content_parts)
-                    if self.role == "assistant" and len(tool_calls) > 0:
-                        current_message["tool_calls"] = tool_calls
-                        tool_calls.clear()
-                    openai_messages.append(current_message)
-                    content_parts.clear()
-                elif len(tool_calls) > 0:
-                    current_message: dict[str, Any] = {"role": "assistant"}
-                    current_message["tool_calls"] = tool_calls
-                    openai_messages.append(current_message)
-                    tool_calls.clear()
+        openai_parts = []
+        # merge text content
+        merged_text = ""
 
-                # Add tool result immediately to maintain chronological order
-                tool_message = block.to_openai_message()
-                openai_messages.append(tool_message)
+        if self.role == "assistant":
+            # assistant
+            tool_calls: list[ChatCompletionMessageToolCallParam] = []
+            assistant_msg: ChatCompletionAssistantMessageParam = {"role": "assistant"}
+            has_non_text_content = False
 
-        # Process any remaining content
-        if content_parts or (self.role == "assistant" and len(tool_calls) > 0):
-            current_message: dict[str, Any] = {"role": self.role}
-            if content_parts:
-                current_message["content"] = self._merge_text_content_parts(content_parts)
+            for block in self.content:
+                if isinstance(block, ClaudeContentBlockThinking):
+                    merged_text += block.thinking
+                elif isinstance(block, ClaudeContentBlockText):
+                    merged_text += block.text
+                elif isinstance(block, ClaudeContentBlockImage):
+                    has_non_text_content = True
+                    part = block.to_openai()
+                    if part:
+                        if len(merged_text) > 0:
+                            openai_parts.append({"type": "text", "text": merged_text})
+                            merged_text = ""
+                        openai_parts.append(part)
+                elif isinstance(block, ClaudeContentBlockToolUse):
+                    if len(merged_text) > 0:
+                        openai_parts.append({"type": "text", "text": merged_text})
+                        merged_text = ""
+                    tool_calls.append(block.to_openai())
+
+            # Handle remaining text content
+            if len(merged_text) > 0:
+                openai_parts.append({"type": "text", "text": merged_text})
+
+            # Set content: use string for text-only, structured for mixed content
+            if has_non_text_content or len(openai_parts) > 1:
+                assistant_msg["content"] = openai_parts
+            elif len(openai_parts) == 1 and openai_parts[0]["type"] == "text":
+                assistant_msg["content"] = openai_parts[0]["text"]
             else:
-                # Assistant message with only tool_calls, no content
-                # Don't set content field when there's no content (OpenAI API allows omitting it)
-                pass  # content field will not be set
+                assistant_msg["content"] = ""
 
-            if self.role == "assistant" and len(tool_calls) > 0:
-                current_message["tool_calls"] = tool_calls
-            openai_messages.append(current_message)
+            # Only add tool_calls if there are any
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+
+            openai_messages.append(assistant_msg)
+        else:
+            # user
+            pending_tool_result_msgs: list[ChatCompletionToolMessageParam] = []
+            user_msg: ChatCompletionUserMessageParam = {"role": "user"}
+            has_non_text_content = False
+
+            for block in self.content:
+                if isinstance(block, ClaudeContentBlockText):
+                    merged_text += block.text
+                elif isinstance(block, ClaudeContentBlockImage):
+                    has_non_text_content = True
+                    part = block.to_openai()
+                    if part:
+                        if len(merged_text) > 0:
+                            openai_parts.append({"type": "text", "text": merged_text})
+                            merged_text = ""
+                        openai_parts.append(part)
+                elif isinstance(block, ClaudeContentBlockToolResult):
+                    # split user message -> tool result message + user message
+                    if len(merged_text) > 0:
+                        openai_parts.append({"type": "text", "text": merged_text})
+                        merged_text = ""
+                    pending_tool_result_msgs.append(block.to_openai_message())
+
+            # Handle remaining text content
+            if len(merged_text) > 0:
+                openai_parts.append({"type": "text", "text": merged_text})
+
+            # Set content: use string for text-only, structured for mixed content
+            if has_non_text_content or len(openai_parts) > 1:
+                user_msg["content"] = openai_parts
+            elif len(openai_parts) == 1 and openai_parts[0]["type"] == "text":
+                user_msg["content"] = openai_parts[0]["text"]
+            else:
+                user_msg["content"] = ""
+
+            # Tool results should come before user messages for proper OpenAI sequencing
+            openai_messages.extend(pending_tool_result_msgs)
+            openai_messages.append(user_msg)
 
         return openai_messages
 
@@ -682,13 +712,13 @@ class ClaudeMessagesRequest(BaseModel):
         if tool_choice:
             request_params["tool_choice"] = tool_choice
 
-        raw_json = self.model_dump()
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
-        logger.debug(f"🔄 Original request: {raw_json}")
         logger.debug(f"🔄 OpenAI request: {request_params}")
 
         # DEBUG: Validate and debug OpenAI message sequence for tool call ordering
-        debug_openai_message_sequence(openai_messages, f"Claude->OpenAI conversion for model {self.model}")
+        debug_openai_message_sequence(
+            openai_messages, f"Claude->OpenAI conversion for model {self.model}"
+        )
 
         # Note: OpenAI API requires that messages with role 'tool' must be a response
         # to a preceding message with 'tool_calls'. The current message conversion
@@ -711,7 +741,9 @@ class ClaudeTokenCountRequest(BaseModel):
     messages: list[ClaudeMessage]
     system: str | list[ClaudeSystemContent] | None = None
     tools: list[ClaudeTool] | None = None
-    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | dict | None = None
+    thinking: (
+        ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | dict | None
+    ) = None
     tool_choice: dict[str, Any] | None = None
 
     @field_validator("thinking")
@@ -1055,7 +1087,18 @@ class ClaudeMessagesResponse(BaseModel):
     content: list[
         ClaudeContentBlockText | ClaudeContentBlockToolUse | ClaudeContentBlockThinking
     ]
-    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "error"] | None = None
+    stop_reason: (
+        Literal[
+            "end_turn",
+            "max_tokens",
+            "stop_sequence",
+            "tool_use",
+            "pause_turn",
+            "refusal",
+            "error",
+        ]
+        | None
+    ) = None
     stop_sequence: str | None = None
     usage: ClaudeUsage
 
@@ -1523,6 +1566,7 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
+
 def _parse_tool_arguments(arguments_str: str) -> dict:
     """Parse tool arguments safely."""
     try:
@@ -1532,6 +1576,7 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
         return arguments_dict
     except json.JSONDecodeError:
         return {"raw_arguments": arguments_str}
+
 
 def _send_message_start_event(message_id: str, model: str):
     """Send message_start event."""
@@ -1954,13 +1999,15 @@ async def convert_openai_streaming_response_to_anthropic(
                     # Handle reasoning/thinking content first (from deepseek reasoning models)
                     delta_reasoning = None
                     raw_delta = delta.model_dump()
-                    logger.debug(
-                        f"raw delta: {raw_delta}"
-                    )
-                    if isinstance(raw_delta, dict) and ("reasoning_content" in raw_delta or "reasoning" in raw_delta):
+                    logger.debug(f"raw delta: {raw_delta}")
+                    if isinstance(raw_delta, dict) and (
+                        "reasoning_content" in raw_delta or "reasoning" in raw_delta
+                    ):
                         # reasoning_content for deepseek-like models
                         # reasoning for Gemini models
-                        delta_reasoning = raw_delta.get("reasoning_content") or raw_delta.get("reasoning")
+                        delta_reasoning = raw_delta.get(
+                            "reasoning_content"
+                        ) or raw_delta.get("reasoning")
 
                     if delta_reasoning is not None and delta_reasoning != "":
                         accumulated_thinking += delta_reasoning
@@ -2616,7 +2663,9 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
         if "content" in msg:
             content = msg["content"]
             if isinstance(content, str):
-                content_summary = f"'{content[:50]}...'" if len(content) > 50 else f"'{content}'"
+                content_summary = (
+                    f"'{content[:50]}...'" if len(content) > 50 else f"'{content}'"
+                )
             else:
                 content_summary = f"[{type(content).__name__}]"
 
@@ -2644,9 +2693,15 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
 
             # Check for Gemini API tool result positioning requirement (must be at even index)
             if i % 2 == 1:  # Odd index
-                logger.error(f"❌ GEMINI API ERROR: Tool result at odd index {i} (Gemini requires tool results at even indices)")
-                logger.error(f"    🔧 Complete tool message: {json.dumps(msg, indent=2)}")
-                logger.error(f"    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)")
+                logger.error(
+                    f"❌ GEMINI API ERROR: Tool result at odd index {i} (Gemini requires tool results at even indices)"
+                )
+                logger.error(
+                    f"    🔧 Complete tool message: {json.dumps(msg, indent=2)}"
+                )
+                logger.error(
+                    f"    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)"
+                )
 
             if tool_call_id == "NO_ID":
                 logger.error(f"❌ Tool message missing tool_call_id at message {i}")
@@ -2656,9 +2711,13 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
                 expected_index = tool_call_msg_index + 1
 
                 if i == expected_index:
-                    logger.debug(f"    ✅ Tool result correctly follows tool call (msg {tool_call_msg_index} -> {i})")
+                    logger.debug(
+                        f"    ✅ Tool result correctly follows tool call (msg {tool_call_msg_index} -> {i})"
+                    )
                 else:
-                    logger.error(f"❌ SEQUENCE ERROR: Tool result at msg {i} should follow tool call at msg {tool_call_msg_index} (expected at {expected_index})")
+                    logger.error(
+                        f"❌ SEQUENCE ERROR: Tool result at msg {i} should follow tool call at msg {tool_call_msg_index} (expected at {expected_index})"
+                    )
 
                     # Show what's between the tool call and tool result
                     if i > expected_index:
@@ -2671,11 +2730,15 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
                 # Remove from pending
                 del pending_tool_calls[tool_call_id]
             else:
-                logger.error(f"❌ Tool result references unknown tool_call_id: {tool_call_id}")
+                logger.error(
+                    f"❌ Tool result references unknown tool_call_id: {tool_call_id}"
+                )
 
         # Check for user messages interrupting tool flows
         elif role == "user" and pending_tool_calls:
-            logger.error(f"❌ SEQUENCE ERROR: User message at {i} interrupts pending tool calls: {list(pending_tool_calls.keys())}")
+            logger.error(
+                f"❌ SEQUENCE ERROR: User message at {i} interrupts pending tool calls: {list(pending_tool_calls.keys())}"
+            )
 
     # Check for unresolved tool calls
     if pending_tool_calls:
@@ -2750,7 +2813,6 @@ def count_tokens_in_response(
     return int(total_tokens)
 
 
-
 def _compare_request_data(
     claude_request: ClaudeMessagesRequest, openai_request: dict[str, Any]
 ) -> None:
@@ -2784,18 +2846,12 @@ def _compare_request_data(
 
         # Log conversion summary
         logger.debug("CONVERSION SUMMARY:")
-        logger.debug(
-            f"  Tools: {claude_tools_count} -> {openai_tools_count}"
-        )
-        logger.debug(
-            f"  Messages: {claude_messages_count} -> {openai_messages_count}"
-        )
+        logger.debug(f"  Tools: {claude_tools_count} -> {openai_tools_count}")
+        logger.debug(f"  Messages: {claude_messages_count} -> {openai_messages_count}")
         logger.debug(
             f"  Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
         )
-        logger.debug(
-            f"  System Message: {claude_has_system} -> {openai_has_system}"
-        )
+        logger.debug(f"  System Message: {claude_has_system} -> {openai_has_system}")
         logger.debug(
             f"  Tool Results: {claude_has_tool_result} -> {openai_has_tool_msg}"
         )

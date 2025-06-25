@@ -1,13 +1,12 @@
-
 import sys
 import os
 import unittest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from hook import hook_manager, load_all_plugins
 
-class TestHookSystem(unittest.TestCase):
 
+class TestHookSystem(unittest.TestCase):
     def setUp(self):
         """Set up the test environment by loading all plugins."""
         # Reset hooks before each test to ensure isolation
@@ -22,20 +21,16 @@ class TestHookSystem(unittest.TestCase):
             "tools": [
                 {"name": "WebSearch"},
                 {"name": "WebFetch"},
-                {"name": "SomeOtherTool"}
+                {"name": "SomeOtherTool"},
             ]
         }
 
         # Expected payload after the hook is applied
-        expected_payload = {
-            "tools": [
-                {"name": "SomeOtherTool"}
-            ]
-        }
-        
+        expected_payload = {"tools": [{"name": "SomeOtherTool"}]}
+
         # Trigger the request hooks
         processed_payload = hook_manager.trigger_request_hooks(initial_payload)
-        
+
         # Assert that the tools were filtered as expected
         self.assertEqual(processed_payload, expected_payload)
         self.assertNotIn({"name": "WebSearch"}, processed_payload["tools"])
@@ -52,15 +47,20 @@ class TestHookSystem(unittest.TestCase):
 
         # Trigger the response hooks
         processed_payload = hook_manager.trigger_response_hooks(initial_payload)
-        
+
         # Assert that the payload was modified as expected
         self.assertEqual(processed_payload, expected_payload)
         self.assertTrue(processed_payload.get("hook_applied"))
 
     def test_hooks_are_loaded(self):
         """Verify that the hooks are loaded into the hook_manager."""
-        self.assertGreater(len(hook_manager.request_hooks), 0, "Request hooks should be loaded")
-        self.assertGreater(len(hook_manager.response_hooks), 0, "Response hooks should be loaded")
+        self.assertGreater(
+            len(hook_manager.request_hooks), 0, "Request hooks should be loaded"
+        )
+        self.assertGreater(
+            len(hook_manager.response_hooks), 0, "Response hooks should be loaded"
+        )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

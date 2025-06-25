@@ -100,6 +100,7 @@ def create_mock_openai_response(
 
 class TestClaudeToOpenAIConversion(unittest.TestCase):
     """Test conversion from Claude format to OpenAI format."""
+
     def test_basic_claude_to_openai(self):
         """Test basic Claude message conversion to OpenAI format."""
         # Test basic Claude message conversion to OpenAI format
@@ -139,7 +140,9 @@ class TestClaudeToOpenAIConversion(unittest.TestCase):
         # Should have system message first
         self.assertEqual(len(result["messages"]), 2)
         self.assertEqual(result["messages"][0]["role"], "system")
-        self.assertEqual(result["messages"][0]["content"], "You are a helpful assistant.")
+        self.assertEqual(
+            result["messages"][0]["content"], "You are a helpful assistant."
+        )
         self.assertEqual(result["messages"][1]["role"], "user")
         self.assertEqual(result["messages"][1]["content"], "Hello!")
 
@@ -181,7 +184,9 @@ class TestClaudeToOpenAIConversion(unittest.TestCase):
         self.assertEqual(tool["type"], "function")
         self.assertIn("function", tool)
         self.assertEqual(tool["function"]["name"], "calculator")
-        self.assertEqual(tool["function"]["description"], "Evaluate mathematical expressions")
+        self.assertEqual(
+            tool["function"]["description"], "Evaluate mathematical expressions"
+        )
         self.assertIn("parameters", tool["function"])
 
         print("✅ Tool conversion test passed")
@@ -288,14 +293,22 @@ class TestOpenAIToClaudeConversion(unittest.TestCase):
 
         # Validate thinking block
         self.assertIsNotNone(thinking_block, "Should have thinking content block")
-        self.assertEqual(thinking_block.thinking, reasoning_text,
-            "Thinking content should match reasoning_content")
-        self.assertTrue(hasattr(thinking_block, "signature"), "Should have thinking signature")
+        self.assertEqual(
+            thinking_block.thinking,
+            reasoning_text,
+            "Thinking content should match reasoning_content",
+        )
+        self.assertTrue(
+            hasattr(thinking_block, "signature"), "Should have thinking signature"
+        )
 
         # Validate text block
         self.assertIsNotNone(text_block, "Should have text content block")
-        self.assertEqual(text_block.text, "The answer is 4.",
-            "Text content should match response content")
+        self.assertEqual(
+            text_block.text,
+            "The answer is 4.",
+            "Text content should match response content",
+        )
 
         print("✅ Reasoning content to thinking conversion test passed")
 
@@ -351,8 +364,7 @@ class TestMessageProcessing(unittest.TestCase):
         ]
         self.assertEqual(len(image_parts), 1)
         self.assertIn(
-            "data:image/jpeg;base64,fake_image_data",
-            image_parts[0]["image_url"]["url"]
+            "data:image/jpeg;base64,fake_image_data", image_parts[0]["image_url"]["url"]
         )
 
         print("✅ Mixed content message conversion test passed")
@@ -388,35 +400,50 @@ class TestMessageProcessing(unittest.TestCase):
         messages = result["messages"]
 
         # Should have exactly 2 messages in correct order
-        self.assertEqual(len(messages), 2, f"Expected exactly 2 messages, got {len(messages)}")
+        self.assertEqual(
+            len(messages), 2, f"Expected exactly 2 messages, got {len(messages)}"
+        )
 
         # First message should be the tool result
         tool_message = messages[0]
-        self.assertEqual(tool_message["role"], "tool",
-            f"First message should be tool role, got {tool_message['role']}")
-        self.assertEqual(tool_message["tool_call_id"], "call_test_123",
-            "Tool call ID should match")
-        self.assertIn("Tool operation completed successfully", tool_message["content"],
-            "Tool result content should match")
+        self.assertEqual(
+            tool_message["role"],
+            "tool",
+            f"First message should be tool role, got {tool_message['role']}",
+        )
+        self.assertEqual(
+            tool_message["tool_call_id"], "call_test_123", "Tool call ID should match"
+        )
+        self.assertIn(
+            "Tool operation completed successfully",
+            tool_message["content"],
+            "Tool result content should match",
+        )
 
         # Second message should be the user content
         user_message = messages[1]
-        self.assertEqual(user_message["role"], "user",
-            f"Second message should be user role, got {user_message['role']}")
-        self.assertEqual(user_message["content"], "Thanks! Now let's try something else.",
-            "User content should match")
+        self.assertEqual(
+            user_message["role"],
+            "user",
+            f"Second message should be user role, got {user_message['role']}",
+        )
+        self.assertEqual(
+            user_message["content"],
+            "Thanks! Now let's try something else.",
+            "User content should match",
+        )
 
         print("✅ Tool result message ordering test passed")
 
     def test_thinking_content_conversion(self):
-        """Test that thinking content is properly converted to text in message conversion."""
+        """Test that thinking content is properly converted to text in assistant message conversion."""
         print("🧪 Testing thinking content conversion...")
 
-        # Test message with text + thinking (thinking should be converted to text)
+        # Test assistant message with text + thinking (thinking should be converted to text)
         message_with_thinking = ClaudeMessage(
-            role="user",
+            role="assistant",
             content=[
-                ClaudeContentBlockText(type="text", text="Regular user message"),
+                ClaudeContentBlockText(type="text", text="Regular assistant message"),
                 ClaudeContentBlockThinking(
                     type="thinking", thinking="This is internal thinking"
                 ),
@@ -431,11 +458,14 @@ class TestMessageProcessing(unittest.TestCase):
         messages = result["messages"]
 
         self.assertEqual(len(messages), 1)
-        user_message = messages[0]
-        self.assertEqual(user_message["role"], "user")
+        assistant_message = messages[0]
+        self.assertEqual(assistant_message["role"], "assistant")
         # Text + thinking content should now be merged into a single string
-        self.assertIsInstance(user_message["content"], str)
-        self.assertEqual(user_message["content"], "Regular user messageThis is internal thinking")
+        self.assertIsInstance(assistant_message["content"], str)
+        self.assertEqual(
+            assistant_message["content"],
+            "Regular assistant messageThis is internal thinking",
+        )
 
         print("✅ Thinking content conversion test passed")
 
@@ -685,8 +715,11 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # Check message roles and order
         expected_roles = ["user", "assistant", "tool", "user", "assistant"]
         actual_roles = [msg["role"] for msg in messages]
-        self.assertEqual(actual_roles, expected_roles,
-            f"Expected roles {expected_roles}, got {actual_roles}")
+        self.assertEqual(
+            actual_roles,
+            expected_roles,
+            f"Expected roles {expected_roles}, got {actual_roles}",
+        )
 
         # Validate assistant message with tool calls
         assistant_msg = messages[1]
@@ -694,7 +727,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         self.assertEqual(assistant_msg["content"], "I'll check the weather for you.")
         self.assertIn("tool_calls", assistant_msg)
         self.assertEqual(len(assistant_msg["tool_calls"]), 1)
-        self.assertEqual(assistant_msg["tool_calls"][0]["function"]["name"], "get_weather")
+        self.assertEqual(
+            assistant_msg["tool_calls"][0]["function"]["name"], "get_weather"
+        )
 
         # Validate tool result
         tool_msg = messages[2]
@@ -705,7 +740,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # Validate follow-up user message
         followup_user_msg = messages[3]
         self.assertEqual(followup_user_msg["role"], "user")
-        self.assertEqual(followup_user_msg["content"], "That's nice! What about tomorrow?")
+        self.assertEqual(
+            followup_user_msg["content"], "That's nice! What about tomorrow?"
+        )
 
         print("✅ Complex conversation flow test passed")
 
@@ -788,7 +825,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         self.assertIn("tool_calls", openai_assistant[0])
         self.assertEqual(len(openai_assistant[0]["tool_calls"]), 1)
         self.assertEqual(openai_assistant[0]["tool_calls"][0]["id"], "tool_123")
-        self.assertEqual(openai_assistant[0]["tool_calls"][0]["function"]["name"], "helper")
+        self.assertEqual(
+            openai_assistant[0]["tool_calls"][0]["function"]["name"], "helper"
+        )
 
         # Test user message with tool result conversion (should split into multiple messages)
         user_message = ClaudeMessage(
@@ -797,11 +836,13 @@ Let me create a new MultiEdit operation with these precise changes for the first
                 ClaudeContentBlockToolResult(
                     type="tool_result", tool_use_id="tool_123", content="Success"
                 ),
-                ClaudeContentBlockText(type="text", text="Thanks!")
+                ClaudeContentBlockText(type="text", text="Thanks!"),
             ],
         )
         openai_user = user_message.to_openai_messages()
-        self.assertEqual(len(openai_user), 2)  # Should split into tool message + user message
+        self.assertEqual(
+            len(openai_user), 2
+        )  # Should split into tool message + user message
 
         # First should be tool result message
         self.assertEqual(openai_user[0]["role"], "tool")
@@ -827,8 +868,8 @@ Let me create a new MultiEdit operation with these precise changes for the first
                 "properties": {
                     "plan": {"type": "string", "description": "The plan to exit"}
                 },
-                "required": ["plan"]
-            }
+                "required": ["plan"],
+            },
         )
 
         # Create the Claude request that mimics the failing test
@@ -877,7 +918,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         # Debug: Print each Claude message
         for i, msg in enumerate(claude_request.messages):
-            print(f"  Claude Message {i}: role={msg.role}, content_blocks={len(msg.content) if isinstance(msg.content, list) else 1}")
+            print(
+                f"  Claude Message {i}: role={msg.role}, content_blocks={len(msg.content) if isinstance(msg.content, list) else 1}"
+            )
             if isinstance(msg.content, list):
                 for j, block in enumerate(msg.content):
                     print(f"    Block {j}: type={block.type}")
@@ -889,9 +932,13 @@ Let me create a new MultiEdit operation with these precise changes for the first
         print(f"📤 Converted to {len(openai_messages)} OpenAI messages:")
         for i, msg in enumerate(openai_messages):
             role = msg.get("role", "unknown")
-            has_tool_calls = msg.get("tool_calls") is not None and len(msg.get("tool_calls", [])) > 0
+            has_tool_calls = (
+                msg.get("tool_calls") is not None and len(msg.get("tool_calls", [])) > 0
+            )
             has_content = bool(msg.get("content"))
-            print(f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, has_content={has_content}")
+            print(
+                f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, has_content={has_content}"
+            )
 
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id", "unknown")
@@ -904,7 +951,9 @@ Let me create a new MultiEdit operation with these precise changes for the first
         for i, msg in enumerate(openai_messages):
             if msg.get("role") == "tool":
                 if not last_had_tool_calls:
-                    print(f"❌ Invalid sequence: Tool message at index {i} doesn't follow assistant message with tool_calls")
+                    print(
+                        f"❌ Invalid sequence: Tool message at index {i} doesn't follow assistant message with tool_calls"
+                    )
                     valid_sequence = False
                     break
 
@@ -920,10 +969,16 @@ Let me create a new MultiEdit operation with these precise changes for the first
             print("❌ Message sequence violates OpenAI API rules")
 
         # Assert that the sequence is valid - this will make the test fail if it's not
-        self.assertTrue(valid_sequence, "Tool message sequence should be valid for OpenAI API")
+        self.assertTrue(
+            valid_sequence, "Tool message sequence should be valid for OpenAI API"
+        )
 
         # Additional assertions to verify the specific structure
-        self.assertGreaterEqual(len(openai_messages), 3, "Should have at least 3 messages: assistant + tool + user")
+        self.assertGreaterEqual(
+            len(openai_messages),
+            3,
+            "Should have at least 3 messages: assistant + tool + user",
+        )
 
         # First message should be assistant with tool_calls
         self.assertEqual(openai_messages[0]["role"], "assistant")
@@ -939,57 +994,69 @@ Let me create a new MultiEdit operation with these precise changes for the first
         self.assertEqual(openai_messages[2]["role"], "user")
 
         print("✅ Tool sequence interruption conversion test passed")
-    
+
     def test_streaming_tool_id_consistency_bug(self):
         """Test the specific tool use ID consistency bug in streaming responses."""
         print("🐛 Testing streaming tool use ID consistency bug...")
 
         # This test reproduces the bug where assistant message content gets lost
         # when converting streaming responses that contain both text and tool_calls
-        
+
         # Create a Claude message that has both text content and tool_use (like the bug scenario)
         mixed_assistant_message = ClaudeMessage(
             role="assistant",
             content=[
                 ClaudeContentBlockText(
                     type="text",
-                    text="Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly."
+                    text="Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.",
                 ),
                 ClaudeContentBlockToolUse(
                     type="tool_use",
                     id="tool_0_exit_plan_mode",  # This is the Claude Code frontend format
                     name="exit_plan_mode",
                     input={
-                        "plan": "1. **Update Makefile**:\n    - Add a `test-cov` target to generate a terminal-based coverage report.\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    - Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    - Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
-                    }
-                )
-            ]
+                        "plan": '1. **Update Makefile**:\n    - Add a `test-cov` target to generate a terminal-based coverage report.\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    - Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    - Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.'
+                    },
+                ),
+            ],
         )
 
         # Convert to OpenAI format
         openai_messages = mixed_assistant_message.to_openai_messages()
-        
+
         # Should have exactly 1 message (no splitting needed since no tool_result)
-        self.assertEqual(len(openai_messages), 1, f"Expected 1 message, got {len(openai_messages)}")
-        
+        self.assertEqual(
+            len(openai_messages), 1, f"Expected 1 message, got {len(openai_messages)}"
+        )
+
         message = openai_messages[0]
-        
+
         # Check basic structure
         self.assertEqual(message["role"], "assistant")
         self.assertIn("content", message)
         self.assertIn("tool_calls", message)
-        
+
         # CRITICAL: Content should NOT be empty or None - it should contain the text
-        self.assertIsNotNone(message["content"], "Assistant message content should not be None")
-        self.assertNotEqual(message["content"], "", "Assistant message content should not be empty")
-        self.assertIn("I will add commands", message["content"], "Content should contain the original text")
-        
+        self.assertIsNotNone(
+            message["content"], "Assistant message content should not be None"
+        )
+        self.assertNotEqual(
+            message["content"], "", "Assistant message content should not be empty"
+        )
+        self.assertIn(
+            "I will add commands",
+            message["content"],
+            "Content should contain the original text",
+        )
+
         # Tool calls should be properly formatted
         self.assertEqual(len(message["tool_calls"]), 1)
         tool_call = message["tool_calls"][0]
-        self.assertEqual(tool_call["id"], "tool_0_exit_plan_mode")  # ID should be preserved
+        self.assertEqual(
+            tool_call["id"], "tool_0_exit_plan_mode"
+        )  # ID should be preserved
         self.assertEqual(tool_call["function"]["name"], "exit_plan_mode")
-        
+
         print("✅ Streaming tool use ID consistency bug test passed")
 
     def test_complete_tool_use_flow_with_mixed_content(self):
@@ -998,7 +1065,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         # 1. Create Claude request with mixed content (text + tool_use)
         claude_request = ClaudeMessagesRequest(
-            model="claude-3-5-sonnet-20241022", 
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1024,
             messages=[
                 ClaudeMessage(
@@ -1006,17 +1073,19 @@ Let me create a new MultiEdit operation with these precise changes for the first
                     content=[
                         ClaudeContentBlockText(
                             type="text",
-                            text="I'll help you implement those features. Let me create a plan first."
+                            text="I'll help you implement those features. Let me create a plan first.",
                         ),
                         ClaudeContentBlockToolUse(
                             type="tool_use",
                             id="tool_0_exit_plan_mode",
                             name="exit_plan_mode",
-                            input={"plan": "Implementation plan for the requested features"}
-                        )
-                    ]
+                            input={
+                                "plan": "Implementation plan for the requested features"
+                            },
+                        ),
+                    ],
                 )
-            ]
+            ],
         )
 
         # 2. Convert Claude → OpenAI
@@ -1027,11 +1096,11 @@ Let me create a new MultiEdit operation with these precise changes for the first
         self.assertEqual(len(openai_messages), 1)
         assistant_msg = openai_messages[0]
         self.assertEqual(assistant_msg["role"], "assistant")
-        
+
         # CRITICAL: Content should be preserved
         self.assertIn("content", assistant_msg)
         self.assertIn("I'll help you implement", assistant_msg["content"])
-        
+
         # Tool calls should be present
         self.assertIn("tool_calls", assistant_msg)
         self.assertEqual(len(assistant_msg["tool_calls"]), 1)
@@ -1040,22 +1109,34 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # 3. Simulate OpenAI response (what would come back from OpenAI API)
         mock_openai_response = create_mock_openai_response(
             content="I'll help you implement those features. Let me create a plan first.",
-            tool_calls=[{
-                "name": "exit_plan_mode", 
-                "arguments": {"plan": "Implementation plan for the requested features"}
-            }]
+            tool_calls=[
+                {
+                    "name": "exit_plan_mode",
+                    "arguments": {
+                        "plan": "Implementation plan for the requested features"
+                    },
+                }
+            ],
         )
 
         # 4. Convert OpenAI response → Claude response
-        claude_response = convert_openai_response_to_anthropic(mock_openai_response, claude_request)
+        claude_response = convert_openai_response_to_anthropic(
+            mock_openai_response, claude_request
+        )
 
         # Verify Claude response format
         self.assertEqual(claude_response.role, "assistant")
-        self.assertGreaterEqual(len(claude_response.content), 2)  # Should have text + tool_use
+        self.assertGreaterEqual(
+            len(claude_response.content), 2
+        )  # Should have text + tool_use
 
         # Find content blocks
-        text_blocks = [block for block in claude_response.content if block.type == "text"]
-        tool_blocks = [block for block in claude_response.content if block.type == "tool_use"]
+        text_blocks = [
+            block for block in claude_response.content if block.type == "text"
+        ]
+        tool_blocks = [
+            block for block in claude_response.content if block.type == "tool_use"
+        ]
 
         # Verify content preservation
         self.assertEqual(len(text_blocks), 1)
@@ -1084,17 +1165,17 @@ Let me create a new MultiEdit operation with these precise changes for the first
                     content=[
                         ClaudeContentBlockText(
                             type="text",
-                            text="Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.\n\nHere is my plan:\n\n1.  **Update Makefile**:\n    *   Add a `test-cov` target to generate a terminal-based coverage report.\n    *   Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    *   Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    *   Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
+                            text='Of course. I will add commands to the `Makefile` to generate test coverage reports using `pytest`, and I will update the `README.md` accordingly.\n\nHere is my plan:\n\n1.  **Update Makefile**:\n    *   Add a `test-cov` target to generate a terminal-based coverage report.\n    *   Add a `test-cov-html` target to generate a more detailed HTML coverage report.\n    *   Update the `help` command to include these new testing options.\n2.  **Update README.md**:\n    *   Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.',
                         ),
                         ClaudeContentBlockToolUse(
                             type="tool_use",
                             id="tool_0_exit_plan_mode",
                             name="exit_plan_mode",
                             input={
-                                "plan": "1. **Update Makefile**:\\n    - Add a `test-cov` target to generate a terminal-based coverage report.\\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\\n    - Update the `help` command to include these new testing options.\\n2.  **Update README.md**:\\n    - Add a new \"Test Coverage\" section explaining how to run the new `make test-cov` and `make test-cov-html` commands."
-                            }
-                        )
-                    ]
+                                "plan": '1. **Update Makefile**:\\n    - Add a `test-cov` target to generate a terminal-based coverage report.\\n    - Add a `test-cov-html` target to generate a more detailed HTML coverage report.\\n    - Update the `help` command to include these new testing options.\\n2.  **Update README.md**:\\n    - Add a new "Test Coverage" section explaining how to run the new `make test-cov` and `make test-cov-html` commands.'
+                            },
+                        ),
+                    ],
                 ),
                 # Tool result message (exit_plan_mode approved)
                 ClaudeMessage(
@@ -1103,16 +1184,13 @@ Let me create a new MultiEdit operation with these precise changes for the first
                         ClaudeContentBlockToolResult(
                             type="tool_result",
                             tool_use_id="tool_0_exit_plan_mode",
-                            content="User has approved your plan. You can now start coding."
+                            content="User has approved your plan. You can now start coding.",
                         )
-                    ]
+                    ],
                 ),
                 # User's follow-up message
-                ClaudeMessage(
-                    role="user",
-                    content="重试一下"
-                )
-            ]
+                ClaudeMessage(role="user", content="重试一下"),
+            ],
         )
 
         print(f"📝 Created Claude request with {len(claude_request.messages)} messages")
@@ -1128,32 +1206,50 @@ Let me create a new MultiEdit operation with these precise changes for the first
             content_preview = ""
             if "content" in msg and msg["content"]:
                 content_str = str(msg["content"])
-                content_preview = content_str[:50] + "..." if len(content_str) > 50 else content_str
-            
-            print(f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, content='{content_preview}'")
+                content_preview = (
+                    content_str[:50] + "..." if len(content_str) > 50 else content_str
+                )
+
+            print(
+                f"  Message {i}: role={role}, has_tool_calls={has_tool_calls}, content='{content_preview}'"
+            )
 
         # 3. Verify the OpenAI request structure matches expectations
         # This should match the problematic sequence from the logs
-        
+
         # The first message should be assistant with both content and tool_calls
-        self.assertGreaterEqual(len(openai_messages), 3, "Should have at least assistant + tool + user messages")
-        
+        self.assertGreaterEqual(
+            len(openai_messages),
+            3,
+            "Should have at least assistant + tool + user messages",
+        )
+
         # Check first message (assistant with tool call)
         first_msg = openai_messages[0]
         self.assertEqual(first_msg["role"], "assistant")
         self.assertIn("content", first_msg, "Assistant message should have content")
-        self.assertIn("tool_calls", first_msg, "Assistant message should have tool_calls")
-        
+        self.assertIn(
+            "tool_calls", first_msg, "Assistant message should have tool_calls"
+        )
+
         # CRITICAL: Check if content is preserved
         if "content" in first_msg:
             content = first_msg["content"]
             if content is None or content == "" or content == "(no content)":
-                print(f"❌ FOUND THE BUG: Assistant message content is '{content}' - should contain the plan text!")
-                self.fail(f"Assistant message content should not be empty/None, got: '{content}'")
+                print(
+                    f"❌ FOUND THE BUG: Assistant message content is '{content}' - should contain the plan text!"
+                )
+                self.fail(
+                    f"Assistant message content should not be empty/None, got: '{content}'"
+                )
             else:
                 print(f"✅ Assistant message content preserved: '{content[:100]}...'")
-                self.assertIn("I will add commands", content, "Content should contain the original text")
-        
+                self.assertIn(
+                    "I will add commands",
+                    content,
+                    "Content should contain the original text",
+                )
+
         # Check tool call structure
         tool_calls = first_msg["tool_calls"]
         self.assertEqual(len(tool_calls), 1)
@@ -1164,24 +1260,32 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # Create a mock response that simulates the model's behavior after exit_plan_mode
         mock_model_response = create_mock_openai_response(
             content="",  # This simulates the potential model behavior of returning empty content
-            tool_calls=[{
-                "name": "Read",
-                "arguments": {"file_path": "/Users/tizee/projects/project-AI/tools/claude-code-proxy.tizee/Makefile"}
-            }],
-            finish_reason="tool_calls"
+            tool_calls=[
+                {
+                    "name": "Read",
+                    "arguments": {
+                        "file_path": "/Users/tizee/projects/project-AI/tools/claude-code-proxy.tizee/Makefile"
+                    },
+                }
+            ],
+            finish_reason="tool_calls",
         )
 
         # 5. Convert the mock response back to Claude format
-        claude_response = convert_openai_response_to_anthropic(mock_model_response, claude_request)
+        claude_response = convert_openai_response_to_anthropic(
+            mock_model_response, claude_request
+        )
 
         print(f"🔄 Mock model response converted back to Claude format:")
         print(f"   Role: {claude_response.role}")
         print(f"   Content blocks: {len(claude_response.content)}")
-        
+
         for i, block in enumerate(claude_response.content):
-            if hasattr(block, 'type'):
+            if hasattr(block, "type"):
                 if block.type == "text":
-                    text_preview = block.text[:50] + "..." if len(block.text) > 50 else block.text
+                    text_preview = (
+                        block.text[:50] + "..." if len(block.text) > 50 else block.text
+                    )
                     print(f"   Block {i}: text = '{text_preview}'")
                 elif block.type == "tool_use":
                     print(f"   Block {i}: tool_use = {block.name}")
@@ -1189,8 +1293,10 @@ Let me create a new MultiEdit operation with these precise changes for the first
         # 6. The key test: Check if the conversion preserves the expected behavior
         # If the original model returns empty content with tool_calls, that might be normal
         # But if our conversion is losing non-empty content, that's our bug
-        
-        print("🎯 Test completed - check the output above to see if content is properly preserved")
+
+        print(
+            "🎯 Test completed - check the output above to see if content is properly preserved"
+        )
         print("✅ Exit plan mode scenario test completed")
 
     def test_tool_use_id_uniqueness(self):
@@ -1199,14 +1305,32 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         # Create multiple tool calls with the same original ID (simulating Gemini API behavior)
         mock_tool_calls = [
-            {"name": "Edit", "arguments": {"file_path": "/test1.py", "old_string": "old", "new_string": "new"}},
-            {"name": "Edit", "arguments": {"file_path": "/test2.py", "old_string": "old", "new_string": "new"}},
+            {
+                "name": "Edit",
+                "arguments": {
+                    "file_path": "/test1.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+            },
+            {
+                "name": "Edit",
+                "arguments": {
+                    "file_path": "/test2.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                },
+            },
             {"name": "Read", "arguments": {"file_path": "/test3.py"}},
         ]
 
         # Create multiple responses that would have the same tool IDs (like Gemini)
-        response1 = create_mock_openai_response("I'll make these changes.", mock_tool_calls[:2])
-        response2 = create_mock_openai_response("Let me also read this file.", mock_tool_calls[2:])
+        response1 = create_mock_openai_response(
+            "I'll make these changes.", mock_tool_calls[:2]
+        )
+        response2 = create_mock_openai_response(
+            "Let me also read this file.", mock_tool_calls[2:]
+        )
 
         original_request = ClaudeMessagesRequest(
             model="test-model",
@@ -1215,32 +1339,45 @@ Let me create a new MultiEdit operation with these precise changes for the first
         )
 
         # Convert both responses
-        claude_response1 = convert_openai_response_to_anthropic(response1, original_request)
-        claude_response2 = convert_openai_response_to_anthropic(response2, original_request)
+        claude_response1 = convert_openai_response_to_anthropic(
+            response1, original_request
+        )
+        claude_response2 = convert_openai_response_to_anthropic(
+            response2, original_request
+        )
 
         # Collect all tool use IDs from both responses
         tool_ids = []
-        
+
         for response in [claude_response1, claude_response2]:
             for block in response.content:
-                if hasattr(block, 'type') and block.type == "tool_use":
+                if hasattr(block, "type") and block.type == "tool_use":
                     tool_ids.append(block.id)
 
         # Test 1: All IDs should be unique
-        self.assertEqual(len(tool_ids), len(set(tool_ids)), 
-                        f"Tool use IDs should be unique. Found duplicates: {tool_ids}")
+        self.assertEqual(
+            len(tool_ids),
+            len(set(tool_ids)),
+            f"Tool use IDs should be unique. Found duplicates: {tool_ids}",
+        )
 
         # Test 2: IDs should follow our custom format (timestamp-based)
         for tool_id in tool_ids:
-            self.assertRegex(tool_id, r'^toolu_\d+_[a-f0-9]{8}$',
-                            f"Tool ID should match format 'toolu_<timestamp>_<hex>': {tool_id}")
+            self.assertRegex(
+                tool_id,
+                r"^toolu_\d+_[a-f0-9]{8}$",
+                f"Tool ID should match format 'toolu_<timestamp>_<hex>': {tool_id}",
+            )
 
         # Test 3: Verify that multiple calls to generate_unique_tool_id() produce different IDs
         from models import generate_unique_tool_id
-        
+
         generated_ids = [generate_unique_tool_id() for _ in range(10)]
-        self.assertEqual(len(generated_ids), len(set(generated_ids)),
-                        f"Generated IDs should be unique: {generated_ids}")
+        self.assertEqual(
+            len(generated_ids),
+            len(set(generated_ids)),
+            f"Generated IDs should be unique: {generated_ids}",
+        )
 
         print("✅ Tool use ID uniqueness test passed")
 
@@ -1250,29 +1387,50 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         # Simulate a streaming scenario where the same tool is called multiple times
         # This tests the fix for the Gemini API returning duplicate IDs like "tool_0_Edit"
-        
+
         mock_tool_calls_with_duplicate_ids = [
             # Simulate what Gemini API might return (duplicate IDs)
-            type('MockToolCall', (), {
-                'id': 'tool_0_Edit',  # This is the problematic duplicate ID
-                'function': type('MockFunction', (), {
-                    'name': 'Edit',
-                    'arguments': '{"file_path": "/test1.py", "old_string": "old1", "new_string": "new1"}'
-                })()
-            })(),
-            type('MockToolCall', (), {
-                'id': 'tool_0_Edit',  # Same ID again - this should be made unique
-                'function': type('MockFunction', (), {
-                    'name': 'Edit', 
-                    'arguments': '{"file_path": "/test2.py", "old_string": "old2", "new_string": "new2"}'
-                })()
-            })(),
+            type(
+                "MockToolCall",
+                (),
+                {
+                    "id": "tool_0_Edit",  # This is the problematic duplicate ID
+                    "function": type(
+                        "MockFunction",
+                        (),
+                        {
+                            "name": "Edit",
+                            "arguments": '{"file_path": "/test1.py", "old_string": "old1", "new_string": "new1"}',
+                        },
+                    )(),
+                },
+            )(),
+            type(
+                "MockToolCall",
+                (),
+                {
+                    "id": "tool_0_Edit",  # Same ID again - this should be made unique
+                    "function": type(
+                        "MockFunction",
+                        (),
+                        {
+                            "name": "Edit",
+                            "arguments": '{"file_path": "/test2.py", "old_string": "old2", "new_string": "new2"}',
+                        },
+                    )(),
+                },
+            )(),
         ]
 
         mock_response = create_mock_openai_response(
-            "I'll make these edits.", 
-            [{"name": call.function.name, "arguments": json.loads(call.function.arguments)} 
-             for call in mock_tool_calls_with_duplicate_ids]
+            "I'll make these edits.",
+            [
+                {
+                    "name": call.function.name,
+                    "arguments": json.loads(call.function.arguments),
+                }
+                for call in mock_tool_calls_with_duplicate_ids
+            ],
         )
 
         # Force the tool call IDs to be the problematic duplicates
@@ -1285,28 +1443,43 @@ Let me create a new MultiEdit operation with these precise changes for the first
         )
 
         # Convert to Claude format
-        claude_response = convert_openai_response_to_anthropic(mock_response, original_request)
+        claude_response = convert_openai_response_to_anthropic(
+            mock_response, original_request
+        )
 
         # Collect tool use blocks
-        tool_blocks = [block for block in claude_response.content if hasattr(block, 'type') and block.type == "tool_use"]
-        
+        tool_blocks = [
+            block
+            for block in claude_response.content
+            if hasattr(block, "type") and block.type == "tool_use"
+        ]
+
         # Should have 2 tool use blocks
         self.assertEqual(len(tool_blocks), 2, "Should have 2 tool use blocks")
 
         # IDs should be unique despite the original duplicates
         tool_ids = [block.id for block in tool_blocks]
-        self.assertEqual(len(tool_ids), len(set(tool_ids)), 
-                        f"Tool use IDs should be unique even when source had duplicates: {tool_ids}")
+        self.assertEqual(
+            len(tool_ids),
+            len(set(tool_ids)),
+            f"Tool use IDs should be unique even when source had duplicates: {tool_ids}",
+        )
 
         # IDs should NOT be the original problematic format
         for tool_id in tool_ids:
-            self.assertNotEqual(tool_id, "tool_0_Edit", 
-                               f"Tool ID should not be the original duplicate ID: {tool_id}")
-            
+            self.assertNotEqual(
+                tool_id,
+                "tool_0_Edit",
+                f"Tool ID should not be the original duplicate ID: {tool_id}",
+            )
+
         # IDs should follow our unique format
         for tool_id in tool_ids:
-            self.assertRegex(tool_id, r'^toolu_\d+_[a-f0-9]{8}$',
-                            f"Tool ID should follow unique format: {tool_id}")
+            self.assertRegex(
+                tool_id,
+                r"^toolu_\d+_[a-f0-9]{8}$",
+                f"Tool ID should follow unique format: {tool_id}",
+            )
 
         print("✅ Tool use ID consistency in streaming test passed")
 

@@ -65,6 +65,9 @@ test-complex:
 test-conversion:
 	-uv run python tests/test_conversions.py
 
+test-hooks:
+	-uv run pytest tests/test_hooks.py -v
+
 lint:
 	uv run ruff check . --fix
 

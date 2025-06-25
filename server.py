@@ -66,7 +66,10 @@ class Config:
         self.host = os.environ.get("HOST", ModelDefaults.DEFAULT_HOST)
         self.port = int(os.environ.get("PORT", str(ModelDefaults.DEFAULT_PORT)))
         self.log_level = os.environ.get("LOG_LEVEL", ModelDefaults.DEFAULT_LOG_LEVEL)
-        self.log_file_path = os.environ.get("LOG_FILE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"))
+        self.log_file_path = os.environ.get(
+            "LOG_FILE_PATH",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"),
+        )
 
         # Request limits and timeouts
         self.max_tokens_limit = int(
@@ -127,7 +130,7 @@ logger.setLevel(getattr(logging, config.log_level.upper()))
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # File handler
-file_handler = logging.FileHandler(config.log_file_path, mode='w')
+file_handler = logging.FileHandler(config.log_file_path, mode="w")
 file_handler.setFormatter(formatter)
 
 # Stream handler
@@ -276,8 +279,8 @@ def load_custom_models(config_file=None):
                     "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
                 ),
                 # openai request extra options
-                "extra_headers": model.get("extra_headers", None),
-                "extra_body": model.get("extra_body", None),
+                "extra_headers": model.get("extra_headers", {}),
+                "extra_body": model.get("extra_body", {}),
                 "reasoning_effort": model.get("reasoning_effort", None),
             }
 
@@ -501,7 +504,7 @@ async def hook_streaming_response(response_generator, request, routed_model):
                 continue
 
             # Split event string to process data part
-            header, _, data_part = event_str.partition('data: ')
+            header, _, data_part = event_str.partition("data: ")
 
             if data_part.strip() == "[DONE]":
                 yield event_str
@@ -578,23 +581,44 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         openai_request["model"] = model_config.get("model_name")
 
         # Add extra headers if defined in model config
-        openai_request["extra_headers"] = model_config["extra_headers"] or {}
-        openai_request["extra_body"] = model_config["extra_body"] or {}
+        openai_request["extra_headers"] = model_config["extra_headers"]
+        openai_request["extra_body"] = model_config["extra_body"]
 
-        # doubao-seed models use "thinking" field as the same as Anthropic's
-        #  options:
-        #   disabled: not output reasoning content
-        #   enabled: output reasoning content
-        #   auto: enable thinking automatically
-        if has_thinking:
-            if model_config["reasoning_effort"] and model_config[
-                "reasoning_effort"
-            ] in ["low", "medium", "high"]:
-                openai_request["reasoning_effort"] = model_config["reasoning_effort"]
-            openai_request["extra_body"]["thinking"] = {"type": "enabled"}
-        else:
-            # thinking not supported
-            openai_request["extra_body"]["thinking"] = {"type": "disabled"}
+        # Handle thinking/reasoning based on model capabilities
+
+        # 1. OpenAI native `reasoning_effort`
+        if (
+            has_thinking
+            and model_config.get("reasoning_effort")
+            and model_config["reasoning_effort"] in ["low", "medium", "high"]
+        ):
+            openai_request["reasoning_effort"] = model_config["reasoning_effort"]
+
+        # 2. Custom `thinking` and `thinkingConfig` in `extra_body`
+        if model_config.get("extra_body"):
+            # For doubao-style thinking
+            if model_config["extra_body"].get("thinking") and isinstance(
+                model_config["extra_body"].get("thinking"), dict
+            ):
+                if has_thinking:
+                    openai_request["extra_body"]["thinking"] = {"type": "enabled"}
+                else:
+                    # Pass the thinking block but disable it.
+                    openai_request["extra_body"]["thinking"] = {"type": "disabled"}
+
+            # For Gemini-style thinking
+            if "thinkingConfig" in model_config["extra_body"]:
+                # Start with the base thinking configuration from the model
+                thinking_params = model_config["extra_body"]["thinkingConfig"].copy()
+                if has_thinking:
+                    # If thinking is enabled but no budget is specified, default to dynamic.
+                    if "thinkingBudget" not in thinking_params:
+                        thinking_params["thinkingBudget"] = -1
+                else:
+                    # To disable thinking for Gemini, set the budget to 0.
+                    thinking_params["thinkingBudget"] = 0
+
+                openai_request["extra_body"]["thinkingConfig"] = thinking_params
 
         # Intelligent tool_choice adjustment for better model consistency
         # Based on test findings from claude_code_interruption_test:
@@ -602,10 +626,13 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         # - Other models (DeepSeek, etc.) may not use tools when tool_choice is None or auto
         # - tool_choice=required ensures consistent behavior across all models
         # - Exception: Thinking models don't support tool_choice=required (API limitation)
-        if not has_thinking and openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
+        if (
+            not has_thinking
+            and openai_request.get("tools")
+            and len(openai_request.get("tools", [])) > 0
+        ):
             current_tool_choice = openai_request.get("tool_choice")
-            if current_tool_choice is None and openai_request["extra_body"]["thinking"] and openai_request["extra_body"]["thinking"]["type"] == "disabled" :
-                logger.debug("🔧 Setting tool_choice to 'auto' for better model consistency (was None)")
+            if not current_tool_choice:
                 openai_request["tool_choice"] = "auto"
 
         # Only log basic info about the request, not the full details

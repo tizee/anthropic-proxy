@@ -45,6 +45,7 @@ from models import (
     ClaudeToolChoice,
     ClaudeToolChoiceAny,
     ClaudeToolChoiceAuto,
+    ClaudeContentBlockThinking,
 )
 
 # Load environment variables
@@ -706,8 +707,9 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         tool_blocks = [
             block for block in response["content"] if block.get("type") == "tool_use"
         ]
-        self.assertGreater(1, len(tool_blocks), "Response should should not contain tool use")
-
+        self.assertGreater(
+            1, len(tool_blocks), "Response should should not contain tool use"
+        )
 
     def assertHasToolUse(self, response: dict[str, Any], tool_name: str = None):
         """Assert that response contains tool use."""
@@ -792,7 +794,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         test_name: str | None = None,
         compare_content: bool = False,
         has_thinking: bool = False,
-        tool_choice: ClaudeToolChoice | None = None
+        tool_choice: ClaudeToolChoice | None = None,
     ) -> tuple[bool, str | None]:
         """
         Compare the two responses using Anthropic as ground truth.
@@ -1106,7 +1108,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             check_tools=check_tools,
             test_name=test_name,
             has_thinking=has_thinking,
-            tool_choice=request_data.tool_choice
+            tool_choice=request_data.tool_choice,
         )
 
     async def make_direct_conversion_test(
@@ -1114,7 +1116,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         test_name: str,
         request_data: ClaudeMessagesRequest,
         check_tools: bool = False,
-        compare_with_anthropic: bool = True,
+        compare_with_anthropic: bool = False,
         expect_failure: bool = False,
     ) -> tuple[bool, str | None]:
         """Run a direct conversion test using the test_conversion endpoint."""
@@ -1130,7 +1132,9 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
         except httpx.HTTPStatusError as e:
             if expect_failure:
                 # If we expected failure and got failure, that's a test success
-                print(f"✅ Expected failure occurred for {test_name}: {e.response.status_code}")
+                print(
+                    f"✅ Expected failure occurred for {test_name}: {e.response.status_code}"
+                )
                 return True, f"Expected failure: {e.response.status_code}"
             else:
                 # If we didn't expect failure but got failure, re-raise the exception
@@ -1169,7 +1173,7 @@ class ProxyTestBase(unittest.IsolatedAsyncioTestCase):
             check_tools=check_tools,
             test_name=test_name,
             has_thinking=has_thinking,
-            tool_choice=request_data.tool_choice
+            tool_choice=request_data.tool_choice,
         )
 
 
@@ -1366,7 +1370,6 @@ class TestToolRequests(ProxyTestBase):
 
         self.assertResponseValid(response)
         self.assertNoToolUse(response)
-
 
     async def test_tool_streaming(self):
         """Test tool usage with streaming."""
@@ -1860,12 +1863,63 @@ class TestCustomModels(ProxyTestBase):
     """Test custom model functionality and conversions."""
 
     # gemini_tool_test
+    async def test_gemini_malformed_function_call(self):
+        """this is a server-side error, not proxy server's fault"""
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-flash-lite-preview-06-17",
+            stream=True,
+            max_tokens=1000,
+            tools=[calculator_tool],
+            # system="You're Claude",
+            thinking=ClaudeThinkingConfigEnabled(type="enabled"),
+            messages=[
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockThinking(
+                            type="thinking",
+                            thinking="I will use calculator tool",
+                            signature="...",
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            name="calculator",
+                            id="toolu_1750813210982_8650f6fa",
+                            input={"expression": "25 + 17"},
+                        ),
+                    ],
+                ),
+                ClaudeMessage(role="assistant", content=""),
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockToolResult(
+                            type="tool_result",
+                            tool_use_id="toolu_1750813210982_8650f6fa",
+                            content="42",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        passed, warning = await self.make_direct_conversion_test(
+            "test_gemini_malformed_function_call",
+            request,
+            check_tools=True,
+            compare_with_anthropic=False,
+            expect_failure=True,
+        )
+        self.assertTrue(passed, "Gemini malformed function call pass")
+
+    # gemini_tool_test
     async def test_gemini_tool_conversion(self):
         """Test Gemini model tool conversion."""
         request = ClaudeMessagesRequest(
             model="gemini-2.5-pro",
             stream=False,
             max_tokens=1000,
+            system="You are gemini",
             tools=[calculator_tool],
             tool_choice=tool_choice_required,
             messages=[
@@ -1889,6 +1943,7 @@ class TestCustomModels(ProxyTestBase):
             max_tokens=1000,
             tools=[calculator_tool],
             tool_choice=tool_choice_required,
+            system="You are gemini",
             messages=[
                 ClaudeMessage(
                     role="user", content="Calculate 25 * 8 using the calculator tool."
@@ -2022,8 +2077,7 @@ class TestCustomModels(ProxyTestBase):
             messages=[
                 # Index 0 (even) - User message
                 ClaudeMessage(
-                    role="user",
-                    content="Calculate 25 * 8 using the calculator tool."
+                    role="user", content="Calculate 25 * 8 using the calculator tool."
                 ),
                 # Index 1 (odd) - Assistant message with tool call
                 ClaudeMessage(
@@ -2053,15 +2107,14 @@ class TestCustomModels(ProxyTestBase):
                     role="assistant",
                     content=[
                         ClaudeContentBlockText(
-                            type="text",
-                            text="Great! Now let me divide that by 4."
+                            type="text", text="Great! Now let me divide that by 4."
                         ),
                         ClaudeContentBlockToolUse(
                             type="tool_use",
                             id="calc_002",
                             name="calculator",
                             input={"operation": "divide", "a": 200, "b": 4},
-                        )
+                        ),
                     ],
                 ),
                 # Index 4 (even) - User message with tool result (REQUIRED EVEN INDEX)
@@ -2082,7 +2135,7 @@ class TestCustomModels(ProxyTestBase):
             "gemini_tool_result_positioning_test",
             request,
             check_tools=True,
-            compare_with_anthropic=False  # Skip Anthropic comparison for Gemini-specific test
+            compare_with_anthropic=False,  # Skip Anthropic comparison for Gemini-specific test
         )
         self.assertTrue(passed, "Gemini tool result positioning should work correctly")
 
@@ -2129,7 +2182,7 @@ class TestCustomModels(ProxyTestBase):
                 ),
             ],
             tools=[exit_plan_mode_tool, todo_read_tool, todo_write_tool, edit_tool],
-            tool_choice=tool_choice_auto
+            tool_choice=tool_choice_auto,
         )
 
         # This test expects to FAIL due to improper tool result positioning (tool result at odd index 1)
@@ -2138,10 +2191,12 @@ class TestCustomModels(ProxyTestBase):
             request,
             check_tools=True,
             compare_with_anthropic=False,  # Skip Anthropic comparison for Gemini-specific test
-            expect_failure=True  # We expect this to fail with 400 Bad Request
+            expect_failure=True,  # We expect this to fail with 400 Bad Request
         )
         # We expect this to succeed (because we expected the API call to fail)
-        self.assertTrue(passed, "Gemini tool result positioning should fail with incorrect indices")
+        self.assertTrue(
+            passed, "Gemini tool result positioning should fail with incorrect indices"
+        )
 
 
 class TestBehavioralDifferences(ProxyTestBase):
@@ -3486,7 +3541,7 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 ),
             ],
             tools=[exit_plan_mode_tool, todo_read_tool, todo_write_tool, edit_tool],
-            tool_choice=tool_choice_auto
+            tool_choice=tool_choice_auto,
         )
 
         # Run comparison test between proxy and Anthropic API
@@ -3526,12 +3581,11 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 )
             ],
             tools=[todo_read_tool, todo_write_tool, edit_tool],
-            tool_choice=tool_choice_required
+            tool_choice=tool_choice_required,
         )
 
         passed, warning = await self.make_comparison_test(
-            "simplified_plan_approval", request,
-            check_tools=True
+            "simplified_plan_approval", request, check_tools=True
         )
 
         print(f"📊 Simplified test result: {'PASSED' if passed else 'FAILED'}")

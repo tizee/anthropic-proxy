@@ -1,4 +1,3 @@
-
 import importlib
 import os
 import pkgutil
@@ -7,6 +6,7 @@ from typing import Any, Callable, Dict, List
 # Define hook specifications
 request_hook_spec = "request_hook"
 response_hook_spec = "response_hook"
+
 
 class HookManager:
     def __init__(self):
@@ -45,10 +45,12 @@ class HookManager:
             payload = hook(payload)
         return payload
 
+
 hook_manager = HookManager()
+
 
 def load_all_plugins():
     """Discover and load all plugins from the 'plugins' directory."""
     import plugins
-    hook_manager.load_plugins(plugins)
 
+    hook_manager.load_plugins(plugins)
