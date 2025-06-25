@@ -11,7 +11,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-import tiktoken
 from openai import AsyncStream
 from openai.types.chat import (
     ChatCompletion,
@@ -56,12 +55,6 @@ class ModelDefaults:
 
 logger = logging.getLogger(__name__)
 
-try:
-    enc = tiktoken.get_encoding("cl100k_base")
-    logger.debug("✅ TikToken encoder initialized")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize TikToken encoder: {e}")
-    enc = None
 
 
 def generate_unique_id(prefix: str) -> str:
@@ -773,8 +766,7 @@ class ClaudeMessagesRequest(BaseModel):
         return request_params
 
     def calculate_tokens(self) -> int:
-        # TODO
-        return 0
+        return count_tokens_in_messages(self.messages, self.model)
 
 
 class ClaudeTokenCountRequest(BaseModel):
@@ -815,7 +807,7 @@ class ClaudeTokenCountRequest(BaseModel):
         return v
 
     def calculate_tokens(self) -> int:
-        return 0
+        return count_tokens_in_messages(self.messages, self.model)
 
 
 class ClaudeTokenCountResponse(BaseModel):
@@ -1741,10 +1733,10 @@ def _normalize_block(block):
 
 
 def _send_message_delta_event(
-    stop_reason: str, output_tokens: int, content_blocks=None
+    stop_reason: str, output_tokens: int, input_tokens: int, content_blocks=None
 ):
     """Send message_delta event."""
-    usage = {"output_tokens": output_tokens}
+    usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
     delta = {"stop_reason": stop_reason, "stop_sequence": None}
 
     # Include content blocks in the delta if provided (required for proper Anthropic format)
@@ -1822,7 +1814,8 @@ class AnthropicStreamingConverter:
 
         # Response state
         self.has_sent_stop_reason = False
-        self.input_tokens = 0
+        self.input_tokens = original_request.calculate_tokens()
+        self.completion_tokens = 0
         self.output_tokens = 0
         self.openai_chunks_received = 0
 
@@ -1839,7 +1832,7 @@ class AnthropicStreamingConverter:
                 "stop_reason": None,
                 "stop_sequence": None,
                 "usage": {
-                    "input_tokens": 0,
+                    "input_tokens": self.input_tokens,
                     "cache_creation_input_tokens": 0,
                     "cache_read_input_tokens": 0,
                     "output_tokens": 0,
@@ -1915,23 +1908,33 @@ class AnthropicStreamingConverter:
         return event_str
 
     def _send_message_delta_event(self, stop_reason: str, output_tokens: int) -> str:
-        """Send message_delta event."""
+        """Send message_delta event with cumulative usage information."""
         event_data = {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {"output_tokens": output_tokens},
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": output_tokens
+            },
         }
         event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
         logger.debug(
-            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}"
+            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, input_tokens: {self.input_tokens}, output_tokens: {output_tokens}"
         )
         return event_str
 
     def _send_message_stop_event(self) -> str:
-        """Send message_stop event."""
-        event_data = {"type": "message_stop"}
+        """Send message_stop event with usage information."""
+        # Include usage information in message_stop event per Claude API spec
+        event_data = {
+            "type": "message_stop",
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens
+            }
+        }
         event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
-        logger.debug("STREAMING_EVENT: message_stop")
+        logger.debug(f"STREAMING_EVENT: message_stop with usage - input:{self.input_tokens}, output:{self.output_tokens}")
         return event_str
 
     def _send_done_event(self) -> str:
@@ -2192,18 +2195,43 @@ class AnthropicStreamingConverter:
                 }
             )
 
-        # Log chunk processing
-        logger.debug(f"STREAMING_CHUNK #{self.openai_chunks_received}: processing")
+        # Debug logging for streaming chunk analysis
+        logger.debug(f"🔄 STREAMING_CHUNK #{self.openai_chunks_received}: processing")
+        
+        # Detailed debug logging for chunk data
+        if chunk_data["has_choices"]:
+            logger.debug(f"🔄 CHUNK_DATA: id={chunk_data['chunk_id']}, finish_reason={chunk_data.get('finish_reason')}")
+            logger.debug(f"🔄 CHUNK_CONTENT: content={chunk_data.get('delta_content')}, tool_calls={bool(chunk_data.get('delta_tool_calls'))}, reasoning={bool(chunk_data.get('delta_reasoning'))}")
+            
+            # Special logging for MALFORMED_FUNCTION_CALL debugging
+            if chunk_data.get('finish_reason'):
+                logger.debug(f"🚨 FINISH_REASON_DETECTED: {chunk_data['finish_reason']} in chunk #{self.openai_chunks_received}")
+                if 'MALFORMED' in str(chunk_data['finish_reason']).upper():
+                    logger.error(f"🚨 MALFORMED_FUNCTION_CALL detected in chunk #{self.openai_chunks_received}: {chunk_data['finish_reason']}")
+        
+        if chunk_data["has_usage"]:
+            logger.debug(f"🔄 CHUNK_USAGE: {chunk_data['usage']}")
+            
+        logger.debug(f"🔄 STREAMING_CHUNK #{self.openai_chunks_received}: processing complete")
 
         # Handle usage data (final chunk)
-        if chunk_data["has_usage"]:
+        if chunk_data["has_usage"] and chunk_data["usage"]:
+            self.input_tokens = getattr(chunk_data["usage"], "prompt_tokens", self.input_tokens)
+            self.completion_tokens = getattr(chunk_data["usage"], "completion_tokens", self.output_tokens)
+            # Sync output_tokens with completion_tokens for consistency
+            self.output_tokens = self.completion_tokens
             reported_input_tokens = getattr(chunk_data["usage"], "prompt_tokens", 0)
             reported_output_tokens = getattr(
                 chunk_data["usage"], "completion_tokens", 0
             )
             logger.debug(
-                f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
+                f"Usage chunk received - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
             )
+            
+            # Now that we have usage data, send final events if finish_reason was already processed
+            if hasattr(self, 'pending_finish_reason') and not self.has_sent_stop_reason:
+                async for event in self._send_final_events():
+                    yield event
 
         # Process content if we have choices
         if chunk_data["has_choices"]:
@@ -2237,15 +2265,21 @@ class AnthropicStreamingConverter:
                 async for event in self._handle_text_delta(chunk_data["delta_content"]):
                     yield event
 
-            # Process finish_reason - end the streaming response
+            # Process finish_reason - but wait for usage chunk before finalizing
             if chunk_data["finish_reason"] and not self.has_sent_stop_reason:
-                async for event in self._finalize_response(chunk_data["finish_reason"]):
+                # Store finish_reason and prepare for finalization, but don't send stop events yet
+                self.pending_finish_reason = chunk_data["finish_reason"]
+                async for event in self._prepare_finalization(chunk_data["finish_reason"]):
                     yield event
+                
+                # If we already have usage data, send final events immediately
+                if self.output_tokens > 0:  # Usage was already processed
+                    async for event in self._send_final_events():
+                        yield event
 
-    async def _finalize_response(self, finish_reason: str):
-        """Finalize the streaming response with proper cleanup."""
-        logger.debug(f"Processing finish_reason: {finish_reason}")
-        self.has_sent_stop_reason = True
+    async def _prepare_finalization(self, finish_reason: str):
+        """Prepare for finalization by closing blocks, but don't send stop events yet."""
+        logger.debug(f"Preparing finalization for finish_reason: {finish_reason}")
 
         # Close thinking block if it was started
         if self.thinking_block_started and not self.thinking_block_closed:
@@ -2266,17 +2300,20 @@ class AnthropicStreamingConverter:
             # Close the current content block
             yield self._send_content_block_stop_event()
 
+    async def _send_final_events(self):
+        """Send final events after both finish_reason and usage have been processed."""
+        if not hasattr(self, 'pending_finish_reason') or self.has_sent_stop_reason:
+            return
+        
+        finish_reason = self.pending_finish_reason
+        logger.debug(f"Sending final events for finish_reason: {finish_reason}")
+
         # Determine stop reason
         stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
         logger.debug(f"Mapped stop_reason: {stop_reason}")
 
-        # Calculate accurate output tokens from accumulated content
-        final_output_tokens = _calculate_accurate_output_tokens(
-            self.accumulated_text,
-            self.accumulated_thinking,
-            self.output_tokens,
-            "Finish reason received",
-        )
+        # Use the updated token counts (should now include usage data)
+        final_output_tokens = self.output_tokens
 
         # Send message delta with final content and stop reason
         yield self._send_message_delta_event(stop_reason, final_output_tokens)
@@ -2285,6 +2322,16 @@ class AnthropicStreamingConverter:
         yield self._send_message_stop_event()
         yield self._send_done_event()
         logger.debug("Streaming completed successfully")
+        
+        self.has_sent_stop_reason = True
+
+    async def _finalize_response(self, finish_reason: str):
+        """Legacy method - now redirects to new logic."""
+        self.pending_finish_reason = finish_reason
+        async for event in self._prepare_finalization(finish_reason):
+            yield event
+        async for event in self._send_final_events():
+            yield event
 
 
 async def convert_openai_streaming_response_to_anthropic(
@@ -2304,21 +2351,31 @@ async def convert_openai_streaming_response_to_anthropic(
         yield converter._send_message_start_event()
         yield converter._send_ping_event()
 
-        logger.debug(f"Starting streaming for model: {original_request.model}")
+        logger.debug(f"🌊 Starting streaming for model: {original_request.model}")
 
         # Process each chunk using the optimized converter
+        chunk_count = 0
         async for chunk in response_generator:
+            chunk_count += 1
             try:
+                # Debug log raw chunk info
+                logger.debug(f"🌊 RAW_CHUNK #{chunk_count}: id={chunk.id}, choices={len(chunk.choices)}, usage={chunk.usage is not None}")
+                
                 # Process chunk and yield all events
                 async for event in converter.process_chunk(chunk):
+                    # Debug log event being yielded
+                    if "event:" in event:
+                        event_type = event.split("event:")[1].split("\n")[0].strip()
+                        logger.debug(f"🌊 YIELDING_EVENT: {event_type}")
                     yield event
 
                 # If response is finalized, break out of loop
                 if converter.has_sent_stop_reason:
+                    logger.debug(f"🌊 STREAM_FINALIZED: Breaking after {chunk_count} chunks")
                     break
 
             except Exception as e:
-                logger.error(f"Error processing chunk: {str(e)}")
+                logger.error(f"🌊 ERROR_PROCESSING_CHUNK #{chunk_count}: {str(e)}")
                 continue
 
         # Handle case where no finish_reason was received
@@ -2430,58 +2487,18 @@ def count_tokens_in_response(
 
     total_tokens = 0
 
-    try:
-        # Count main response content tokens
-        if response_content:
-            total_tokens += len(enc.encode(response_content))
-
-        # Count thinking content tokens
-        if thinking_content:
-            total_tokens += len(enc.encode(thinking_content))
-
-        # Count tool calls tokens
-        if tool_calls:
-            for tool_call in tool_calls:
-                name = getattr(tool_call.function, "name", "")
-                arguments = getattr(tool_call.function, "arguments", "")
-                total_tokens += len(enc.encode(name + arguments))
-
-    except Exception as e:
-        logger.error(f"Error counting response tokens: {e}")
-        # Fallback estimation
-        return 0
+    # Token counting removed - rely on API usage data only
+    # Input token counting is disabled, only use output tokens from actual API responses
+    return 0
 
     return int(total_tokens)
 
 
 def count_tokens_in_messages(messages: list, model: str) -> int:
-    """Count tokens in a list of messages using tiktoken."""
-    if enc is None:
-        logger.warning(
-            "TikToken encoder not available for message counting, using approximate count"
-        )
-        return 0
-
-    total_tokens = 0
-    try:
-        for message in messages:
-            # Count tokens in message content
-            if hasattr(message, "content"):
-                if isinstance(message.content, str):
-                    total_tokens += len(enc.encode(message.content))
-                elif isinstance(message.content, list):
-                    for content_block in message.content:
-                        if hasattr(content_block, "text"):
-                            total_tokens += len(enc.encode(content_block.text))
-                        elif (
-                            isinstance(content_block, dict) and "text" in content_block
-                        ):
-                            total_tokens += len(enc.encode(content_block["text"]))
-    except Exception as e:
-        logger.error(f"Error counting tokens in messages: {e}")
-        return 0
-
-    return int(total_tokens)
+    """Token counting removed - only output tokens from API responses are used."""
+    # Input token counting removed to eliminate tiktoken dependency
+    # Only output tokens from actual API responses are counted
+    return 0
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -2511,13 +2528,15 @@ def add_session_stats(
 ):
     """Add usage statistics to session tracking."""
     try:
-        # Use the existing global usage stats system
-        update_global_usage_stats(
-            model=model,
+        # Create ClaudeUsage object for the existing global usage stats system
+        usage = ClaudeUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost=cost,
-            routed_model=routed_model,
+        )
+        update_global_usage_stats(
+            usage=usage,
+            model=model,
+            context=f"session_stats_{routed_model or model}",
         )
         logger.debug(
             f"Added session stats: {model}, input={input_tokens}, output={output_tokens}, cost=${cost}"

@@ -7,7 +7,6 @@ import time
 from datetime import datetime
 from typing import Any
 
-import tiktoken
 import uvicorn
 import yaml
 from dotenv import load_dotenv
@@ -110,15 +109,9 @@ class Config:
 
 config = Config()
 
-try:
-    enc = tiktoken.get_encoding("cl100k_base")
-except Exception:
-    enc = None
 
 app = FastAPI()
 
-
-# --- Reusable Functions (can be imported) ---
 
 # Create a filter to block any log messages containing specific strings
 class MessageFilter(logging.Filter):
@@ -154,6 +147,65 @@ class ColorizedFormatter(logging.Formatter):
             # Apply colors and formatting to model mapping logs
             return f"{self.BOLD}{self.GREEN}{record.msg}{self.RESET}"
         return super().format(record)
+
+
+def setup_logging():
+    """Setup logging configuration - called on module import"""
+    try:
+        # Ensure log directory exists
+        log_dir = os.path.dirname(config.log_file_path)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+
+        # Configure the root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(getattr(logging, config.log_level.upper()))
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+        # Add file handler
+        file_handler = logging.FileHandler(config.log_file_path, mode="a")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+        # Add stream handler (for console output)
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
+        root_logger.addHandler(stream_handler)
+        
+        # Add custom message filter
+        root_logger.addFilter(MessageFilter())
+
+        # Configure uvicorn and other library logging to use our handlers
+        uvicorn_logger = logging.getLogger("uvicorn")
+        uvicorn_logger.setLevel(logging.INFO)
+        uvicorn_logger.addHandler(file_handler)
+        uvicorn_logger.addHandler(stream_handler)
+        
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_access_logger.setLevel(logging.INFO)
+        uvicorn_access_logger.addHandler(file_handler)
+        uvicorn_access_logger.addHandler(stream_handler)
+        
+        uvicorn_error_logger = logging.getLogger("uvicorn.error")
+        uvicorn_error_logger.setLevel(logging.INFO)
+        uvicorn_error_logger.addHandler(file_handler)
+        uvicorn_error_logger.addHandler(stream_handler)
+        if config.log_level.lower() == "debug":
+            logging.getLogger("openai").setLevel(logging.INFO)
+            logging.getLogger("httpx").setLevel(logging.INFO)
+
+        logger.info("✅ Logging configured for server.")
+
+    except Exception as e:
+        print(f"🔴 Error setting up logging: {e}")
+        sys.exit(1)
+
+
+# Initialize logging when module is imported
+setup_logging()
+
+
+# --- Reusable Functions (can be imported) ---
 
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
@@ -754,7 +806,7 @@ async def test_message_conversion(raw_request: Request):
             response_generator = await client.chat.completions.create(**openai_request)
             return StreamingResponse(
                 convert_openai_streaming_response_to_anthropic(
-                    response_generator, request
+                    response_generator, request, original_model
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -888,56 +940,13 @@ if __name__ == "__main__":
     # This block is only executed when the script is run directly,
     # not when it's imported by another script.
 
-    # 1. Setup Logging
-    try:
-        # Ensure log directory exists
-        log_dir = os.path.dirname(config.log_file_path)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-
-        # Configure the root logger
-        root_logger = logging.getLogger()
-        root_logger.setLevel(getattr(logging, config.log_level.upper()))
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-
-        # Add file handler
-        file_handler = logging.FileHandler(config.log_file_path, mode="a")
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-
-        # Add stream handler (for console output)
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
-        root_logger.addHandler(stream_handler)
-        
-        # Add custom message filter
-        root_logger.addFilter(MessageFilter())
-
-        # Configure uvicorn and other library logging to be less verbose
-        logging.getLogger("uvicorn").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
-        if config.log_level.lower() == "debug":
-            logging.getLogger("openai").setLevel(logging.INFO)
-            logging.getLogger("httpx").setLevel(logging.INFO)
-
-        logger.info("✅ Logging configured for server.")
-
-    except Exception as e:
-        print(f"🔴 Error setting up logging: {e}")
-        sys.exit(1)
-
-    # 2. Print initial configuration status
+    # Print initial configuration status
     print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
     print(
         f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
     )
-    if enc:
-        logger.info("✅ TikToken encoder initialized")
-    else:
-        logger.error("❌ Failed to initialize TikToken encoder")
     
-    # 3. Run the Server
+    # Run the Server
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
