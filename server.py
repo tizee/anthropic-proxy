@@ -171,7 +171,7 @@ def setup_logging():
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
         root_logger.addHandler(stream_handler)
-        
+
         # Add custom message filter
         root_logger.addFilter(MessageFilter())
 
@@ -180,12 +180,12 @@ def setup_logging():
         uvicorn_logger.setLevel(logging.INFO)
         uvicorn_logger.addHandler(file_handler)
         uvicorn_logger.addHandler(stream_handler)
-        
+
         uvicorn_access_logger = logging.getLogger("uvicorn.access")
         uvicorn_access_logger.setLevel(logging.INFO)
         uvicorn_access_logger.addHandler(file_handler)
         uvicorn_access_logger.addHandler(stream_handler)
-        
+
         uvicorn_error_logger = logging.getLogger("uvicorn.error")
         uvicorn_error_logger.setLevel(logging.INFO)
         uvicorn_error_logger.addHandler(file_handler)
@@ -524,9 +524,9 @@ async def create_message(raw_request: Request):
         request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
         original_model = request.model
 
-        logger.debug(
-            f"RAW REQUEST:\n{request.model_dump_json(indent=4, exclude_none=True)}"
-        )
+        # logger.debug(
+        #     f"RAW REQUEST:\n{request.model_dump_json(indent=4, exclude_none=True)}"
+        # )
 
         # Calculate token count for routing decisions
         token_count = request.calculate_tokens()
@@ -945,7 +945,7 @@ if __name__ == "__main__":
     print(
         f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
     )
-    
+
     # Run the Server
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")

@@ -2197,21 +2197,31 @@ class AnthropicStreamingConverter:
 
         # Debug logging for streaming chunk analysis
         logger.debug(f"🔄 STREAMING_CHUNK #{self.openai_chunks_received}: processing")
-        
+
         # Detailed debug logging for chunk data
         if chunk_data["has_choices"]:
             logger.debug(f"🔄 CHUNK_DATA: id={chunk_data['chunk_id']}, finish_reason={chunk_data.get('finish_reason')}")
             logger.debug(f"🔄 CHUNK_CONTENT: content={chunk_data.get('delta_content')}, tool_calls={bool(chunk_data.get('delta_tool_calls'))}, reasoning={bool(chunk_data.get('delta_reasoning'))}")
-            
-            # Special logging for MALFORMED_FUNCTION_CALL debugging
+
+            # Enhanced logging for non-Claude supported event types and errors
             if chunk_data.get('finish_reason'):
-                logger.debug(f"🚨 FINISH_REASON_DETECTED: {chunk_data['finish_reason']} in chunk #{self.openai_chunks_received}")
-                if 'MALFORMED' in str(chunk_data['finish_reason']).upper():
-                    logger.error(f"🚨 MALFORMED_FUNCTION_CALL detected in chunk #{self.openai_chunks_received}: {chunk_data['finish_reason']}")
-        
+                finish_reason = str(chunk_data['finish_reason'])
+                logger.debug(f"🚨 FINISH_REASON_DETECTED: {finish_reason} in chunk #{self.openai_chunks_received}")
+                
+                # Log non-Claude supported finish reasons
+                non_claude_reasons = ['MALFORMED_FUNCTION_CALL', 'MALFORMED', 'SAFETY', 'RECITATION', 'OTHER']
+                if any(reason in finish_reason.upper() for reason in non_claude_reasons):
+                    logger.error(f"🚨 NON_CLAUDE_FINISH_REASON detected: {finish_reason} in chunk #{self.openai_chunks_received}")
+                    logger.error(f"🚨 This finish_reason is not supported by Claude API and may cause conversion issues")
+                
+                # Special handling for MALFORMED_FUNCTION_CALL
+                if 'MALFORMED' in finish_reason.upper():
+                    logger.error(f"🚨 MALFORMED_FUNCTION_CALL detected - this indicates tool call format issues")
+                    logger.error(f"🚨 Raw chunk data: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}")
+
         if chunk_data["has_usage"]:
             logger.debug(f"🔄 CHUNK_USAGE: {chunk_data['usage']}")
-            
+
         logger.debug(f"🔄 STREAMING_CHUNK #{self.openai_chunks_received}: processing complete")
 
         # Handle usage data (final chunk)
@@ -2227,7 +2237,7 @@ class AnthropicStreamingConverter:
             logger.debug(
                 f"Usage chunk received - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
             )
-            
+
             # Now that we have usage data, send final events if finish_reason was already processed
             if hasattr(self, 'pending_finish_reason') and not self.has_sent_stop_reason:
                 async for event in self._send_final_events():
@@ -2271,7 +2281,7 @@ class AnthropicStreamingConverter:
                 self.pending_finish_reason = chunk_data["finish_reason"]
                 async for event in self._prepare_finalization(chunk_data["finish_reason"]):
                     yield event
-                
+
                 # If we already have usage data, send final events immediately
                 if self.output_tokens > 0:  # Usage was already processed
                     async for event in self._send_final_events():
@@ -2304,7 +2314,7 @@ class AnthropicStreamingConverter:
         """Send final events after both finish_reason and usage have been processed."""
         if not hasattr(self, 'pending_finish_reason') or self.has_sent_stop_reason:
             return
-        
+
         finish_reason = self.pending_finish_reason
         logger.debug(f"Sending final events for finish_reason: {finish_reason}")
 
@@ -2322,7 +2332,7 @@ class AnthropicStreamingConverter:
         yield self._send_message_stop_event()
         yield self._send_done_event()
         logger.debug("Streaming completed successfully")
-        
+
         self.has_sent_stop_reason = True
 
     async def _finalize_response(self, finish_reason: str):
@@ -2358,15 +2368,60 @@ async def convert_openai_streaming_response_to_anthropic(
         async for chunk in response_generator:
             chunk_count += 1
             try:
-                # Debug log raw chunk info
-                logger.debug(f"🌊 RAW_CHUNK #{chunk_count}: id={chunk.id}, choices={len(chunk.choices)}, usage={chunk.usage is not None}")
+                # Debug log raw chunk info (commented out to reduce noise)
+                # logger.debug(f"🌊 RAW_CHUNK #{chunk_count}: id={chunk.id}, choices={len(chunk.choices)}, usage={chunk.usage is not None}")
                 
+                # Enhanced chunk debugging for MALFORMED_FUNCTION_CALL investigation
+                if chunk.choices and len(chunk.choices) > 0:
+                    choice = chunk.choices[0]
+                    if hasattr(choice, 'finish_reason') and choice.finish_reason:
+                        logger.debug(f"🌊 CHUNK_FINISH_REASON #{chunk_count}: {choice.finish_reason}")
+                    
+                    # Log tool calls in chunks to help debug malformed function calls
+                    if hasattr(choice, 'delta') and choice.delta and hasattr(choice.delta, 'tool_calls'):
+                        tool_calls = choice.delta.tool_calls
+                        if tool_calls:
+                            logger.debug(f"🌊 CHUNK_TOOL_CALLS #{chunk_count}: {len(tool_calls)} tool calls")
+                            for i, tool_call in enumerate(tool_calls):
+                                if hasattr(tool_call, 'function') and tool_call.function:
+                                    func_name = getattr(tool_call.function, 'name', 'unknown')
+                                    func_args = getattr(tool_call.function, 'arguments', '')
+                                    logger.debug(f"🌊   Tool Call {i}: {func_name}, args_length={len(func_args)}")
+                                    if func_args and len(func_args) > 0:
+                                        try:
+                                            import json
+                                            json.loads(func_args)
+                                            logger.debug(f"🌊   Tool Call {i} args: valid JSON")
+                                        except json.JSONDecodeError:
+                                            logger.debug(f"🌊   Tool Call {i} args: invalid JSON - might cause MALFORMED_FUNCTION_CALL")
+                                            logger.debug(f"🌊   Raw args: {func_args[:200]}...")
+
                 # Process chunk and yield all events
                 async for event in converter.process_chunk(chunk):
-                    # Debug log event being yielded
+                    # Enhanced debug logging for events
                     if "event:" in event:
                         event_type = event.split("event:")[1].split("\n")[0].strip()
                         logger.debug(f"🌊 YIELDING_EVENT: {event_type}")
+                        
+                        # Log event data for debugging
+                        if "data:" in event:
+                            try:
+                                data_line = [line for line in event.split("\n") if line.startswith("data:")][0]
+                                data_content = data_line[5:].strip()  # Remove "data:" prefix
+                                if data_content and data_content != "[DONE]":
+                                    import json
+                                    try:
+                                        parsed_data = json.loads(data_content)
+                                        logger.debug(f"🌊 EVENT_DATA: {json.dumps(parsed_data, indent=2)}")
+                                    except json.JSONDecodeError:
+                                        logger.debug(f"🌊 EVENT_DATA (raw): {data_content}")
+                            except Exception as e:
+                                logger.debug(f"🌊 EVENT_DATA_PARSE_ERROR: {e}")
+                    else:
+                        # Log non-standard events that might not be Claude-compatible
+                        if event.strip() and not event.startswith("data: [DONE]"):
+                            logger.debug(f"🌊 NON_STANDARD_EVENT: {event.strip()}")
+                    
                     yield event
 
                 # If response is finalized, break out of loop
@@ -2376,6 +2431,17 @@ async def convert_openai_streaming_response_to_anthropic(
 
             except Exception as e:
                 logger.error(f"🌊 ERROR_PROCESSING_CHUNK #{chunk_count}: {str(e)}")
+                logger.error(f"🌊 CHUNK_ERROR_TRACEBACK: {e.__class__.__name__}: {str(e)}")
+                # Log chunk data to help debug the error
+                try:
+                    chunk_info = {
+                        'id': getattr(chunk, 'id', 'unknown'),
+                        'choices_count': len(getattr(chunk, 'choices', [])),
+                        'has_usage': getattr(chunk, 'usage', None) is not None
+                    }
+                    logger.error(f"🌊 FAILED_CHUNK_INFO: {chunk_info}")
+                except Exception as debug_error:
+                    logger.error(f"🌊 FAILED_TO_DEBUG_CHUNK: {debug_error}")
                 continue
 
         # Handle case where no finish_reason was received
@@ -2479,19 +2545,9 @@ def count_tokens_in_response(
     response_content: str = "", thinking_content: str = "", tool_calls: list = []
 ) -> int:
     """Count tokens in response content using tiktoken"""
-    if enc is None:
-        logger.warning(
-            "TikToken encoder not available for response counting, using approximate count"
-        )
-        return 0
-
-    total_tokens = 0
-
     # Token counting removed - rely on API usage data only
     # Input token counting is disabled, only use output tokens from actual API responses
     return 0
-
-    return int(total_tokens)
 
 
 def count_tokens_in_messages(messages: list, model: str) -> int:
@@ -2679,19 +2735,64 @@ def _compare_request_data(
             msg.get("role") == "tool" for msg in openai_request.get("messages", [])
         )
 
-        # Log conversion summary
-        logger.debug("CONVERSION SUMMARY:")
-        logger.debug(f"  Tools: {claude_tools_count} -> {openai_tools_count}")
-        logger.debug(f"  Messages: {claude_messages_count} -> {openai_messages_count}")
+        # Enhanced conversion summary with detailed comparison
+        logger.debug("🔄 CLAUDE_TO_OPENAI_CONVERSION_SUMMARY:")
+        logger.debug(f"  📊 Tools: {claude_tools_count} -> {openai_tools_count}")
+        logger.debug(f"  💬 Messages: {claude_messages_count} -> {openai_messages_count}")
         logger.debug(
-            f"  Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
+            f"  🛠️ Tool Choice: {claude_has_tool_choice} -> {openai_has_tool_choice}"
         )
-        logger.debug(f"  System Message: {claude_has_system} -> {openai_has_system}")
+        logger.debug(f"  🎯 System Message: {claude_has_system} -> {openai_has_system}")
         logger.debug(
-            f"  Tool Results: {claude_has_tool_result} -> {openai_has_tool_msg}"
+            f"  🔧 Tool Results: {claude_has_tool_result} -> {openai_has_tool_msg}"
         )
+        
+        # Log detailed request structures for debugging MALFORMED_FUNCTION_CALL issues
+        logger.debug("📋 CLAUDE_REQUEST_STRUCTURE:")
+        logger.debug(f"  Model: {claude_request.model}")
+        logger.debug(f"  Max Tokens: {claude_request.max_tokens}")
+        logger.debug(f"  Temperature: {claude_request.temperature}")
+        logger.debug(f"  Stream: {claude_request.stream}")
+        
+        # Log message types and roles to help debug tool call issues
+        claude_msg_summary = []
+        for i, msg in enumerate(claude_request.messages):
+            if hasattr(msg, 'content') and isinstance(msg.content, list):
+                content_types = [type(c).__name__ for c in msg.content]
+                claude_msg_summary.append(f"{msg.role}[{','.join(content_types)}]")
+            else:
+                claude_msg_summary.append(f"{msg.role}[text]")
+        logger.debug(f"  Messages: {' -> '.join(claude_msg_summary)}")
+        
+        logger.debug("🔄 OPENAI_REQUEST_STRUCTURE:")
+        logger.debug(f"  Model: {openai_request.get('model')}")
+        logger.debug(f"  Max Tokens: {openai_request.get('max_tokens')}")
+        logger.debug(f"  Temperature: {openai_request.get('temperature')}")
+        logger.debug(f"  Stream: {openai_request.get('stream')}")
+        
+        # Log OpenAI message structure to help debug function call format
+        openai_msg_summary = []
+        for msg in openai_request.get('messages', []):
+            role = msg.get('role', 'unknown')
+            if 'tool_calls' in msg:
+                tool_calls_info = f"tool_calls[{len(msg['tool_calls'])}]"
+                openai_msg_summary.append(f"{role}[{tool_calls_info}]")
+            elif role == 'tool':
+                openai_msg_summary.append(f"{role}[tool_result]")
+            else:
+                openai_msg_summary.append(f"{role}[content]")
+        logger.debug(f"  Messages: {' -> '.join(openai_msg_summary)}")
+        
+        # Log tool definitions for debugging MALFORMED_FUNCTION_CALL
+        if claude_tools_count > 0:
+            logger.debug("🛠️ TOOLS_COMPARISON:")
+            for i, tool in enumerate(claude_request.tools or []):
+                logger.debug(f"  Claude Tool {i+1}: {tool.name} ({tool.type})")
+            for i, tool in enumerate(openai_request.get('tools', [])):
+                func_info = tool.get('function', {})
+                logger.debug(f"  OpenAI Tool {i+1}: {func_info.get('name')} (function)")
 
-        # Check for unexpected conversion issues
+        # Enhanced checks for conversion issues that could lead to MALFORMED_FUNCTION_CALL
         warnings = []
 
         # Tools count should always match exactly

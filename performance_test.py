@@ -245,6 +245,17 @@ async def main(args):
     print(f"   • Proxy Server: {PROXY_URL}")
     print(f"   • Request Content: Same for both tests")
     print(f"   • Streaming Mode: Enabled")
+    
+    # Debug: Show actual payloads for comparison
+    print(f"\n🔍 PAYLOAD COMPARISON:")
+    print(f"   Direct (OpenAI format):")
+    print(f"     • model: {direct_payload['model']}")
+    print(f"     • messages: {len(direct_payload['messages'])} messages")
+    print(f"     • max_tokens: {direct_payload['max_tokens']}")
+    print(f"   Proxy (Anthropic format):")
+    print(f"     • model: {proxy_payload['model']}")  
+    print(f"     • messages: {len(proxy_payload['messages'])} messages")
+    print(f"     • max_tokens: {proxy_payload['max_tokens']}")
     print("\n⚠️  Prerequisites:")
     print("   1. Proxy server must be running: `make run`")
     print("   2. API key must be configured for the model")
