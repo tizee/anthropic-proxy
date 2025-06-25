@@ -35,8 +35,16 @@ from models import (
     ModelDefaults,
     convert_openai_response_to_anthropic,
     convert_openai_streaming_response_to_anthropic,
+    convert_openai_streaming_response_to_anthropic_optimized,
     global_usage_stats,
     update_global_usage_stats,
+)
+from performance import (
+    perf_metrics,
+    time_async_function,
+    time_sync_function,
+    StreamingTimer,
+    token_rate_tracker,
 )
 
 # Load environment variables from .env file
@@ -116,10 +124,12 @@ try:
     log_dir = os.path.dirname(config.log_file_path)
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
-    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
-    print(
-        f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
-    )
+    # Only print configuration when running as main script
+    if __name__ == "__main__":
+        print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
+        print(
+            f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
+        )
 except Exception as e:
     print(f"🔴 Configuration Error: {e}")
     sys.exit(1)
@@ -129,17 +139,22 @@ logger = logging.getLogger()
 logger.setLevel(getattr(logging, config.log_level.upper()))
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-# File handler
+# File handler (always added)
 file_handler = logging.FileHandler(config.log_file_path, mode="a")
 file_handler.setFormatter(formatter)
-
-# Stream handler
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
-# Add handlers to logger
 logger.addHandler(file_handler)
-logger.addHandler(stream_handler)
+
+# Stream handler (only when running as main script, not when imported)
+import sys
+if __name__ == "__main__":
+    # Only add stream handler when running server directly
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+else:
+    # When imported (e.g., for testing), only log to file to avoid polluting output
+    # This prevents logger spam in test results and saves tokens
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -201,12 +216,13 @@ class ColorizedFormatter(logging.Formatter):
         return super().format(record)
 
 
-# Apply custom formatter to console handler
-for handler in logger.handlers:
-    if isinstance(handler, logging.StreamHandler):
-        handler.setFormatter(
-            ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
+# Apply custom formatter to console handler (only when running as main)
+if __name__ == "__main__":
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setFormatter(
+                ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
+            )
 
 app = FastAPI()
 
@@ -330,6 +346,7 @@ def initialize_custom_models():
 # initialize_custom_models()
 
 
+@time_sync_function("openai.create_client")
 def create_openai_client(model_id: str) -> AsyncOpenAI:
     """Create OpenAI client for the given model and return client and request parameters."""
     api_key = None
@@ -494,7 +511,8 @@ def _format_error_message(e: Exception, error_details: dict[str, Any]) -> str:
 
 async def hook_streaming_response(response_generator, request, routed_model):
     """Wraps a streaming response generator to apply response hooks to each event."""
-    async for event_str in convert_openai_streaming_response_to_anthropic(
+    # Use optimized converter for better performance
+    async for event_str in convert_openai_streaming_response_to_anthropic_optimized(
         response_generator, request, routed_model
     ):
         try:
@@ -526,6 +544,7 @@ async def hook_streaming_response(response_generator, request, routed_model):
 
 
 @app.post("/v1/messages")
+@time_async_function("api.create_message")
 async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
     try:
         # Parse the raw body as JSON since it's bytes
@@ -661,14 +680,20 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         openai_request["max_tokens"] = max_tokens
 
         # Handle streaming mode
-        # Use OpenAI SDK async streaming
         if request.stream:
-            response_generator: AsyncStream[
-                ChatCompletionChunk
-            ] = await client.chat.completions.create(**openai_request)
-            # Wrap the generator to apply response hooks
-            hooked_generator = hook_streaming_response(
-                response_generator, request, routed_model
+            # PERFORMANCE OPTIMIZATION: Use raw streaming for maximum speed
+            # This bypasses OpenAI SDK's expensive Pydantic operations entirely
+            from raw_streaming_optimizer import convert_openai_streaming_response_to_anthropic_raw
+            
+            # Prepare parameters for raw streaming
+            raw_params = openai_request.copy()
+            raw_params["api_base"] = model_config["api_base"]
+            raw_params["api_key"] = config.custom_api_keys.get(model_config.get("api_key_name"))
+            raw_params["extra_headers"] = model_config.get("extra_headers", {})
+            
+            # Use ultra-fast raw streaming converter
+            hooked_generator = convert_openai_streaming_response_to_anthropic_raw(
+                raw_params, request.model
             )
             return StreamingResponse(
                 hooked_generator,
@@ -702,7 +727,7 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
             # ------------------------------------
 
             # Update global usage statistics and log usage information
-            update_global_usage_stats(
+            await update_global_usage_stats(
                 anthropic_response.usage, routed_model, "Non-streaming"
             )
 
@@ -763,7 +788,13 @@ async def count_tokens(request: ClaudeTokenCountRequest, raw_request: Request):
 @app.get("/v1/stats")
 async def get_stats():
     """Returns the comprehensive token usage statistics for the current session."""
-    return global_usage_stats.get_session_summary()
+    return await global_usage_stats.get_session_summary()
+
+
+@app.get("/v1/performance")
+async def get_performance():
+    """Returns performance metrics for the current session."""
+    return await perf_metrics.get_all_stats()
 
 
 @app.post("/v1/messages/test_conversion")
@@ -812,7 +843,7 @@ async def test_message_conversion(request: ClaudeMessagesRequest, raw_request: R
             logger.info(f"🧪 Starting direct streaming test for {original_model}")
             response_generator = await client.chat.completions.create(**openai_request)
             return StreamingResponse(
-                convert_openai_streaming_response_to_anthropic(
+                convert_openai_streaming_response_to_anthropic_optimized(
                     response_generator, request
                 ),
                 media_type="text/event-stream",
@@ -935,10 +966,12 @@ def log_request_beautifully(
     log_line = f"{Colors.BOLD}{method} {endpoint}{Colors.RESET} {status_str}"
     model_line = f"{claude_display} → {openai_display} {tools_str} {messages_str}"
 
-    # Print to console
-    print(log_line)
-    print(model_line)
-    sys.stdout.flush()
+    # Print to console only when running as main script
+    import sys
+    if __name__ == "__main__":
+        print(log_line)
+        print(model_line)
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
