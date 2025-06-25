@@ -3,100 +3,14 @@ Pydantic models for Claude proxy API requests and responses.
 This module contains only the model definitions without any server startup code.
 """
 
-import asyncio
 import hashlib
 import json
 import logging
 import re
 import threading
-import time
 import uuid
 from datetime import datetime
 from typing import Any, Literal
-
-try:
-    import orjson
-    # Use orjson for faster JSON serialization if available
-    def fast_json_dumps(obj) -> str:
-        return orjson.dumps(obj).decode('utf-8')
-    
-    def fast_json_loads(s: str):
-        return orjson.loads(s)
-except ImportError:
-    # Fallback to standard json with optimized settings
-    def fast_json_dumps(obj) -> str:
-        return json.dumps(obj, separators=(',', ':'), ensure_ascii=False)
-    
-    def fast_json_loads(s: str):
-        return json.loads(s)
-
-# Cache for common event responses to avoid repeated JSON serialization
-_event_cache = {
-    'ping': 'event: ping\ndata: {"type":"ping"}\n\n',
-    'message_stop': 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
-    'done': 'data: [DONE]\n\n'
-}
-
-# Optimized streaming chunk processing - bypass heavy Pydantic operations
-class OptimizedChunkProcessor:
-    """Lightweight streaming chunk processor that avoids OpenAI SDK overhead."""
-    
-    def __init__(self):
-        self.content_block_index = 0
-        self.accumulated_text = ""
-        self.accumulated_thinking = ""
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.current_content_blocks = []
-        self.text_block_started = False
-        self.is_tool_use = False
-        
-    def process_raw_chunk(self, raw_data: str):
-        """Process raw SSE chunk data without full OpenAI SDK parsing."""
-        try:
-            # Parse minimal required data from JSON
-            data = fast_json_loads(raw_data)
-            
-            # Extract only what we need for conversion
-            choices = data.get("choices", [])
-            usage = data.get("usage")
-            
-            result = {
-                "has_content": False,
-                "content_text": "",
-                "has_usage": bool(usage),
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "finish_reason": None
-            }
-            
-            if usage:
-                result["input_tokens"] = usage.get("prompt_tokens", 0)
-                result["output_tokens"] = usage.get("completion_tokens", 0)
-            
-            if choices:
-                choice = choices[0]
-                delta = choice.get("delta", {})
-                result["finish_reason"] = choice.get("finish_reason")
-                
-                # Extract content efficiently
-                content = delta.get("content")
-                if content:
-                    result["has_content"] = True
-                    result["content_text"] = content
-            
-            return result
-            
-        except Exception:
-            # Fallback to empty result if parsing fails
-            return {
-                "has_content": False,
-                "content_text": "",
-                "has_usage": False,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "finish_reason": None
-            }
 
 import tiktoken
 from openai import AsyncStream
@@ -788,17 +702,12 @@ class ClaudeMessagesRequest(BaseModel):
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
-            "store": False,  # Disable data storage for privacy protection
         }
 
         if openai_tools:
             request_params["tools"] = openai_tools
         if tool_choice:
             request_params["tool_choice"] = tool_choice
-        
-        # Enable usage statistics for streaming responses
-        if self.stream:
-            request_params["stream_options"] = {"include_usage": True}
 
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
         # logger.debug(f"🔄 OpenAI request: {request_params}")
@@ -928,11 +837,11 @@ class GlobalUsageStats(BaseModel):
 
     def __init__(self, **data):
         super().__init__(**data)
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
-    async def update_usage(self, usage: ClaudeUsage, model: str = "unknown"):
-        """Async-safe method to update usage statistics."""
-        async with self._lock:
+    def update_usage(self, usage: ClaudeUsage, model: str = "unknown"):
+        """Thread-safe method to update usage statistics."""
+        with self._lock:
             self.total_requests += 1
 
             # Core tokens
@@ -969,9 +878,9 @@ class GlobalUsageStats(BaseModel):
                 self.model_usage_count[model] = 0
             self.model_usage_count[model] += 1
 
-    async def get_session_summary(self) -> dict[str, Any]:
+    def get_session_summary(self) -> dict[str, Any]:
         """Get a comprehensive summary of the session statistics."""
-        async with self._lock:
+        with self._lock:
             session_duration = datetime.now() - self.session_start_time
             return {
                 "session_duration_seconds": int(session_duration.total_seconds()),
@@ -988,9 +897,9 @@ class GlobalUsageStats(BaseModel):
                 "session_start_time": self.session_start_time.isoformat(),
             }
 
-    async def reset_stats(self):
+    def reset_stats(self):
         """Reset all statistics and start a new session."""
-        async with self._lock:
+        with self._lock:
             self.session_start_time = datetime.now()
             self.total_requests = 0
             self.total_input_tokens = 0
@@ -1111,12 +1020,12 @@ def extract_usage_from_claude_response(
     )
 
 
-async def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = ""):
+def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str = ""):
     """Update global usage statistics and log the usage information."""
     global global_usage_stats
 
     # Update the global stats
-    await global_usage_stats.update_usage(usage, model)
+    global_usage_stats.update_usage(usage, model)
 
     # Log current usage
     logger.info(
@@ -1147,7 +1056,7 @@ async def update_global_usage_stats(usage: ClaudeUsage, model: str, context: str
         )
 
     # Log session totals
-    summary = await global_usage_stats.get_session_summary()
+    summary = global_usage_stats.get_session_summary()
     logger.info(
         f"📈 SESSION TOTALS: Requests={summary['total_requests']}, Input={summary['total_input_tokens']}t, Output={summary['total_output_tokens']}t, Total={summary['total_tokens']}t"
     )
@@ -1685,9 +1594,10 @@ def _send_message_start_event(message_id: str, model: str):
             },
         },
     }
-    event_str = f"event: message_start\ndata: {fast_json_dumps(message_data)}\n\n"
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"EVENT: start {model}")
+    event_str = f"event: message_start\ndata: {json.dumps(message_data)}\n\n"
+    logger.debug(
+        f"STREAMING_EVENT: message_start - message_id: {message_id}, model: {model}"
+    )
     return event_str
 
 
@@ -1709,11 +1619,10 @@ def _send_content_block_start_event(index: int, block_type: str, **kwargs):
         "index": index,
         "content_block": content_block,
     }
-    event_str = f"event: content_block_start\ndata: {fast_json_dumps(event_data)}\n\n"
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            f"EVENT: start[{index}] {block_type}"
-        )
+    event_str = f"event: content_block_start\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(
+        f"STREAMING_EVENT: content_block_start - index: {index}, block_type: {block_type}, kwargs: {kwargs}"
+    )
     return event_str
 
 
@@ -1730,20 +1639,18 @@ def _send_content_block_delta_event(index: int, delta_type: str, content: str):
     elif delta_type == "signature_delta":
         delta["signature"] = content
     event_data = {"type": "content_block_delta", "index": index, "delta": delta}
-    event_str = f"event: content_block_delta\ndata: {fast_json_dumps(event_data)}\n\n"
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            f"EVENT: delta[{index}] {delta_type} len={len(content)}"
-        )
+    event_str = f"event: content_block_delta\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(
+        f"STREAMING_EVENT: content_block_delta - index: {index}, delta_type: {delta_type}, content_len: {len(content)}"
+    )
     return event_str
 
 
 def _send_content_block_stop_event(index: int):
     """Send content_block_stop event."""
     event_data = {"type": "content_block_stop", "index": index}
-    event_str = f"event: content_block_stop\ndata: {fast_json_dumps(event_data)}\n\n"
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"EVENT: stop[{index}]")
+    event_str = f"event: content_block_stop\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(f"STREAMING_EVENT: content_block_stop - index: {index}")
     return event_str
 
 
@@ -1752,8 +1659,9 @@ def _send_tool_use_delta_events(
 ):
     """Send tool use delta events for a complete tool call."""
     # Send input JSON delta
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"EVENT: tool[{index}] {tool_name}")
+    logger.debug(
+        f"STREAMING_EVENT: tool_use deltas sent - index: {index}, tool: {tool_name}"
+    )
     return _send_content_block_delta_event(index, "input_json_delta", arguments)
 
 
@@ -1795,31 +1703,34 @@ def _send_message_delta_event(
         delta["content"] = converted_blocks
 
     event_data = {"type": "message_delta", "delta": delta, "usage": usage}
-    event_str = f"event: message_delta\ndata: {fast_json_dumps(event_data)}\n\n"
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"EVENT: delta stop={stop_reason} tokens={output_tokens}")
+    event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug(
+        f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}, content_blocks_count: {len(content_blocks) if content_blocks else 0}"
+    )
     return event_str
 
 
 def _send_message_stop_event():
     """Send message_stop event."""
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("EVENT: stop")
-    return _event_cache['message_stop']
+    event_data = {"type": "message_stop"}
+    event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug("STREAMING_EVENT: message_stop")
+    return event_str
 
 
 def _send_ping_event():
     """Send ping event."""
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("EVENT: ping")
-    return _event_cache['ping']
+    event_data = {"type": "ping"}
+    event_str = f"event: ping\ndata: {json.dumps(event_data)}\n\n"
+    logger.debug("STREAMING_EVENT: ping")
+    return event_str
 
 
 def _send_done_event():
     """Send [DONE] marker to terminate stream."""
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("EVENT: done")
-    return _event_cache['done']
+    event_str = "data: [DONE]\n\n"
+    logger.debug("STREAMING_EVENT: [DONE]")
+    return event_str
 
 
 def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
@@ -1839,10 +1750,6 @@ async def convert_openai_streaming_response_to_anthropic(
     routed_model: str | None = None,
 ):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
-    # Performance timing
-    start_time = time.perf_counter()
-    chunk_count = 0
-    
     has_sent_stop_reason = False
     is_tool_use = False
     input_tokens = 0
@@ -1880,18 +1787,61 @@ async def convert_openai_streaming_response_to_anthropic(
             try:
                 # Count OpenAI chunks received
                 openai_chunks_received += 1
-                chunk_count += 1
 
-                # Optimized debug logging - only process expensive operations when DEBUG level is enabled
-                if logger.isEnabledFor(logging.DEBUG):
-                    # Basic chunk info for debugging
-                    has_choices = len(chunk.choices) > 0
-                    has_content = has_choices and chunk.choices[0].delta and getattr(chunk.choices[0].delta, "content", None)
-                    has_tool_calls = has_choices and chunk.choices[0].delta and getattr(chunk.choices[0].delta, "tool_calls", None)
-                    
-                    logger.debug(
-                        f"CHUNK #{openai_chunks_received}: choices={has_choices}, content={bool(has_content)}, tools={bool(has_tool_calls)}, usage={bool(chunk.usage)}"
-                    )
+                # Detailed chunk logging
+                chunk_data = {
+                    "chunk_id": chunk.id,
+                    "has_choices": len(chunk.choices) > 0,
+                    "has_usage": chunk.usage,
+                }
+
+                if chunk_data["has_choices"]:
+                    choice = chunk.choices[0]
+                    chunk_data["choice_data"] = {
+                        "has_delta": choice.delta is not None,
+                        "finish_reason": choice.finish_reason,
+                    }
+                    if chunk_data["choice_data"]["has_delta"]:
+                        delta = choice.delta
+                        chunk_data["delta_data"] = {
+                            "content": getattr(delta, "content", None),
+                            "role": getattr(delta, "role", None),
+                            "tool_calls": getattr(delta, "tool_calls", None)
+                            is not None,
+                        }
+                        if chunk_data["delta_data"]["content"]:
+                            chunk_data["delta_data"]["content_length"] = len(
+                                chunk_data["delta_data"]["content"]
+                            )
+
+                if chunk_data["has_usage"]:
+                    chunk_data["usage"] = {
+                        "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(
+                            chunk.usage, "completion_tokens", None
+                        ),
+                        "total_tokens": getattr(chunk.usage, "total_tokens", None),
+                    }
+
+                logger.debug(
+                    f"STREAMING_CHUNK #{openai_chunks_received}: {json.dumps(chunk_data, default=str)}"
+                )
+
+                # Raw chunk debugging - print original chunk data when DEBUG_RAW_CHUNKS is set
+                logger.debug(f"=== RAW CHUNK #{openai_chunks_received} ===")
+                logger.debug(f"Raw chunk type: {type(chunk)}")
+                logger.debug(
+                    f"Raw chunk dict: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}"
+                )
+                logger.debug("=== END RAW CHUNK ===")
+
+                # Also print raw json representation if possible
+                try:
+                    if hasattr(chunk, "model_dump"):
+                        raw_json = json.dumps(chunk.model_dump(), indent=2, default=str)
+                        logger.debug(f"Raw chunk JSON:\n{raw_json}")
+                except Exception as e:
+                    logger.info(f"Could not serialize chunk to JSON: {e}")
 
                 # Check if this is the end of the response with usage data
                 if chunk.usage is not None:
@@ -1900,17 +1850,16 @@ async def convert_openai_streaming_response_to_anthropic(
                     reported_output_tokens = getattr(
                         chunk.usage, "completion_tokens", 0
                     )
-                    # Update token counts with actual usage data from API
-                    if reported_input_tokens > 0:
-                        input_tokens = reported_input_tokens
-                    if reported_output_tokens > 0:
-                        output_tokens = reported_output_tokens
-                    
-                    # Only log detailed usage stats in DEBUG mode
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            f"Usage - API: {reported_input_tokens}/{reported_output_tokens}, Local: {input_tokens}/{output_tokens}, Content: {len(accumulated_text)+len(accumulated_thinking)}"
-                        )
+                    logger.debug(
+                        f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
+                    )
+                    # Update session statistics for streaming (using calculated tokens)
+                    logger.debug(
+                        f"Session stats - Input: {input_tokens}, Output: {output_tokens}"
+                    )
+                    logger.debug(
+                        f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}"
+                    )
 
                 # Handle content from choices
                 if len(chunk.choices) > 0:
@@ -2030,7 +1979,7 @@ async def convert_openai_streaming_response_to_anthropic(
 
                                 # Try to parse JSON to update the content block
                                 try:
-                                    parsed_json = fast_json_loads(tool_json)
+                                    parsed_json = json.loads(tool_json)
                                     current_content_blocks[content_block_index][
                                         "input"
                                     ] = parsed_json
@@ -2046,8 +1995,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     # Handle reasoning/thinking content first (from deepseek reasoning models)
                     delta_reasoning = None
                     raw_delta = delta.model_dump()
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"raw delta keys: {list(raw_delta.keys()) if isinstance(raw_delta, dict) else type(raw_delta)}")
+                    logger.debug(f"raw delta: {raw_delta}")
                     if isinstance(raw_delta, dict) and (
                         "reasoning_content" in raw_delta or "reasoning" in raw_delta
                     ):
@@ -2134,7 +2082,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                     "type": "tool_use",
                                     "id": unique_tool_id,
                                     "name": tool_call["function"]["name"],
-                                    "input": fast_json_loads(
+                                    "input": json.loads(
                                         tool_call["function"]["arguments"]
                                     ),
                                 }
@@ -2262,7 +2210,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                     "type": "tool_use",
                                     "id": unique_tool_id,
                                     "name": tool_call["function"]["name"],
-                                    "input": fast_json_loads(
+                                    "input": json.loads(
                                         tool_call["function"]["arguments"]
                                     ),
                                 }
@@ -2392,7 +2340,7 @@ async def convert_openai_streaming_response_to_anthropic(
                         "type": "tool_use",
                         "id": unique_tool_id,
                         "name": tool_call["function"]["name"],
-                        "input": fast_json_loads(tool_call["function"]["arguments"]),
+                        "input": json.loads(tool_call["function"]["arguments"]),
                     }
                     current_content_blocks.append(tool_block)
 
@@ -2492,7 +2440,7 @@ async def convert_openai_streaming_response_to_anthropic(
                         "type": "tool_use",
                         "id": unique_tool_id,
                         "name": tool_call["function"]["name"],
-                        "input": fast_json_loads(tool_call["function"]["arguments"]),
+                        "input": json.loads(tool_call["function"]["arguments"]),
                     }
                     current_content_blocks.append(tool_block)
 
@@ -2550,9 +2498,8 @@ async def convert_openai_streaming_response_to_anthropic(
             logger.info(f"Current content blocks count: {len(current_content_blocks)}")
             logger.info(f"Is tool use: {is_tool_use}")
             logger.info(f"Final stop reason: {final_stop_reason}")
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Complete rebuilt response:")
-                logger.debug(json.dumps(complete_response, indent=2, ensure_ascii=False))
+            logger.info("Complete rebuilt response:")
+            logger.info(json.dumps(complete_response, indent=2, ensure_ascii=False))
             logger.info("=== END STREAMING RESPONSE DEBUG ===")
 
         except Exception as debug_error:
@@ -2596,27 +2543,10 @@ async def convert_openai_streaming_response_to_anthropic(
 
             # Update global usage statistics
             model_name = routed_model if routed_model else original_request.model
-            await update_global_usage_stats(streaming_usage, model_name, "Streaming")
+            update_global_usage_stats(streaming_usage, model_name, "Streaming")
 
         except Exception as usage_error:
             logger.error(f"Error tracking streaming usage: {usage_error}")
-    
-    # Performance timing report
-    total_duration = time.perf_counter() - start_time
-    if chunk_count > 0:
-        chunks_per_sec = chunk_count / total_duration
-        tokens_per_sec = (len(accumulated_text) + len(accumulated_thinking)) / total_duration if total_duration > 0 else 0
-        
-        if total_duration > 1.0:  # Only log for slow streams
-            logger.info(
-                f"PERF: Streaming completed in {total_duration:.3f}s - "
-                f"{chunk_count} chunks ({chunks_per_sec:.1f}/s), "
-                f"~{tokens_per_sec:.0f} chars/s"
-            )
-        elif logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"PERF: Streaming {total_duration:.3f}s - {chunk_count} chunks ({chunks_per_sec:.1f}/s)"
-            )
 
 
 def _validate_streaming_content_integrity(
@@ -2823,21 +2753,19 @@ def _calculate_accurate_output_tokens(
     reported_tokens: int,
     context: str = "",
 ) -> int:
-    """Calculate accurate output tokens, preferring API reported tokens when available - PERFORMANCE OPTIMIZED."""
-    # PERFORMANCE TEST: Skip expensive tiktoken calculation, always use reported tokens or estimate
-    
-    # Use reported tokens if available and > 0
-    if reported_tokens > 0:
-        final_tokens = reported_tokens
-        strategy = "using reported (from API)"
-    else:
-        # Quick approximation: ~4 chars per token for English text
-        estimated_tokens = (len(accumulated_text) + len(accumulated_thinking)) // 4
-        final_tokens = max(1, estimated_tokens)  # At least 1 token
-        strategy = "using char-based estimate (tiktoken disabled)"
+    """Calculate accurate output tokens using tiktoken (always use calculated, not reported)."""
+    calculated_tokens = count_tokens_in_response(
+        response_content=accumulated_text,
+        thinking_content=accumulated_thinking,
+        tool_calls=[],  # Tool calls handled separately in streaming
+    )
+
+    # Always use calculated tokens since reported tokens are often unreliable (0)
+    # for third-party models accessed through proxy APIs
+    final_tokens = calculated_tokens
 
     logger.debug(
-        f"{context} - Token estimation - Reported: {reported_tokens}, Estimated: {final_tokens} ({strategy})"
+        f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens} (always using calculated)"
     )
     return final_tokens
 
@@ -2845,21 +2773,12 @@ def _calculate_accurate_output_tokens(
 def count_tokens_in_response(
     response_content: str = "", thinking_content: str = "", tool_calls: list = []
 ) -> int:
-    """Count tokens in response content using tiktoken - DISABLED FOR PERFORMANCE TESTING"""
-    # PERFORMANCE TEST: Disable tiktoken calculation to test if it's the bottleneck
-    logger.debug(f"Token counting DISABLED for performance testing - response_content: {len(response_content)} chars, thinking_content: {len(thinking_content)} chars, tool_calls: {len(tool_calls)}")
-    return 0  # Return 0 to skip expensive tiktoken calculation
-    
-    # Original tiktoken calculation code disabled below:
-    # if enc is None:
-    #     logger.warning(
-    #         "TikToken encoder not available for response counting, using approximate count"
-    #     )
-    #     return 0
-    # 
-    # logger.debug(f"Counting tokens - response_content: {len(response_content)} chars, thinking_content: {len(thinking_content)} chars, tool_calls: {len(tool_calls)}")
-    # if response_content:
-    #     logger.debug(f"Response content preview: {response_content[:200]}...")
+    """Count tokens in response content using tiktoken"""
+    if enc is None:
+        logger.warning(
+            "TikToken encoder not available for response counting, using approximate count"
+        )
+        return 0
 
     total_tokens = 0
 
@@ -3028,131 +2947,3 @@ def _compare_response_data(
 
     except Exception as e:
         logger.error(f"Error in response comparison: {e}")
-
-
-# HIGH-PERFORMANCE STREAMING CONVERSION
-# This function bypasses OpenAI SDK's heavy Pydantic processing for better performance
-async def convert_openai_streaming_response_to_anthropic_optimized(
-    response_generator: AsyncStream[ChatCompletionChunk],
-    original_request: ClaudeMessagesRequest,
-    routed_model: str | None = None,
-):
-    """
-    Optimized streaming converter that bypasses OpenAI SDK's expensive Pydantic operations.
-    
-    Performance improvements:
-    - Avoids 6000+ construct_type calls
-    - Minimal JSON parsing instead of full object construction
-    - Cached event strings
-    - Reduced type checking overhead
-    """
-    # Performance timing
-    start_time = time.perf_counter()
-    chunk_count = 0
-    
-    # State tracking - kept minimal
-    input_tokens = 0
-    output_tokens = 0
-    accumulated_text = ""
-    content_block_index = 0
-    text_block_started = False
-    current_content_blocks = []
-    
-    try:
-        # Send initial events using cached strings
-        message_id = f"msg_{uuid.uuid4().hex[:24]}"
-        yield _send_message_start_event(message_id, original_request.model)
-        yield _event_cache['ping']
-        
-        logger.debug(f"Starting optimized streaming for model: {original_request.model}")
-        
-        # Process chunks with minimal overhead
-        async for chunk in response_generator:
-            chunk_count += 1
-            
-            # CRITICAL OPTIMIZATION: Get raw chunk data instead of using heavy Pydantic parsing
-            # This avoids the expensive construct_type calls that were causing the bottleneck
-            
-            # Access the raw response data if possible
-            try:
-                # Check if chunk has usage info (final chunk)
-                if hasattr(chunk, 'usage') and chunk.usage is not None:
-                    # Extract token counts from final chunk
-                    usage = chunk.usage
-                    input_tokens = getattr(usage, "prompt_tokens", 0)
-                    output_tokens = getattr(usage, "completion_tokens", 0)
-                    
-                    logger.debug(f"Usage tokens: {input_tokens}/{output_tokens}")
-                    continue
-                
-                # Check for choices with minimal object access
-                if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
-                    choice = chunk.choices[0]
-                    
-                    # Check finish reason
-                    if hasattr(choice, 'finish_reason') and choice.finish_reason:
-                        logger.debug(f"Finish reason: {choice.finish_reason}")
-                        break
-                    
-                    # Extract delta content efficiently
-                    if hasattr(choice, 'delta') and choice.delta:
-                        delta = choice.delta
-                        
-                        # Get content efficiently - this is where the real content processing happens
-                        if hasattr(delta, 'content') and delta.content:
-                            content_text = delta.content
-                            accumulated_text += content_text
-                            
-                            # Handle first content block
-                            if not text_block_started:
-                                text_block = {"type": "text", "text": ""}
-                                current_content_blocks.append(text_block)
-                                yield _send_content_block_start_event(content_block_index, "text")
-                                text_block_started = True
-                            
-                            # Send content delta efficiently
-                            yield _send_content_block_delta_event(
-                                content_block_index,
-                                "text_delta", 
-                                content_text
-                            )
-                            
-                            # Update content block
-                            current_content_blocks[content_block_index]["text"] = accumulated_text
-                
-            except Exception as chunk_error:
-                # If chunk processing fails, log and continue
-                logger.debug(f"Chunk processing error: {chunk_error}")
-                continue
-        
-        # Finalize the response
-        if text_block_started:
-            yield _send_content_block_stop_event(content_block_index)
-        
-        # Send final events using cached strings
-        final_output_tokens = output_tokens if output_tokens > 0 else len(accumulated_text) // 4
-        
-        yield _send_message_delta_event("end_turn", final_output_tokens, current_content_blocks)
-        yield _event_cache['message_stop']
-        yield _event_cache['done']
-        
-        # Performance summary
-        end_time = time.perf_counter()
-        total_time = end_time - start_time
-        
-        logger.debug(f"Optimized streaming complete: {chunk_count} chunks, {total_time:.3f}s, {len(accumulated_text)} chars")
-        
-        # Update global usage stats
-        from server import update_global_usage_stats
-        usage_info = ClaudeUsage(
-            input_tokens=input_tokens,
-            output_tokens=final_output_tokens
-        )
-        await update_global_usage_stats(usage_info, routed_model or original_request.model, "Streaming")
-        
-    except Exception as e:
-        logger.error(f"Optimized streaming error: {e}")
-        # Send error termination
-        yield _event_cache['message_stop']
-        yield _event_cache['done']
-        raise
