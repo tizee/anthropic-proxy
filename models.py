@@ -29,7 +29,7 @@ from openai.types.chat import (
     ChatCompletionToolParam,
     ChatCompletionUserMessageParam,
 )
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class ModelDefaults:
@@ -203,6 +203,8 @@ ClaudeToolChoice = (
 
 
 class ClaudeContentBlockText(BaseModel):
+    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+
     type: Literal["text"]
     text: str
 
@@ -223,6 +225,8 @@ class ClaudeContentBlockImageURLSource(BaseModel):
 
 
 class ClaudeContentBlockImage(BaseModel):
+    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+
     type: Literal["image"]
     source: (
         ClaudeContentBlockImageBase64Source
@@ -271,6 +275,8 @@ class ClaudeContentBlockImage(BaseModel):
 
 
 class ClaudeContentBlockToolUse(BaseModel):
+    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+
     type: Literal["tool_use"]
     id: str
     name: str
@@ -316,6 +322,8 @@ class ClaudeContentBlockToolUse(BaseModel):
 
 
 class ClaudeContentBlockToolResult(BaseModel):
+    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+
     type: Literal["tool_result"]
     tool_use_id: str
     content: str | list[dict[str, Any]] | dict[str, Any]
@@ -390,6 +398,15 @@ class ClaudeSystemContent(BaseModel):
 
 
 class ClaudeMessage(BaseModel):
+    model_config = ConfigDict(
+        # Optimize performance for message processing
+        validate_assignment=False,
+        str_strip_whitespace=False,
+        use_enum_values=True,
+        arbitrary_types_allowed=True,
+        extra='ignore'
+    )
+
     role: Literal["user", "assistant"]
     content: (
         str
@@ -486,10 +503,10 @@ class ClaudeMessage(BaseModel):
             if len(merged_text) > 0:
                 openai_parts.append({"type": "text", "text": merged_text})
 
-            # Set content: use string for text-only, structured for mixed content
             if has_non_text_content or len(openai_parts) > 1:
                 assistant_msg["content"] = openai_parts
             elif len(openai_parts) == 1 and openai_parts[0]["type"] == "text":
+                # no text for tool calls messages
                 assistant_msg["content"] = openai_parts[0]["text"]
             else:
                 assistant_msg["content"] = ""
@@ -497,6 +514,8 @@ class ClaudeMessage(BaseModel):
             # Only add tool_calls if there are any
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
+                if len(openai_parts) > 0:
+                    assistant_msg["content"] = ""
 
             openai_messages.append(assistant_msg)
         else:
@@ -558,6 +577,15 @@ class ClaudeThinkingConfigDisabled(BaseModel):
 
 
 class ClaudeMessagesRequest(BaseModel):
+    model_config = ConfigDict(
+        # Optimize performance for high-throughput proxy server
+        validate_assignment=False,  # Skip validation on assignment for speed
+        str_strip_whitespace=False,  # Skip string stripping for performance
+        use_enum_values=True,  # Use enum values directly
+        arbitrary_types_allowed=True,  # Allow arbitrary types for flexibility
+        extra='ignore'  # Ignore extra fields instead of validation
+    )
+
     model: str
     max_tokens: int
     messages: list[ClaudeMessage]
@@ -734,6 +762,15 @@ class ClaudeMessagesRequest(BaseModel):
 
 
 class ClaudeTokenCountRequest(BaseModel):
+    model_config = ConfigDict(
+        # Optimize performance for high-throughput proxy server
+        validate_assignment=False,  # Skip validation on assignment for speed
+        str_strip_whitespace=False,  # Skip string stripping for performance
+        use_enum_values=True,  # Use enum values directly
+        arbitrary_types_allowed=True,  # Allow arbitrary types for flexibility
+        extra='ignore'  # Ignore extra fields instead of validation
+    )
+
     model: str
     messages: list[ClaudeMessage]
     system: str | list[ClaudeSystemContent] | None = None

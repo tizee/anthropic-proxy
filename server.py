@@ -526,15 +526,15 @@ async def hook_streaming_response(response_generator, request, routed_model):
 
 
 @app.post("/v1/messages")
-async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
+async def create_message(raw_request: Request):
     try:
-        # Parse the raw body as JSON since it's bytes
+        # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
-        body_json = json.loads(body.decode("utf-8"))
-        original_model = body_json.get("model", "unknown")
+        request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
+        original_model = request.model
 
         logger.debug(
-            f"RAW REQUEST:\n{json.dumps(body_json, indent=4, ensure_ascii=False, sort_keys=True)}"
+            f"RAW REQUEST:\n{request.model_dump_json(indent=4, exclude_none=True)}"
         )
 
         # Calculate token count for routing decisions
@@ -718,8 +718,11 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
 
 
 @app.post("/v1/messages/count_tokens")
-async def count_tokens(request: ClaudeTokenCountRequest, raw_request: Request):
+async def count_tokens(raw_request: Request):
     try:
+        # Use Pydantic's optimized JSON validation directly from raw bytes
+        body = await raw_request.body()
+        request = ClaudeTokenCountRequest.model_validate_json(body, strict=False)
         # Log the incoming token count request
         original_model = request.model
 
@@ -767,7 +770,7 @@ async def get_stats():
 
 
 @app.post("/v1/messages/test_conversion")
-async def test_message_conversion(request: ClaudeMessagesRequest, raw_request: Request):
+async def test_message_conversion(raw_request: Request):
     """
     Test endpoint for direct message format conversion without routing.
 
@@ -776,10 +779,10 @@ async def test_message_conversion(request: ClaudeMessagesRequest, raw_request: R
     Useful for testing specific model integrations and message format conversion.
     """
     try:
-        # Parse the raw body to get the original model
+        # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
-        body_json = json.loads(body.decode("utf-8"))
-        original_model = body_json.get("model", "unknown")
+        request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
+        original_model = request.model
 
         logger.info(f"🧪 TEST CONVERSION: Direct test for model {original_model}")
 
