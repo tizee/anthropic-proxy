@@ -3,7 +3,6 @@ Pydantic models for Claude proxy API requests and responses.
 This module contains only the model definitions without any server startup code.
 """
 
-import hashlib
 import json
 import logging
 import re
@@ -111,8 +110,6 @@ class Constants:
     DELTA_INPUT_JSON = "input_json_delta"
 
 
-
-
 def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list]:
     """Parse function calls from thinking content with custom markers.
 
@@ -203,7 +200,9 @@ ClaudeToolChoice = (
 
 
 class ClaudeContentBlockText(BaseModel):
-    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+    model_config = ConfigDict(
+        validate_assignment=False, str_strip_whitespace=False, extra="ignore"
+    )
 
     type: Literal["text"]
     text: str
@@ -225,7 +224,9 @@ class ClaudeContentBlockImageURLSource(BaseModel):
 
 
 class ClaudeContentBlockImage(BaseModel):
-    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+    model_config = ConfigDict(
+        validate_assignment=False, str_strip_whitespace=False, extra="ignore"
+    )
 
     type: Literal["image"]
     source: (
@@ -275,7 +276,9 @@ class ClaudeContentBlockImage(BaseModel):
 
 
 class ClaudeContentBlockToolUse(BaseModel):
-    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+    model_config = ConfigDict(
+        validate_assignment=False, str_strip_whitespace=False, extra="ignore"
+    )
 
     type: Literal["tool_use"]
     id: str
@@ -322,7 +325,9 @@ class ClaudeContentBlockToolUse(BaseModel):
 
 
 class ClaudeContentBlockToolResult(BaseModel):
-    model_config = ConfigDict(validate_assignment=False, str_strip_whitespace=False, extra='ignore')
+    model_config = ConfigDict(
+        validate_assignment=False, str_strip_whitespace=False, extra="ignore"
+    )
 
     type: Literal["tool_result"]
     tool_use_id: str
@@ -404,7 +409,7 @@ class ClaudeMessage(BaseModel):
         str_strip_whitespace=False,
         use_enum_values=True,
         arbitrary_types_allowed=True,
-        extra='ignore'
+        extra="ignore",
     )
 
     role: Literal["user", "assistant"]
@@ -503,25 +508,32 @@ class ClaudeMessage(BaseModel):
             if len(merged_text) > 0:
                 openai_parts.append({"type": "text", "text": merged_text})
 
-            if has_non_text_content or len(openai_parts) > 1:
-                assistant_msg["content"] = openai_parts
-            elif len(openai_parts) == 1 and openai_parts[0]["type"] == "text":
-                # no text for tool calls messages
-                assistant_msg["content"] = openai_parts[0]["text"]
+            # Collect all text content into a single string
+            text_content = ""
+            for part in openai_parts:
+                if part.get("type") == "text":
+                    text_content += part.get("text", "") + "\n"
+            
+            # Trim the text content
+            trimmed_text_content = text_content.strip()
+            
+            # Set content - use text content if available
+            if trimmed_text_content:
+                assistant_msg["content"] = trimmed_text_content
             else:
-                assistant_msg["content"] = ""
-
-            # Only add tool_calls if there are any
+                assistant_msg["content"] = None
+            
+            # Add tool_calls if there are any
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
-                if len(openai_parts) > 0:
-                    assistant_msg["content"] = ""
-
-            openai_messages.append(assistant_msg)
+            
+            # Only add the message if it has content or tool calls
+            if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
+                openai_messages.append(assistant_msg)
         else:
             # user
             pending_tool_result_msgs: list[ChatCompletionToolMessageParam] = []
-            user_msg: ChatCompletionUserMessageParam = {"role": "user"}
+            user_msg: ChatCompletionUserMessageParam = {"role": "user", "content": ""}
             has_non_text_content = False
 
             for block in self.content:
@@ -556,7 +568,10 @@ class ClaudeMessage(BaseModel):
 
             # Tool results should come before user messages for proper OpenAI sequencing
             openai_messages.extend(pending_tool_result_msgs)
-            openai_messages.append(user_msg)
+            
+            # Only add user message if it has actual content (not empty)
+            if user_msg["content"] and user_msg["content"] != "":
+                openai_messages.append(user_msg)
 
         return openai_messages
 
@@ -583,7 +598,7 @@ class ClaudeMessagesRequest(BaseModel):
         str_strip_whitespace=False,  # Skip string stripping for performance
         use_enum_values=True,  # Use enum values directly
         arbitrary_types_allowed=True,  # Allow arbitrary types for flexibility
-        extra='ignore'  # Ignore extra fields instead of validation
+        extra="ignore",  # Ignore extra fields instead of validation
     )
 
     model: str
@@ -741,7 +756,7 @@ class ClaudeMessagesRequest(BaseModel):
         # logger.debug(f"🔄 OpenAI request: {request_params}")
 
         # DEBUG: Validate and debug OpenAI message sequence for tool call ordering
-        debug_openai_message_sequence(
+        _debug_openai_message_sequence(
             openai_messages, f"Claude->OpenAI conversion for model {self.model}"
         )
 
@@ -768,7 +783,7 @@ class ClaudeTokenCountRequest(BaseModel):
         str_strip_whitespace=False,  # Skip string stripping for performance
         use_enum_values=True,  # Use enum values directly
         arbitrary_types_allowed=True,  # Allow arbitrary types for flexibility
-        extra='ignore'  # Ignore extra fields instead of validation
+        extra="ignore",  # Ignore extra fields instead of validation
     )
 
     model: str
@@ -1149,8 +1164,6 @@ def convert_openai_response_to_anthropic(
         content_text = ""
         tool_calls = None
         finish_reason = "stop"
-        prompt_tokens = 0
-        completion_tokens = 0
         thinking_content = ""
 
         logger.debug(f"Converting OpenAI response: {type(openai_response)}")
@@ -1646,7 +1659,7 @@ def _send_content_block_start_event(index: int, block_type: str, **kwargs):
     elif block_type == "tool_use":
         # Ensure tool_use blocks have required fields
         if "id" not in content_block:
-            content_block["id"] = generate_unique_tool_id()
+            content_block["id"] = generate_unique_id("tool")
         if "name" not in content_block:
             content_block["name"] = ""
         if "input" not in content_block:
@@ -1781,1007 +1794,533 @@ def _map_finish_reason_to_stop_reason(finish_reason: str) -> str:
 
 
 # openai SSE -> claude SSE
+class AnthropicStreamingConverter:
+    """Encapsulates state and logic for converting OpenAI streaming responses to Anthropic format."""
+    
+    def __init__(self, original_request: ClaudeMessagesRequest):
+        self.original_request = original_request
+        self.message_id = f"msg_{uuid.uuid4().hex[:24]}"
+        
+        # Content tracking
+        self.content_block_index = 0
+        self.current_content_blocks = []
+        self.accumulated_text = ""
+        self.accumulated_thinking = ""
+        
+        # Block state tracking
+        self.text_block_started = False
+        self.text_block_closed = False
+        self.thinking_block_started = False
+        self.thinking_block_closed = False
+        self.is_tool_use = False
+        
+        # Tool call state
+        self.tool_json = ""
+        self.current_tool_id = None
+        self.current_tool_name = None
+        
+        # Response state
+        self.has_sent_stop_reason = False
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.openai_chunks_received = 0
+    
+    def _send_message_start_event(self) -> str:
+        """Send message_start event."""
+        message_data = {
+            "type": "message_start",
+            "message": {
+                "id": self.message_id,
+                "type": "message",
+                "role": "assistant",
+                "model": self.original_request.model,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            },
+        }
+        event_str = f"event: message_start\ndata: {json.dumps(message_data)}\n\n"
+        logger.debug(f"STREAMING_EVENT: message_start - message_id: {self.message_id}, model: {self.original_request.model}")
+        return event_str
+    
+    def _send_ping_event(self) -> str:
+        """Send ping event."""
+        event_data = {"type": "ping"}
+        event_str = f"event: ping\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug("STREAMING_EVENT: ping")
+        return event_str
+    
+    def _send_content_block_start_event(self, block_type: str, **kwargs) -> str:
+        """Send content_block_start event."""
+        content_block = {"type": block_type, **kwargs}
+        if block_type == "text":
+            content_block["text"] = ""
+        elif block_type == "tool_use":
+            # Ensure tool_use blocks have required fields
+            if "id" not in content_block:
+                content_block["id"] = generate_unique_id("tool")
+            if "name" not in content_block:
+                content_block["name"] = ""
+            if "input" not in content_block:
+                content_block["input"] = {}
+        event_data = {
+            "type": "content_block_start",
+            "index": self.content_block_index,
+            "content_block": content_block,
+        }
+        event_str = f"event: content_block_start\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug(f"STREAMING_EVENT: content_block_start - index: {self.content_block_index}, block_type: {block_type}, kwargs: {kwargs}")
+        return event_str
+    
+    def _send_content_block_delta_event(self, delta_type: str, content: str) -> str:
+        """Send content_block_delta event."""
+        delta = {"type": delta_type}
+        if delta_type == "text_delta":
+            delta["text"] = content
+        elif delta_type == "input_json_delta":
+            delta["partial_json"] = content
+        elif delta_type == "thinking_delta":
+            delta["thinking"] = content
+        elif delta_type == "signature_delta":
+            delta["signature"] = content
+        event_data = {"type": "content_block_delta", "index": self.content_block_index, "delta": delta}
+        event_str = f"event: content_block_delta\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug(f"STREAMING_EVENT: content_block_delta - index: {self.content_block_index}, delta_type: {delta_type}, content_len: {len(content)}")
+        return event_str
+    
+    def _send_content_block_stop_event(self) -> str:
+        """Send content_block_stop event."""
+        event_data = {"type": "content_block_stop", "index": self.content_block_index}
+        event_str = f"event: content_block_stop\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug(f"STREAMING_EVENT: content_block_stop - index: {self.content_block_index}")
+        return event_str
+    
+    def _send_message_delta_event(self, stop_reason: str, output_tokens: int) -> str:
+        """Send message_delta event."""
+        event_data = {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {"output_tokens": output_tokens},
+        }
+        event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug(f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}")
+        return event_str
+    
+    def _send_message_stop_event(self) -> str:
+        """Send message_stop event."""
+        event_data = {"type": "message_stop"}
+        event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug("STREAMING_EVENT: message_stop")
+        return event_str
+    
+    def _send_done_event(self) -> str:
+        """Send done event."""
+        event_data = {"type": "done"}
+        event_str = f"event: done\ndata: {json.dumps(event_data)}\n\n"
+        logger.debug("STREAMING_EVENT: done")
+        return event_str
+    
+    async def _close_text_block(self):
+        """Close the current text block if open."""
+        if self.text_block_started and not self.text_block_closed:
+            yield self._send_content_block_stop_event()
+            self.text_block_closed = True
+            self.content_block_index += 1
+    
+    async def _close_tool_block(self):
+        """Close the current tool block if open."""
+        if self.is_tool_use:
+            yield self._send_content_block_stop_event()
+            self.content_block_index += 1
+            self.is_tool_use = False
+            # Reset tool state
+            self.tool_json = ""
+            self.current_tool_id = None
+            self.current_tool_name = None
+    
+    async def _close_thinking_block(self):
+        """Close the current thinking block if open."""
+        if self.thinking_block_started and not self.thinking_block_closed:
+            # Parse function calls from thinking content before closing
+            cleaned_thinking, function_calls = parse_function_calls_from_thinking(self.accumulated_thinking)
+            
+            # Update thinking content with cleaned version
+            if self.content_block_index < len(self.current_content_blocks):
+                self.current_content_blocks[self.content_block_index]["thinking"] = cleaned_thinking
+                
+                # Generate signature for cleaned thinking content
+                thinking_signature = generate_unique_id("thinking")
+                self.current_content_blocks[self.content_block_index]["signature"] = thinking_signature
+                
+                # Send signature delta before closing thinking block
+                yield self._send_content_block_delta_event("signature_delta", thinking_signature)
+            
+            yield self._send_content_block_stop_event()
+            self.thinking_block_closed = True
+            self.content_block_index += 1
+            
+            # Add function call blocks if any were found
+            for tool_call in function_calls:
+                logger.debug(f"Adding tool call block: {tool_call['function']['name']}")
+                
+                # Create tool use content block
+                unique_tool_id = generate_unique_id("toolu")
+                tool_block = {
+                    "type": "tool_use",
+                    "id": unique_tool_id,
+                    "name": tool_call["function"]["name"],
+                    "input": json.loads(tool_call["function"]["arguments"]),
+                }
+                self.current_content_blocks.append(tool_block)
+                
+                # Send tool call events
+                yield self._send_content_block_start_event("tool_use", id=unique_tool_id, name=tool_call["function"]["name"])
+                yield self._send_content_block_delta_event("input_json_delta", tool_call["function"]["arguments"])
+                yield self._send_content_block_stop_event()
+                self.content_block_index += 1
+    
+    async def _handle_text_delta(self, delta_content: str):
+        """Handle text content delta."""
+        # If we have text content and we're currently in tool use mode, end the tool use first
+        if self.is_tool_use:
+            async for event in self._close_tool_block():
+                yield event
+        
+        self.accumulated_text += delta_content
+        
+        # Calculate current output tokens in real-time using tiktoken
+        current_output_tokens = count_tokens_in_response(
+            response_content=self.accumulated_text,
+            thinking_content=self.accumulated_thinking,
+            tool_calls=[],
+        )
+        logger.debug(f"Added text content: +{len(delta_content)} chars, total: {len(self.accumulated_text)} chars, tokens: {current_output_tokens}")
+        
+        # Start text block if not started
+        if not self.text_block_started:
+            text_block = {"type": "text", "text": ""}
+            self.current_content_blocks.append(text_block)
+            yield self._send_content_block_start_event("text")
+            self.text_block_started = True
+        
+        # Send text delta
+        yield self._send_content_block_delta_event("text_delta", delta_content)
+        
+        # Update content block
+        if self.content_block_index < len(self.current_content_blocks):
+            self.current_content_blocks[self.content_block_index]["text"] = self.accumulated_text
+    
+    async def _handle_thinking_delta(self, delta_reasoning: str):
+        """Handle thinking/reasoning content delta."""
+        self.accumulated_thinking += delta_reasoning
+        logger.debug(f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(self.accumulated_thinking)} chars")
+        
+        # Start thinking block if not started
+        if not self.thinking_block_started:
+            thinking_block = {"type": "thinking", "thinking": ""}
+            self.current_content_blocks.append(thinking_block)
+            yield self._send_content_block_start_event("thinking")
+            self.thinking_block_started = True
+        
+        # Send thinking delta
+        yield self._send_content_block_delta_event("thinking_delta", delta_reasoning)
+        
+        # Update content block
+        if self.content_block_index < len(self.current_content_blocks):
+            self.current_content_blocks[self.content_block_index]["thinking"] = self.accumulated_thinking
+    
+    async def _handle_tool_call_delta(self, tool_call):
+        """Handle tool call delta."""
+        # If we haven't started a tool yet, we need to handle any accumulated text first
+        if not self.is_tool_use:
+            # If we have accumulated text, send it first
+            if self.accumulated_text and not self.text_block_started:
+                text_block = {"type": "text", "text": ""}
+                self.current_content_blocks.append(text_block)
+                yield self._send_content_block_start_event("text")
+                self.text_block_started = True
+                
+                # Send the accumulated text
+                yield self._send_content_block_delta_event("text_delta", self.accumulated_text)
+                
+                # Update the content block
+                self.current_content_blocks[self.content_block_index]["text"] = self.accumulated_text
+                
+                # Close the text block
+                yield self._send_content_block_stop_event()
+                self.text_block_closed = True
+                self.content_block_index += 1
+            elif self.text_block_started and not self.text_block_closed:
+                # Close any open text block
+                yield self._send_content_block_stop_event()
+                self.text_block_closed = True
+                self.content_block_index += 1
+            
+            # Now start the tool use block
+            self.is_tool_use = True
+            
+            # Extract tool info
+            if isinstance(tool_call, dict):
+                function = tool_call.get("function", {})
+                self.current_tool_name = function.get("name", "") if isinstance(function, dict) else ""
+                self.current_tool_id = generate_unique_id("toolu")
+            else:
+                function = getattr(tool_call, "function", None)
+                self.current_tool_name = getattr(function, "name", "") if function else ""
+                self.current_tool_id = generate_unique_id("toolu")
+            
+            # Create tool use block
+            tool_block = {
+                "type": "tool_use",
+                "id": self.current_tool_id,
+                "name": self.current_tool_name,
+                "input": {},
+            }
+            self.current_content_blocks.append(tool_block)
+            
+            yield self._send_content_block_start_event("tool_use", id=self.current_tool_id, name=self.current_tool_name)
+            self.tool_json = ""
+        
+        # Extract function arguments
+        arguments = None
+        if isinstance(tool_call, dict) and "function" in tool_call:
+            function = tool_call.get("function", {})
+            arguments = function.get("arguments", "") if isinstance(function, dict) else ""
+        elif hasattr(tool_call, "function"):
+            function = getattr(tool_call, "function", None)
+            arguments = getattr(function, "arguments", "") if function else ""
+        
+        # If we have arguments, send them as a delta
+        if arguments:
+            self.tool_json += arguments
+            
+            # Try to parse JSON to update the content block
+            try:
+                parsed_json = json.loads(self.tool_json)
+                self.current_content_blocks[self.content_block_index]["input"] = parsed_json
+            except json.JSONDecodeError:
+                # JSON not yet complete, continue accumulating
+                pass
+            
+            # Send the delta
+            yield self._send_content_block_delta_event("input_json_delta", arguments)
+    
+    async def process_chunk(self, chunk: ChatCompletionChunk):
+        """Process a single chunk from the OpenAI streaming response."""
+        self.openai_chunks_received += 1
+        
+        # Pre-extract all data from Pydantic object to minimize attribute access
+        chunk_data = {
+            "chunk_id": chunk.id,
+            "has_choices": len(chunk.choices) > 0,
+            "has_usage": chunk.usage is not None,
+            "usage": chunk.usage,
+        }
+        
+        # Extract choice data if available
+        if chunk_data["has_choices"]:
+            choice = chunk.choices[0]
+            delta = choice.delta
+            finish_reason = choice.finish_reason
+            
+            # Pre-extract delta data to minimize model_dump() calls
+            raw_delta = delta.model_dump() if hasattr(delta, "model_dump") else {}
+            
+            chunk_data.update({
+                "delta": delta,
+                "finish_reason": finish_reason,
+                "delta_content": getattr(delta, "content", None),
+                "delta_tool_calls": getattr(delta, "tool_calls", None),
+                "delta_reasoning": raw_delta.get("reasoning_content") or raw_delta.get("reasoning"),
+            })
+        
+        # Log chunk processing
+        logger.debug(f"STREAMING_CHUNK #{self.openai_chunks_received}: processing")
+        
+        # Handle usage data (final chunk)
+        if chunk_data["has_usage"]:
+            reported_input_tokens = getattr(chunk_data["usage"], "prompt_tokens", 0)
+            reported_output_tokens = getattr(chunk_data["usage"], "completion_tokens", 0)
+            logger.debug(f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}")
+        
+        # Process content if we have choices
+        if chunk_data["has_choices"]:
+            # Handle tool calls first
+            if chunk_data["delta_tool_calls"]:
+                delta_tool_calls = chunk_data["delta_tool_calls"]
+                if not isinstance(delta_tool_calls, list):
+                    delta_tool_calls = [delta_tool_calls]
+                
+                for tool_call in delta_tool_calls:
+                    async for event in self._handle_tool_call_delta(tool_call):
+                        yield event
+            
+            # Handle thinking/reasoning content
+            if chunk_data["delta_reasoning"]:
+                async for event in self._handle_thinking_delta(chunk_data["delta_reasoning"]):
+                    yield event
+            elif self.thinking_block_started and not self.thinking_block_closed and chunk_data["delta_content"]:
+                # If we have normal content coming and thinking was active, close thinking block
+                async for event in self._close_thinking_block():
+                    yield event
+            
+            # Handle text content
+            if chunk_data["delta_content"] and not self.is_tool_use:
+                async for event in self._handle_text_delta(chunk_data["delta_content"]):
+                    yield event
+            
+            # Process finish_reason - end the streaming response
+            if chunk_data["finish_reason"] and not self.has_sent_stop_reason:
+                async for event in self._finalize_response(chunk_data["finish_reason"]):
+                    yield event
+    
+    async def _finalize_response(self, finish_reason: str):
+        """Finalize the streaming response with proper cleanup."""
+        logger.debug(f"Processing finish_reason: {finish_reason}")
+        self.has_sent_stop_reason = True
+        
+        # Close thinking block if it was started
+        if self.thinking_block_started and not self.thinking_block_closed:
+            async for event in self._close_thinking_block():
+                yield event
+        
+        # If we haven't started any blocks yet, start and immediately close a text block
+        if (not self.text_block_started and not self.is_tool_use and not self.thinking_block_started):
+            text_block = {"type": "text", "text": ""}
+            self.current_content_blocks.append(text_block)
+            yield self._send_content_block_start_event("text")
+            yield self._send_content_block_stop_event()
+        elif self.text_block_started or self.is_tool_use:
+            # Close the current content block
+            yield self._send_content_block_stop_event()
+        
+        # Determine stop reason
+        stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
+        logger.debug(f"Mapped stop_reason: {stop_reason}")
+        
+        # Calculate accurate output tokens from accumulated content
+        final_output_tokens = _calculate_accurate_output_tokens(
+            self.accumulated_text,
+            self.accumulated_thinking,
+            self.output_tokens,
+            "Finish reason received",
+        )
+        
+        # Send message delta with final content and stop reason
+        yield self._send_message_delta_event(stop_reason, final_output_tokens)
+        
+        # Send message stop and done
+        yield self._send_message_stop_event()
+        yield self._send_done_event()
+        logger.debug("Streaming completed successfully")
+
+
 async def convert_openai_streaming_response_to_anthropic(
     response_generator: AsyncStream[ChatCompletionChunk],
     original_request: ClaudeMessagesRequest,
     routed_model: str | None = None,
 ):
-    """Handle streaming responses from OpenAI SDK and convert to Anthropic format."""
-    has_sent_stop_reason = False
-    is_tool_use = False
-    input_tokens = 0
-    output_tokens = 0
-    current_content_blocks = []
-    accumulated_text = ""
-    accumulated_thinking = ""
+    """Handle streaming responses from OpenAI SDK and convert to Anthropic format.
+    
+    Optimized version using state management class to improve performance.
+    """
+    # Create converter instance with all state encapsulated
+    converter = AnthropicStreamingConverter(original_request)
+    
     try:
         # Send initial events
-        message_id = f"msg_{uuid.uuid4().hex[:24]}"
-        yield _send_message_start_event(message_id, original_request.model)
-        yield _send_ping_event()
-
-        # State tracking variables
-        content_block_index = 0
-        text_block_started = False
-        text_block_closed = False
-
-        # Tool call state
-        tool_json = ""
-        current_tool_id = None
-        current_tool_name = None
-
-        # Thinking/reasoning state
-        thinking_block_started = False
-        thinking_block_closed = False
-
-        # Streaming comparison tracking
-        openai_chunks_received = 0
-
+        yield converter._send_message_start_event()
+        yield converter._send_ping_event()
+        
         logger.debug(f"Starting streaming for model: {original_request.model}")
-
-        # Process each chunk
+        
+        # Process each chunk using the optimized converter
         async for chunk in response_generator:
             try:
-                # Count OpenAI chunks received
-                openai_chunks_received += 1
-
-                # Detailed chunk logging
-                chunk_data = {
-                    "chunk_id": chunk.id,
-                    "has_choices": len(chunk.choices) > 0,
-                    "has_usage": chunk.usage,
-                }
-
-                if chunk_data["has_choices"]:
-                    choice = chunk.choices[0]
-                    chunk_data["choice_data"] = {
-                        "has_delta": choice.delta is not None,
-                        "finish_reason": choice.finish_reason,
-                    }
-                    if chunk_data["choice_data"]["has_delta"]:
-                        delta = choice.delta
-                        chunk_data["delta_data"] = {
-                            "content": getattr(delta, "content", None),
-                            "role": getattr(delta, "role", None),
-                            "tool_calls": getattr(delta, "tool_calls", None)
-                            is not None,
-                        }
-                        if chunk_data["delta_data"]["content"]:
-                            chunk_data["delta_data"]["content_length"] = len(
-                                chunk_data["delta_data"]["content"]
-                            )
-
-                if chunk_data["has_usage"]:
-                    chunk_data["usage"] = {
-                        "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
-                        "completion_tokens": getattr(
-                            chunk.usage, "completion_tokens", None
-                        ),
-                        "total_tokens": getattr(chunk.usage, "total_tokens", None),
-                    }
-
-                logger.debug(
-                    f"STREAMING_CHUNK #{openai_chunks_received}: {json.dumps(chunk_data, default=str)}"
-                )
-
-                # Raw chunk debugging - print original chunk data when DEBUG_RAW_CHUNKS is set
-                logger.debug(f"=== RAW CHUNK #{openai_chunks_received} ===")
-                logger.debug(f"Raw chunk type: {type(chunk)}")
-                logger.debug(
-                    f"Raw chunk dict: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}"
-                )
-                logger.debug("=== END RAW CHUNK ===")
-
-                # Also print raw json representation if possible
-                try:
-                    if hasattr(chunk, "model_dump"):
-                        raw_json = json.dumps(chunk.model_dump(), indent=2, default=str)
-                        logger.debug(f"Raw chunk JSON:\n{raw_json}")
-                except Exception as e:
-                    logger.info(f"Could not serialize chunk to JSON: {e}")
-
-                # Check if this is the end of the response with usage data
-                if chunk.usage is not None:
-                    # Extract input tokens from usage if available (for cost calculation)
-                    reported_input_tokens = getattr(chunk.usage, "prompt_tokens", 0)
-                    reported_output_tokens = getattr(
-                        chunk.usage, "completion_tokens", 0
-                    )
-                    logger.debug(
-                        f"Reported usage - Input: {reported_input_tokens}, Output: {reported_output_tokens}"
-                    )
-                    # Update session statistics for streaming (using calculated tokens)
-                    logger.debug(
-                        f"Session stats - Input: {input_tokens}, Output: {output_tokens}"
-                    )
-                    logger.debug(
-                        f"Content lengths - Text: {len(accumulated_text)}, Thinking: {len(accumulated_thinking)}"
-                    )
-
-                # Handle content from choices
-                if len(chunk.choices) > 0:
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-                    # Get the delta from the choice
-                    delta = choice.delta
-
-                    # Check for finish_reason to know when we're done
-                    finish_reason = choice.finish_reason
-
-                    # Handle tool calls first
-                    delta_tool_calls = delta.tool_calls
-
-                    if delta_tool_calls:
-                        # Convert to list if it's not already
-                        if not isinstance(delta_tool_calls, list):
-                            delta_tool_calls = [delta_tool_calls]
-
-                        for tool_call in delta_tool_calls:
-                            # If we haven't started a tool yet, we need to handle any accumulated text first
-                            if not is_tool_use:
-                                # If we have accumulated text, send it first
-                                if accumulated_text and not text_block_started:
-                                    text_block = {"type": "text", "text": ""}
-                                    current_content_blocks.append(text_block)
-                                    yield _send_content_block_start_event(
-                                        content_block_index, "text"
-                                    )
-                                    text_block_started = True
-
-                                    # Send the accumulated text
-                                    yield _send_content_block_delta_event(
-                                        content_block_index,
-                                        "text_delta",
-                                        accumulated_text,
-                                    )
-
-                                    # Update the content block
-                                    current_content_blocks[content_block_index][
-                                        "text"
-                                    ] = accumulated_text
-
-                                    # Close the text block
-                                    yield _send_content_block_stop_event(
-                                        content_block_index
-                                    )
-                                    text_block_closed = True
-                                    content_block_index += 1
-                                elif text_block_started and not text_block_closed:
-                                    # Close any open text block
-                                    yield _send_content_block_stop_event(
-                                        content_block_index
-                                    )
-                                    text_block_closed = True
-                                    content_block_index += 1
-                                # Don't create empty text blocks - only create text blocks when we have actual text content
-
-                                # Now start the tool use block
-                                is_tool_use = True
-
-                                # Extract tool info
-                                if isinstance(tool_call, dict):
-                                    function = tool_call.get("function", {})
-                                    current_tool_name = (
-                                        function.get("name", "")
-                                        if isinstance(function, dict)
-                                        else ""
-                                    )
-                                    current_tool_id = generate_unique_id("toolu")
-                                else:
-                                    function = getattr(tool_call, "function", None)
-                                    current_tool_name = (
-                                        getattr(function, "name", "")
-                                        if function
-                                        else ""
-                                    )
-                                    current_tool_id = generate_unique_id("toolu")
-
-                                # Create tool use block
-                                tool_block = {
-                                    "type": "tool_use",
-                                    "id": current_tool_id,
-                                    "name": current_tool_name,
-                                    "input": {},
-                                }
-                                current_content_blocks.append(tool_block)
-
-                                yield _send_content_block_start_event(
-                                    content_block_index,
-                                    "tool_use",
-                                    id=current_tool_id,
-                                    name=current_tool_name,
-                                )
-                                tool_json = ""
-
-                            # Extract function arguments
-                            arguments = None
-                            if isinstance(tool_call, dict) and "function" in tool_call:
-                                function = tool_call.get("function", {})
-                                arguments = (
-                                    function.get("arguments", "")
-                                    if isinstance(function, dict)
-                                    else ""
-                                )
-                            elif hasattr(tool_call, "function"):
-                                function = getattr(tool_call, "function", None)
-                                arguments = (
-                                    getattr(function, "arguments", "")
-                                    if function
-                                    else ""
-                                )
-
-                            # If we have arguments, send them as a delta
-                            if arguments:
-                                tool_json += arguments
-
-                                # Try to parse JSON to update the content block
-                                try:
-                                    parsed_json = json.loads(tool_json)
-                                    current_content_blocks[content_block_index][
-                                        "input"
-                                    ] = parsed_json
-                                except json.JSONDecodeError:
-                                    # JSON not yet complete, continue accumulating
-                                    pass
-
-                                # Send the delta
-                                yield _send_content_block_delta_event(
-                                    content_block_index, "input_json_delta", arguments
-                                )
-
-                    # Handle reasoning/thinking content first (from deepseek reasoning models)
-                    delta_reasoning = None
-                    raw_delta = delta.model_dump()
-                    logger.debug(f"raw delta: {raw_delta}")
-                    if isinstance(raw_delta, dict) and (
-                        "reasoning_content" in raw_delta or "reasoning" in raw_delta
-                    ):
-                        # reasoning_content for deepseek-like models
-                        # reasoning for Gemini models
-                        delta_reasoning = raw_delta.get(
-                            "reasoning_content"
-                        ) or raw_delta.get("reasoning")
-
-                    if delta_reasoning is not None and delta_reasoning != "":
-                        accumulated_thinking += delta_reasoning
-                        logger.debug(
-                            f"Added thinking content: +{len(delta_reasoning)} chars, total: {len(accumulated_thinking)} chars"
-                        )
-
-                        # Start thinking block if not started
-                        if not thinking_block_started:
-                            thinking_block = {"type": "thinking", "thinking": ""}
-                            current_content_blocks.append(thinking_block)
-                            yield _send_content_block_start_event(
-                                content_block_index, "thinking"
-                            )
-                            thinking_block_started = True
-
-                        # Send thinking delta
-                        yield _send_content_block_delta_event(
-                            content_block_index, "thinking_delta", delta_reasoning
-                        )
-
-                        # Update content block
-                        if content_block_index < len(current_content_blocks):
-                            current_content_blocks[content_block_index]["thinking"] = (
-                                accumulated_thinking
-                            )
-
-                    # Check if reasoning is complete (no more reasoning deltas and we have normal content)
-                    elif thinking_block_started and not thinking_block_closed:
-                        # If we have normal content coming and thinking was active, close thinking block
-                        delta_content = None
-                        if hasattr(delta, "content"):
-                            delta_content = delta.content
-                        elif isinstance(delta, dict) and "content" in delta:
-                            delta_content = delta["content"]
-
-                        if delta_content is not None and delta_content != "":
-                            # Parse function calls from thinking content before closing
-                            cleaned_thinking, function_calls = (
-                                parse_function_calls_from_thinking(accumulated_thinking)
-                            )
-
-                            # Update thinking content with cleaned version (function calls removed)
-                            if content_block_index < len(current_content_blocks):
-                                current_content_blocks[content_block_index][
-                                    "thinking"
-                                ] = cleaned_thinking
-
-                                # Generate signature for cleaned thinking content
-                                thinking_signature = generate_thinking_signature(cleaned_thinking
-                                )
-                                current_content_blocks[content_block_index][
-                                    "signature"
-                                ] = thinking_signature
-
-                                # Send signature delta before closing thinking block
-                                yield _send_content_block_delta_event(
-                                    content_block_index,
-                                    "signature_delta",
-                                    thinking_signature,
-                                )
-
-                            yield _send_content_block_stop_event(content_block_index)
-                            thinking_block_closed = True
-                            content_block_index += 1
-
-                            # Add function call blocks if any were found
-                            for tool_call in function_calls:
-                                logger.debug(
-                                    f"Adding tool call block: {tool_call['function']['name']}"
-                                )
-
-                                # Create tool use content block
-                                unique_tool_id = generate_unique_id("toolu")
-                                tool_block = {
-                                    "type": "tool_use",
-                                    "id": unique_tool_id,
-                                    "name": tool_call["function"]["name"],
-                                    "input": json.loads(
-                                        tool_call["function"]["arguments"]
-                                    ),
-                                }
-                                current_content_blocks.append(tool_block)
-
-                                # Send tool call events
-                                yield _send_content_block_start_event(
-                                    content_block_index,
-                                    "tool_use",
-                                    id=unique_tool_id,
-                                    name=tool_call["function"]["name"],
-                                )
-                                yield _send_tool_use_delta_events(
-                                    content_block_index,
-                                    unique_tool_id,
-                                    tool_call["function"]["name"],
-                                    tool_call["function"]["arguments"],
-                                )
-                                yield _send_content_block_stop_event(
-                                    content_block_index
-                                )
-                                content_block_index += 1
-
-                    # Handle text content - check for text content first
-                    delta_content = delta.content
-
-                    # If we have text content and we're currently in tool use mode, end the tool use first
-                    if (
-                        delta_content is not None
-                        and delta_content != ""
-                        and is_tool_use
-                    ):
-                        # End current tool call block
-                        yield _send_content_block_stop_event(content_block_index)
-                        content_block_index += 1
-                        is_tool_use = False
-                        # Reset tool state
-                        tool_json = ""
-                        current_tool_id = None
-                        current_tool_name = None
-
-                    # Handle text content
-                    if (
-                        delta_content is not None
-                        and delta_content != ""
-                        and not is_tool_use
-                    ):
-                        accumulated_text += delta_content
-                        # Calculate current output tokens in real-time using tiktoken
-                        current_output_tokens = count_tokens_in_response(
-                            response_content=accumulated_text,
-                            thinking_content=accumulated_thinking,
-                            tool_calls=[],
-                        )
-                        logger.debug(
-                            f"Added text content: +{len(delta_content)} chars, total: {len(accumulated_text)} chars, tokens: {current_output_tokens}"
-                        )
-
-                        # Start text block if not started
-                        if not text_block_started:
-                            text_block = {"type": "text", "text": ""}
-                            current_content_blocks.append(text_block)
-                            yield _send_content_block_start_event(
-                                content_block_index, "text"
-                            )
-                            text_block_started = True
-
-                        # Send text delta
-                        yield _send_content_block_delta_event(
-                            content_block_index, "text_delta", delta_content
-                        )
-
-                        # Update content block
-                        if content_block_index < len(current_content_blocks):
-                            current_content_blocks[content_block_index]["text"] = (
-                                accumulated_text
-                            )
-
-                    # Process finish_reason - end the streaming response
-                    if finish_reason and not has_sent_stop_reason:
-                        logger.debug(f"Processing finish_reason: {finish_reason}")
-                        has_sent_stop_reason = True
-
-                        # Close thinking block if it was started
-                        if thinking_block_started and not thinking_block_closed:
-                            # Parse function calls from thinking content before closing
-                            cleaned_thinking, function_calls = (
-                                parse_function_calls_from_thinking(accumulated_thinking)
-                            )
-
-                            # Update thinking content with cleaned version (function calls removed)
-                            if content_block_index < len(current_content_blocks):
-                                current_content_blocks[content_block_index][
-                                    "thinking"
-                                ] = cleaned_thinking
-
-                                # Generate signature for cleaned thinking content
-                                thinking_signature = generate_thinking_signature(
-                                    cleaned_thinking
-                                )
-                                current_content_blocks[content_block_index][
-                                    "signature"
-                                ] = thinking_signature
-
-                                # Send signature delta before closing thinking block
-                                yield _send_content_block_delta_event(
-                                    content_block_index,
-                                    "signature_delta",
-                                    thinking_signature,
-                                )
-
-                            yield _send_content_block_stop_event(content_block_index)
-                            thinking_block_closed = True
-                            content_block_index += 1
-
-                            # Add function call blocks if any were found
-                            for tool_call in function_calls:
-                                logger.debug(
-                                    f"Adding tool call block: {tool_call['function']['name']}"
-                                )
-
-                                # Create tool use content block
-                                unique_tool_id = generate_unique_id("toolu")
-                                tool_block = {
-                                    "type": "tool_use",
-                                    "id": unique_tool_id,
-                                    "name": tool_call["function"]["name"],
-                                    "input": json.loads(
-                                        tool_call["function"]["arguments"]
-                                    ),
-                                }
-                                current_content_blocks.append(tool_block)
-
-                                # Send tool call events
-                                yield _send_content_block_start_event(
-                                    content_block_index,
-                                    "tool_use",
-                                    id=unique_tool_id,
-                                    name=tool_call["function"]["name"],
-                                )
-                                yield _send_tool_use_delta_events(
-                                    content_block_index,
-                                    unique_tool_id,
-                                    tool_call["function"]["name"],
-                                    tool_call["function"]["arguments"],
-                                )
-                                yield _send_content_block_stop_event(
-                                    content_block_index
-                                )
-                                content_block_index += 1
-
-                        # If we haven't started any blocks yet, start and immediately close a text block
-                        if (
-                            not text_block_started
-                            and not is_tool_use
-                            and not thinking_block_started
-                        ):
-                            text_block = {"type": "text", "text": ""}
-                            current_content_blocks.append(text_block)
-                            yield _send_content_block_start_event(
-                                content_block_index, "text"
-                            )
-                            yield _send_content_block_stop_event(content_block_index)
-                        elif text_block_started or is_tool_use:
-                            # Close the current content block
-                            yield _send_content_block_stop_event(content_block_index)
-
-                        # Determine stop reason
-                        stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
-                        logger.debug(f"Mapped stop_reason: {stop_reason}")
-
-                        # Calculate accurate output tokens from accumulated content
-                        final_output_tokens = _calculate_accurate_output_tokens(
-                            accumulated_text,
-                            accumulated_thinking,
-                            output_tokens,
-                            "Finish reason received",
-                        )
-
-                        # Send message delta with final content and stop reason
-                        yield _send_message_delta_event(
-                            stop_reason, final_output_tokens, current_content_blocks
-                        )
-
-                        # Send message stop
-                        yield _send_message_stop_event()
-                        yield _send_done_event()
-                        logger.debug("Streaming completed successfully")
-                        has_sent_stop_reason = True
-                        return
-
+                # Process chunk and yield all events
+                async for event in converter.process_chunk(chunk):
+                    yield event
+                    
+                # If response is finalized, break out of loop
+                if converter.has_sent_stop_reason:
+                    break
+                    
             except Exception as e:
-                # Log error but continue processing other chunks
                 logger.error(f"Error processing chunk: {str(e)}")
                 continue
-
-            # Validate content integrity after processing each chunk
-            if (
-                openai_chunks_received % 10 == 0
-            ):  # Every 10 chunks to avoid too much logging
-                validation = _validate_streaming_content_integrity(
-                    accumulated_text,
-                    accumulated_thinking,
-                    current_content_blocks,
-                    f"After chunk #{openai_chunks_received}",
-                )
-                if validation["has_issues"]:
-                    logger.warning(f"Content integrity issues: {validation}")
-                else:
-                    logger.debug(f"Content validation passed: {validation}")
-
-        # If we didn't get a finish reason, close any open blocks
-        if not has_sent_stop_reason:
+        
+        # Handle case where no finish_reason was received
+        if not converter.has_sent_stop_reason:
             logger.debug("No finish_reason received, closing stream manually")
-
-            # Close thinking block if it was started
-            if thinking_block_started and not thinking_block_closed:
-                # Parse function calls from thinking content before closing
-                cleaned_thinking, function_calls = parse_function_calls_from_thinking(
-                    accumulated_thinking
-                )
-
-                # Update thinking content with cleaned version (function calls removed)
-                if content_block_index < len(current_content_blocks):
-                    current_content_blocks[content_block_index]["thinking"] = (
-                        cleaned_thinking
-                    )
-
-                    # Generate signature for cleaned thinking content
-                    thinking_signature = generate_unique_id("thinking")
-                    current_content_blocks[content_block_index]["signature"] = (
-                        thinking_signature
-                    )
-
-                    # Send signature delta before closing thinking block
-                    yield _send_content_block_delta_event(
-                        content_block_index,
-                        "signature_delta",
-                        thinking_signature,
-                    )
-
-                yield _send_content_block_stop_event(content_block_index)
-                thinking_block_closed = True
-                content_block_index += 1
-
-                # Add function call blocks if any were found
-                for tool_call in function_calls:
-                    logger.debug(
-                        f"Adding tool call block: {tool_call['function']['name']}"
-                    )
-
-                    # Create tool use content block
-                    unique_tool_id = generate_unique_id("toolu")
-                    tool_block = {
-                        "type": "tool_use",
-                        "id": unique_tool_id,
-                        "name": tool_call["function"]["name"],
-                        "input": json.loads(tool_call["function"]["arguments"]),
-                    }
-                    current_content_blocks.append(tool_block)
-
-                    # Send tool call events
-                    yield _send_content_block_start_event(
-                        content_block_index,
-                        "tool_use",
-                        id=unique_tool_id,
-                        name=tool_call["function"]["name"],
-                    )
-                    yield _send_tool_use_delta_events(
-                        content_block_index,
-                        unique_tool_id,
-                        tool_call["function"]["name"],
-                        tool_call["function"]["arguments"],
-                    )
-                    yield _send_content_block_stop_event(content_block_index)
-                    content_block_index += 1
-
-            # If we haven't started any blocks yet, start and immediately close a text block
-            if (
-                not text_block_started
-                and not is_tool_use
-                and not thinking_block_started
-            ):
+            
+            # Close any open blocks
+            if converter.thinking_block_started and not converter.thinking_block_closed:
+                async for event in converter._close_thinking_block():
+                    yield event
+            
+            # If no blocks started, create empty text block
+            if (not converter.text_block_started and not converter.is_tool_use and not converter.thinking_block_started):
                 text_block = {"type": "text", "text": ""}
-                current_content_blocks.append(text_block)
-                yield _send_content_block_start_event(content_block_index, "text")
-                yield _send_content_block_stop_event(content_block_index)
-            elif text_block_started or is_tool_use:
-                # Close the current content block if there is one
-                yield _send_content_block_stop_event(content_block_index)
-
-            # Calculate accurate output tokens from accumulated content
+                converter.current_content_blocks.append(text_block)
+                yield converter._send_content_block_start_event("text")
+                yield converter._send_content_block_stop_event()
+            elif converter.text_block_started or converter.is_tool_use:
+                yield converter._send_content_block_stop_event()
+            
+            # Calculate final tokens and send completion events
             final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text,
-                accumulated_thinking,
-                output_tokens,
-                "No finish_reason",
+                converter.accumulated_text,
+                converter.accumulated_thinking,
+                converter.output_tokens,
+                "No finish reason received",
             )
-
-            # Send final events
-            stop_reason = "tool_use" if is_tool_use else "end_turn"
-            yield _send_message_delta_event(
-                stop_reason, final_output_tokens, current_content_blocks
-            )
-            yield _send_message_stop_event()
-            yield _send_done_event()
-            logger.debug("Streaming completed without finish_reason")
-
-    except Exception as e:
-        import traceback
-
-        error_traceback = traceback.format_exc()
-        error_message = (
-            f"Error in streaming: {str(e)}\n\nFull traceback:\n{error_traceback}"
-        )
-        logger.error(error_message)
-
-        # Send error events
-        logger.error(f"Streaming error: {error_message}")
-        yield _send_message_delta_event("error", 0, [])
-        yield _send_message_stop_event()
-        yield _send_done_event()
-
+            
+            stop_reason = "tool_use" if converter.is_tool_use else "end_turn"
+            yield converter._send_message_delta_event(stop_reason, final_output_tokens)
+            yield converter._send_message_stop_event()
+            yield converter._send_done_event()
+    
     finally:
-        if not has_sent_stop_reason:
-            # Close thinking block if it was started (fallback in finally block)
-            if thinking_block_started and not thinking_block_closed:
-                logger.debug("Finally block: closing unclosed thinking block")
-                # Parse function calls from thinking content before closing
-                cleaned_thinking, function_calls = parse_function_calls_from_thinking(
-                    accumulated_thinking
-                )
-
-                # Update thinking content with cleaned version (function calls removed)
-                if content_block_index < len(current_content_blocks):
-                    current_content_blocks[content_block_index]["thinking"] = (
-                        cleaned_thinking
-                    )
-
-                    # Generate signature for cleaned thinking content
-                    thinking_signature = generate_unique_id("thinking")
-                    current_content_blocks[content_block_index]["signature"] = (
-                        thinking_signature
-                    )
-
-                # Add function call blocks if any were found
-                for tool_call in function_calls:
-                    logger.debug(
-                        f"Finally block: Adding tool call block: {tool_call['function']['name']}"
-                    )
-
-                    # Create tool use content block
-                    unique_tool_id = generate_unique_id("toolu")
-                    tool_block = {
-                        "type": "tool_use",
-                        "id": unique_tool_id,
-                        "name": tool_call["function"]["name"],
-                        "input": json.loads(tool_call["function"]["arguments"]),
-                    }
-                    current_content_blocks.append(tool_block)
-
-                thinking_block_closed = True
-
-            # Calculate accurate output tokens from accumulated content
-            final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text, accumulated_thinking, output_tokens, "Finally block"
-            )
-
-            stop_reason = "tool_use" if is_tool_use else "end_turn"
-            yield _send_message_delta_event(
-                stop_reason, final_output_tokens, current_content_blocks
-            )
-            yield _send_message_stop_event()
-            yield _send_done_event()
-            logger.debug(
-                "Streaming finally: emitted missing message_delta + message_stop"
-            )
-        # Final content integrity validation
-        final_validation = _validate_streaming_content_integrity(
-            accumulated_text,
-            accumulated_thinking,
-            current_content_blocks,
-            "Final streaming validation",
-        )
-        if final_validation["has_issues"]:
-            logger.error(f"FINAL CONTENT INTEGRITY ISSUES: {final_validation}")
-        else:
-            logger.info(f"Final content validation passed: {final_validation}")
-
-        # DEBUG: Rebuild and log complete response for debugging streaming issues
+        # Final cleanup and logging
         try:
-            final_stop_reason = "tool_use" if is_tool_use else "end_turn"
+            # Calculate final tokens for tracking
             final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text,
-                accumulated_thinking,
-                output_tokens,
-                "Final debug output",
+                converter.accumulated_text,
+                converter.accumulated_thinking,
+                converter.output_tokens,
+                "Final streaming cleanup",
             )
-
-            complete_response = _rebuild_complete_response_from_streaming(
-                accumulated_text=accumulated_text,
-                accumulated_thinking=accumulated_thinking,
-                current_content_blocks=current_content_blocks,
-                output_tokens=final_output_tokens,
-                model=original_request.model,
-                stop_reason=final_stop_reason,
-            )
-
-            logger.info("=== STREAMING COMPLETE RESPONSE DEBUG ===")
-            logger.info(f"Original request model: {original_request.model}")
-            logger.info(f"Accumulated text length: {len(accumulated_text)}")
-            logger.info(f"Accumulated thinking length: {len(accumulated_thinking)}")
-            logger.info(f"Current content blocks count: {len(current_content_blocks)}")
-            logger.info(f"Is tool use: {is_tool_use}")
-            logger.info(f"Final stop reason: {final_stop_reason}")
-            logger.info("Complete rebuilt response:")
-            logger.info(json.dumps(complete_response, indent=2, ensure_ascii=False))
-            logger.info("=== END STREAMING RESPONSE DEBUG ===")
-
-        except Exception as debug_error:
-            logger.error(f"Error in streaming response debug: {debug_error}")
-
-        # Track usage statistics for streaming responses
-        try:
-            # Calculate final tokens for usage tracking
-            final_output_tokens = _calculate_accurate_output_tokens(
-                accumulated_text,
-                accumulated_thinking,
-                output_tokens,
-                "Streaming usage tracking",
-            )
-
-            # Create usage object from streaming data
-            # Note: For streaming, we typically don't have detailed usage from the API response
-            # so we create a basic usage object with calculated tokens
-            streaming_usage = ClaudeUsage(
-                input_tokens=input_tokens if input_tokens > 0 else 0,
-                output_tokens=final_output_tokens,
-                prompt_tokens=input_tokens if input_tokens > 0 else 0,
-                completion_tokens=final_output_tokens,
-                total_tokens=(input_tokens if input_tokens > 0 else 0)
-                + final_output_tokens,
-            )
-
-            # Add reasoning tokens if we detected thinking content
-            if accumulated_thinking:
-                if not streaming_usage.completion_tokens_details:
-                    streaming_usage.completion_tokens_details = (
-                        CompletionTokensDetails()
-                    )
-
-                reasoning_tokens = count_tokens_in_response(
-                    thinking_content=accumulated_thinking
+            
+            # Track usage statistics
+            if converter.accumulated_text or converter.accumulated_thinking:
+                input_tokens = count_tokens_in_messages(
+                    original_request.messages, original_request.model
                 )
-                streaming_usage.completion_tokens_details.reasoning_tokens = (
-                    reasoning_tokens
+                
+                add_session_stats(
+                    model=original_request.model,
+                    input_tokens=input_tokens,
+                    output_tokens=final_output_tokens,
+                    cost=calculate_cost(original_request.model, input_tokens, final_output_tokens),
+                    routed_model=routed_model,
                 )
-
-            # Update global usage statistics
-            model_name = routed_model if routed_model else original_request.model
-            update_global_usage_stats(streaming_usage, model_name, "Streaming")
-
-        except Exception as usage_error:
-            logger.error(f"Error tracking streaming usage: {usage_error}")
-
-
-def _validate_streaming_content_integrity(
-    accumulated_text: str,
-    accumulated_thinking: str,
-    current_content_blocks: list[dict[str, Any]],
-    context: str = "",
-) -> dict[str, Any]:
-    """
-    Validate that streaming content is being properly preserved.
-    Returns validation results for logging.
-    """
-    validation_results = {
-        "has_text_content": bool(accumulated_text.strip()),
-        "has_thinking_content": bool(accumulated_thinking.strip()),
-        "has_tool_calls": any(
-            block.get("type") == "tool_use" for block in current_content_blocks
-        ),
-        "total_content_blocks": len(current_content_blocks),
-        "text_length": len(accumulated_text),
-        "thinking_length": len(accumulated_thinking),
-        "context": context,
-    }
-
-    # Check for potential issues
-    issues = []
-    if (
-        not validation_results["has_text_content"]
-        and not validation_results["has_tool_calls"]
-    ):
-        issues.append("No text content or tool calls found")
-
-    if validation_results["total_content_blocks"] == 0:
-        issues.append("No content blocks created")
-
-    validation_results["issues"] = issues
-    validation_results["has_issues"] = len(issues) > 0
-
-    return validation_results
-
-
-def _rebuild_complete_response_from_streaming(
-    accumulated_text: str,
-    accumulated_thinking: str,
-    current_content_blocks: list[dict[str, Any]],
-    output_tokens: int,
-    model: str,
-    stop_reason: str = "end_turn",
-) -> dict[str, Any]:
-    """
-    Rebuild a complete Anthropic-format response from streaming data.
-    This helps debug streaming issues by showing what the final response looks like.
-    """
-    # Build content blocks array similar to non-streaming responses
-    content_blocks = []
-
-    # Add thinking block if present
-    if accumulated_thinking.strip():
-        content_blocks.append({"type": "thinking", "thinking": accumulated_thinking})
-
-    # Add text block if present
-    if accumulated_text.strip():
-        content_blocks.append({"type": "text", "text": accumulated_text})
-
-    # Add any tool use blocks from current_content_blocks
-    for block in current_content_blocks:
-        if block.get("type") == "tool_use":
-            content_blocks.append(block)
-
-    # Build complete response structure
-    complete_response = {
-        "id": f"msg_{uuid.uuid4().hex[:24]}",
-        "type": "message",
-        "role": "assistant",
-        "model": model,
-        "content": content_blocks,
-        "stop_reason": stop_reason,
-        "stop_sequence": None,
-        "usage": {"output_tokens": output_tokens},
-    }
-
-    return complete_response
-
-
-def debug_openai_message_sequence(messages: list[dict], context: str = "") -> None:
-    """
-    Debug and validate OpenAI message sequence for tool call ordering issues.
-
-    Prints detailed information about message sequence and detects common issues:
-    - Tool messages not immediately following their tool calls
-    - Missing tool_call_id references
-    - Invalid role sequences
-
-    Args:
-        messages: List of OpenAI format messages
-        context: Optional context string for logging
-    """
-    logger.debug(f"🔍 DEBUG MESSAGE SEQUENCE {context}")
-    logger.debug(f"📝 Total messages: {len(messages)}")
-
-    # Track tool calls and their resolution
-    pending_tool_calls = {}  # tool_call_id -> message_index
-
-    for i, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
-
-        # Basic message info
-        content_summary = ""
-        if "content" in msg:
-            content = msg["content"]
-            if isinstance(content, str):
-                content_summary = (
-                    f"'{content[:50]}...'" if len(content) > 50 else f"'{content}'"
+                
+                logger.info(
+                    f"STREAMING COMPLETE - Model: {original_request.model}, "
+                    f"Chunks: {converter.openai_chunks_received}, "
+                    f"Input tokens: {input_tokens}, Output tokens: {final_output_tokens}, "
+                    f"Text: {len(converter.accumulated_text)} chars, "
+                    f"Thinking: {len(converter.accumulated_thinking)} chars"
                 )
-            else:
-                content_summary = f"[{type(content).__name__}]"
-
-        logger.debug(f"  Message {i}: role={role}, content={content_summary}")
-
-        # Check for tool calls (assistant messages)
-        if role == "assistant" and "tool_calls" in msg:
-            tool_calls = msg.get("tool_calls", [])
-            logger.debug(f"    📞 Has {len(tool_calls)} tool calls:")
-            for j, tool_call in enumerate(tool_calls):
-                tool_id = tool_call.get("id", "NO_ID")
-                tool_name = tool_call.get("function", {}).get("name", "NO_NAME")
-                logger.debug(f"      Tool {j}: id={tool_id}, name={tool_name}")
-
-                # Track this tool call as pending
-                if tool_id != "NO_ID":
-                    pending_tool_calls[tool_id] = i
-                else:
-                    logger.error(f"❌ Tool call missing ID at message {i}")
-
-        # Check for tool results (tool messages)
-        elif role == "tool":
-            tool_call_id = msg.get("tool_call_id", "NO_ID")
-            logger.debug(f"    🔧 Tool result for: {tool_call_id}")
-
-            # Check for Gemini API tool result positioning (Gemini may have issues with tool results at odd indices)
-            if i % 2 == 1:  # Odd index
-                logger.warning(
-                    f"⚠️ GEMINI API WARNING: Tool result at odd index {i} (Gemini may reject requests with tool results at odd indices)"
-                )
-                logger.warning(
-                    f"    🔧 Tool message: tool_call_id={tool_call_id}"
-                )
-                logger.warning(
-                    "    💡 Note: This is only an issue for Gemini API, other models handle this fine"
-                )
-
-            if tool_call_id == "NO_ID":
-                logger.error(f"❌ Tool message missing tool_call_id at message {i}")
-            elif tool_call_id in pending_tool_calls:
-                # Check if this tool result comes immediately after its tool call
-                tool_call_msg_index = pending_tool_calls[tool_call_id]
-                expected_index = tool_call_msg_index + 1
-
-                if i == expected_index:
-                    logger.debug(
-                        f"    ✅ Tool result correctly follows tool call (msg {tool_call_msg_index} -> {i})"
-                    )
-                else:
-                    logger.error(
-                        f"❌ SEQUENCE ERROR: Tool result at msg {i} should follow tool call at msg {tool_call_msg_index} (expected at {expected_index})"
-                    )
-
-                    # Show what's between the tool call and tool result
-                    if i > expected_index:
-                        logger.error("    📋 Messages between tool call and result:")
-                        for gap_i in range(expected_index, i):
-                            gap_msg = messages[gap_i]
-                            gap_role = gap_msg.get("role", "unknown")
-                            logger.error(f"      Gap msg {gap_i}: role={gap_role}")
-
-                # Remove from pending
-                del pending_tool_calls[tool_call_id]
-            else:
-                logger.error(
-                    f"❌ Tool result references unknown tool_call_id: {tool_call_id}"
-                )
-
-        # Check for user messages interrupting tool flows
-        elif role == "user" and pending_tool_calls:
-            logger.error(
-                f"❌ SEQUENCE ERROR: User message at {i} interrupts pending tool calls: {list(pending_tool_calls.keys())}"
-            )
-
-    # Check for unresolved tool calls
-    if pending_tool_calls:
-        logger.warning(f"⚠️ UNRESOLVED TOOL CALLS: {pending_tool_calls} (tool_calls without corresponding tool_results)")
-
-    # Summary
-    if any("❌" in line for line in []):  # We'll check the actual logs
-        logger.error(f"🚨 MESSAGE SEQUENCE VALIDATION FAILED for {context}")
-        logger.error("📋 This will likely cause Google AI Studio/OpenAI API errors")
-    else:
-        logger.debug(f"✅ Message sequence appears valid for {context}")
+        
+        except Exception as cleanup_error:
+            logger.error(f"Error in streaming cleanup: {cleanup_error}")
 
 
 def _calculate_accurate_output_tokens(
@@ -2843,6 +2382,161 @@ def count_tokens_in_response(
     return int(total_tokens)
 
 
+def count_tokens_in_messages(messages: list, model: str) -> int:
+    """Count tokens in a list of messages using tiktoken."""
+    if enc is None:
+        logger.warning(
+            "TikToken encoder not available for message counting, using approximate count"
+        )
+        return 0
+    
+    total_tokens = 0
+    try:
+        for message in messages:
+            # Count tokens in message content
+            if hasattr(message, 'content'):
+                if isinstance(message.content, str):
+                    total_tokens += len(enc.encode(message.content))
+                elif isinstance(message.content, list):
+                    for content_block in message.content:
+                        if hasattr(content_block, 'text'):
+                            total_tokens += len(enc.encode(content_block.text))
+                        elif isinstance(content_block, dict) and 'text' in content_block:
+                            total_tokens += len(enc.encode(content_block['text']))
+    except Exception as e:
+        logger.error(f"Error counting tokens in messages: {e}")
+        return 0
+    
+    return int(total_tokens)
+
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Calculate cost based on model and token usage."""
+    # Simple cost calculation - this should be replaced with actual pricing
+    # For now, return 0 to avoid breaking functionality
+    try:
+        # Basic cost estimation (these would be actual prices in production)
+        input_cost_per_1k = 0.001  # $0.001 per 1k input tokens
+        output_cost_per_1k = 0.002  # $0.002 per 1k output tokens
+        
+        input_cost = (input_tokens / 1000) * input_cost_per_1k
+        output_cost = (output_tokens / 1000) * output_cost_per_1k
+        
+        return round(input_cost + output_cost, 6)
+    except Exception as e:
+        logger.error(f"Error calculating cost: {e}")
+        return 0.0
+
+
+def add_session_stats(model: str, input_tokens: int, output_tokens: int, cost: float, routed_model: str = None):
+    """Add usage statistics to session tracking."""
+    try:
+        # Use the existing global usage stats system
+        update_global_usage_stats(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost=cost,
+            routed_model=routed_model
+        )
+        logger.debug(f"Added session stats: {model}, input={input_tokens}, output={output_tokens}, cost=${cost}")
+    except Exception as e:
+        logger.error(f"Error adding session stats: {e}")
+
+
+def _compare_response_data(openai_response: ChatCompletion, claude_response: ClaudeMessagesResponse):
+    """Compare OpenAI response with converted Claude response and log differences."""
+    try:
+        # Extract OpenAI response data
+        openai_content_blocks = 0
+        openai_tool_calls = 0
+        openai_finish_reason = None
+        
+        if openai_response.choices and len(openai_response.choices) > 0:
+            choice = openai_response.choices[0]
+            if hasattr(choice, "message") and choice.message:
+                if hasattr(choice.message, "content") and choice.message.content:
+                    openai_content_blocks = 1  # OpenAI has single content field
+                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                    openai_tool_calls = len(choice.message.tool_calls)
+            if hasattr(choice, "finish_reason"):
+                openai_finish_reason = choice.finish_reason
+
+        # Count Claude response data
+        claude_content_blocks = (
+            len(claude_response.content) if claude_response.content else 0
+        )
+        claude_tool_use_blocks = (
+            sum(
+                1
+                for block in claude_response.content
+                if hasattr(block, "type") and block.type == "tool_use"
+            )
+            if claude_response.content
+            else 0
+        )
+        claude_stop_reason = claude_response.stop_reason
+
+        # Log comparison
+        logger.info("RESPONSE CONVERSION COMPARISON:")
+        logger.info(
+            f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}"
+        )
+        logger.info(
+            f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}"
+        )
+
+        # Check for mismatches and log errors
+        errors = []
+        if openai_tool_calls != claude_tool_use_blocks:
+            errors.append(
+                f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})"
+            )
+
+        if errors:
+            logger.error(f"RESPONSE CONVERSION ERRORS: {'; '.join(errors)}")
+        else:
+            logger.info("RESPONSE CONVERSION: Key counts match ✓")
+
+    except Exception as e:
+        logger.error(f"Error in response comparison: {e}")
+
+
+def _debug_openai_message_sequence(openai_messages: list, context: str):
+    """Debug and validate OpenAI message sequence for tool call ordering."""
+    try:
+        logger.debug(f"=== OpenAI MESSAGE SEQUENCE DEBUG: {context} ===")
+        logger.debug(f"Total messages: {len(openai_messages)}")
+        
+        for i, msg in enumerate(openai_messages):
+            role = msg.get("role", "unknown")
+            has_content = bool(msg.get("content"))
+            has_tool_calls = bool(msg.get("tool_calls"))
+            tool_call_id = msg.get("tool_call_id")
+            
+            logger.debug(f"  [{i}] Role: {role}, Content: {has_content}, Tool calls: {has_tool_calls}, Tool call ID: {tool_call_id}")
+        
+        # Validate tool call sequence
+        for i, msg in enumerate(openai_messages):
+            if msg.get("role") == "tool":
+                # Tool messages must follow assistant messages with tool_calls
+                if i == 0:
+                    logger.warning(f"Tool message at position {i} has no preceding assistant message")
+                    continue
+                
+                prev_msg = openai_messages[i-1]
+                if prev_msg.get("role") != "assistant" or not prev_msg.get("tool_calls"):
+                    logger.warning(f"Tool message at position {i} not preceded by assistant with tool_calls")
+        
+        logger.debug("=== END MESSAGE SEQUENCE DEBUG ===")
+        
+    except Exception as e:
+        logger.error(f"Error in message sequence debug: {e}")
+
+
 def _compare_request_data(
     claude_request: ClaudeMessagesRequest, openai_request: dict[str, Any]
 ) -> None:
@@ -2895,92 +2589,53 @@ def _compare_request_data(
                 f"Unexpected tools count difference: {claude_tools_count} -> {openai_tools_count}"
             )
 
-        # Tool choice should always match exactly
-        if claude_has_tool_choice != openai_has_tool_choice:
-            warnings.append(
-                f"Unexpected tool choice difference: {claude_has_tool_choice} -> {openai_has_tool_choice}"
-            )
-
-        # Message count differences are expected in certain cases:
-        # - System messages get extracted to separate OpenAI system message
-        # - Tool results get converted to separate tool role messages
-        # Only warn if message count differs in unexpected scenarios
-        if (
-            claude_messages_count != openai_messages_count
-            and not claude_has_system  # System message extraction expected
-            and not claude_has_tool_result  # Tool result splitting expected
-        ):
-            warnings.append(
-                f"Unexpected message count difference: {claude_messages_count} -> {openai_messages_count} (no system/tool_result expected)"
-            )
-
         if warnings:
-            logger.warning(f"CONVERSION ISSUES: {'; '.join(warnings)}")
+            logger.warning(f"REQUEST CONVERSION WARNINGS: {'; '.join(warnings)}")
         else:
-            logger.debug("CONVERSION: All transformations completed successfully ✓")
+            logger.debug("REQUEST CONVERSION: All counts match ✓")
 
     except Exception as e:
-        logger.error(f"Error during conversion validation: {e}")
+        logger.error(f"Error comparing request data: {e}")
 
 
-def _compare_response_data(
-    openai_response, claude_response: ClaudeMessagesResponse
-) -> None:
-    """Compare OpenAI response with converted Claude response and log differences."""
+def _compare_streaming_with_non_streaming(
+    original_request, accumulated_text, accumulated_thinking, current_content_blocks,
+    output_tokens, openai_chunks_received
+):
+    """Compare streaming results with what a non-streaming response would have looked like."""
     try:
-        # Count OpenAI response data
-        openai_content_blocks = 0
-        openai_tool_calls = 0
-        openai_finish_reason = None
-
-        if hasattr(openai_response, "choices") and openai_response.choices:
-            choice = openai_response.choices[0]
-            if hasattr(choice, "message") and choice.message:
-                if hasattr(choice.message, "content") and choice.message.content:
-                    openai_content_blocks = 1  # OpenAI has single content field
-                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
-                    openai_tool_calls = len(choice.message.tool_calls)
-            if hasattr(choice, "finish_reason"):
-                openai_finish_reason = choice.finish_reason
-
-        # Count Claude response data
-        claude_content_blocks = (
-            len(claude_response.content) if claude_response.content else 0
-        )
-        claude_tool_use_blocks = (
-            sum(
-                1
-                for block in claude_response.content
-                if hasattr(block, "type") and block.type == "tool_use"
-            )
-            if claude_response.content
-            else 0
-        )
-        claude_stop_reason = claude_response.stop_reason
-
-        # Log comparison
-        logger.info("RESPONSE CONVERSION COMPARISON:")
-        logger.info(
-            f"  OpenAI -> Claude Content Blocks: {openai_content_blocks} -> {claude_content_blocks}"
-        )
-        logger.info(
-            f"  OpenAI -> Claude Tool Calls/Use: {openai_tool_calls} -> {claude_tool_use_blocks}"
-        )
-        logger.info(
-            f"  OpenAI -> Claude Finish/Stop Reason: {openai_finish_reason} -> {claude_stop_reason}"
-        )
-
-        # Check for mismatches and log errors
+        # Log comparison data for debugging
+        logger.debug("=== STREAMING vs NON-STREAMING COMPARISON ===")
+        logger.debug(f"Chunks received: {openai_chunks_received}")
+        logger.debug(f"Content blocks created: {len(current_content_blocks)}")
+        
+        # Validate content structure
+        text_blocks = [b for b in current_content_blocks if b.get("type") == "text"]
+        tool_blocks = [b for b in current_content_blocks if b.get("type") == "tool_use"] 
+        thinking_blocks = [b for b in current_content_blocks if b.get("type") == "thinking"]
+        
         errors = []
+        
+        # Check for content consistency
+        if len(text_blocks) > 1:
+            errors.append(f"Multiple text blocks created: {len(text_blocks)}")
+        
+        if len(thinking_blocks) > 1:
+            errors.append(f"Multiple thinking blocks created: {len(thinking_blocks)}")
+        
+        # Check tool use consistency
+        openai_tool_calls = len(tool_blocks)
+        claude_tool_use_blocks = len([b for b in current_content_blocks if b.get("type") == "tool_use"])
+        
         if openai_tool_calls != claude_tool_use_blocks:
             errors.append(
                 f"Tool use count mismatch: OpenAI({openai_tool_calls}) != Claude({claude_tool_use_blocks})"
             )
-
+        
         if errors:
             logger.error(f"RESPONSE CONVERSION ERRORS: {'; '.join(errors)}")
         else:
             logger.info("RESPONSE CONVERSION: Key counts match ✓")
-
+    
     except Exception as e:
         logger.error(f"Error in response comparison: {e}")

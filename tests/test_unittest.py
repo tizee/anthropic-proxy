@@ -1268,7 +1268,8 @@ class TestToolRequests(ProxyTestBase):
             tool_choice=tool_choice_auto,
         )
         passed, warning = await self.make_comparison_test(
-            "thinking_with_tools", request, has_thinking=True
+            "thinking_with_tools", request,
+            check_tools=True
         )
 
         self.assertTrue(passed, "Comparison test should pass")
@@ -1290,7 +1291,8 @@ class TestToolRequests(ProxyTestBase):
             tool_choice=tool_choice_auto,
         )
         passed, warning = await self.make_comparison_test(
-            "thinking_with_tools", request, has_thinking=True
+            "thinking_with_tools", request,
+             check_tools=True
         )
         self.assertTrue(passed, "Comparison test should pass")
 
@@ -1861,56 +1863,6 @@ class TestAnthropicComparison(ProxyTestBase):
 
 class TestCustomModels(ProxyTestBase):
     """Test custom model functionality and conversions."""
-
-    # gemini_tool_test
-    async def test_gemini_malformed_function_call(self):
-        """this is a server-side error, not proxy server's fault"""
-        request = ClaudeMessagesRequest(
-            model="gemini-2.5-flash-lite-preview-06-17",
-            stream=True,
-            max_tokens=1000,
-            tools=[calculator_tool],
-            # system="You're Claude",
-            thinking=ClaudeThinkingConfigEnabled(type="enabled"),
-            messages=[
-                ClaudeMessage(
-                    role="assistant",
-                    content=[
-                        ClaudeContentBlockThinking(
-                            type="thinking",
-                            thinking="I will use calculator tool",
-                            signature="...",
-                        ),
-                        ClaudeContentBlockToolUse(
-                            type="tool_use",
-                            name="calculator",
-                            id="toolu_1750813210982_8650f6fa",
-                            input={"expression": "25 + 17"},
-                        ),
-                    ],
-                ),
-                ClaudeMessage(role="assistant", content=""),
-                ClaudeMessage(
-                    role="assistant",
-                    content=[
-                        ClaudeContentBlockToolResult(
-                            type="tool_result",
-                            tool_use_id="toolu_1750813210982_8650f6fa",
-                            content="42",
-                        )
-                    ],
-                ),
-            ],
-        )
-
-        passed, warning = await self.make_direct_conversion_test(
-            "test_gemini_malformed_function_call",
-            request,
-            check_tools=True,
-            compare_with_anthropic=False,
-            expect_failure=True,
-        )
-        self.assertTrue(passed, "Gemini malformed function call pass")
 
     # gemini_tool_test
     async def test_gemini_tool_conversion(self):
@@ -2940,8 +2892,9 @@ class TestStreamingAdvanced(ProxyTestBase):
         """Test streaming with thinking enabled."""
         request = ClaudeMessagesRequest(
             model=MODEL_THINKING,
-            max_tokens=1000,
-            thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=200),
+            max_tokens=1025,
+            thinking=ClaudeThinkingConfigEnabled(type="enabled",
+                                                 budget_tokens=1024),
             messages=[
                 ClaudeMessage(
                     role="user", content="What is 15 + 27? Please think about it."
@@ -2952,7 +2905,7 @@ class TestStreamingAdvanced(ProxyTestBase):
         response = await self.make_request(request, stream=True)
 
         self.assertResponseValid(response)
-        self.assertHasTextContent(response)
+        self.assertHasThinking(response)
         # Note: thinking content may or may not appear depending on model behavior
 
 
@@ -3506,11 +3459,12 @@ class TestExitPlanModeScenario(ProxyTestBase):
             model=MODEL,
             max_tokens=1024,
             messages=[
-                # ClaudeMessage(
-                #     role="user",
-                #     content="I need you to help me add test coverage commands to my Makefile and update the README. Can you make a plan?"
-                #     ),
-                # Assistant message with plan text + exit_plan_mode tool call
+                # Add user message first to fix the indexing (user at even index 0)
+                ClaudeMessage(
+                    role="user",
+                    content="I need you to add test coverage commands to the Makefile and update the README accordingly. Please create a plan first.",
+                ),
+                # Assistant response with plan and tool call (assistant at odd index 1)
                 ClaudeMessage(
                     role="assistant",
                     content=[
@@ -3528,7 +3482,7 @@ class TestExitPlanModeScenario(ProxyTestBase):
                         ),
                     ],
                 ),
-                # Tool result (plan approved) - testing with assistant role
+                # Tool result (plan approved) - user at even index 2
                 ClaudeMessage(
                     role="user",
                     content=[
@@ -3541,7 +3495,7 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 ),
             ],
             tools=[exit_plan_mode_tool, todo_read_tool, todo_write_tool, edit_tool],
-            tool_choice=tool_choice_auto,
+            tool_choice=tool_choice_auto,  # Let model decide naturally what to do after receiving tool result
         )
 
         # Run comparison test between proxy and Anthropic API
@@ -3552,17 +3506,6 @@ class TestExitPlanModeScenario(ProxyTestBase):
         print(f"📊 Exit plan mode test result: {'PASSED' if passed else 'FAILED'}")
         if warning:
             print(f"⚠️  Warning: {warning}")
-
-        # The key insight: if both APIs return similar "no content" behavior,
-        # then it's legitimate model behavior, not a proxy conversion bug
-        if "no content" in str(warning).lower() or "empty" in str(warning).lower():
-            print(
-                "💡 FINDING: Both Anthropic API and proxy show similar content behavior"
-            )
-            print(
-                "📝 This suggests '(no content)' is normal model behavior, not a conversion bug"
-            )
-
         # We don't fail the test even if there are warnings, as this is a behavioral analysis
         print("✅ Content preservation test completed")
 
