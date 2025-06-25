@@ -1,5 +1,14 @@
+dev:
+	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082
+
+dev-stable:
+	uv run uvicorn server:app --host 0.0.0.0 --port 8082
+
 run:
 	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
+
+run-stable:
+	uv run uvicorn server:app --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
 
 stop:
 		@if [ -f uvicorn.pid ]; then \
@@ -19,7 +28,7 @@ restart: stop
 	sleep 1
 	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
 
-.PHONY:stop restart run test test-unittest lint format
+.PHONY:stop restart run run-stable dev-stable test test-unittest lint format
 
 # Modern pytest framework (recommended)
 test-pytest:
@@ -68,7 +77,7 @@ test-conversion:
 test-hooks:
 	-uv run pytest tests/test_hooks.py -v
 
-lint:
+lint: format
 	uv run ruff check . --fix
 
 format:
@@ -77,7 +86,9 @@ format:
 # Help command
 help:
 	@echo "Available commands:"
-	@echo "  make run              - Start development server"
+	@echo "  make run              - Start development server with auto-reload"
+	@echo "  make run-stable       - Start server without auto-reload (for editing server code)"
+	@echo "  make dev-stable       - Start foreground server without auto-reload"
 	@echo "  make test             - Run pytest suite (recommended)"
 	@echo "  make test-pytest      - Run pytest suite"
 	@echo "  make test-unittest    - Run unittest suite"

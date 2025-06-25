@@ -10,7 +10,7 @@ import re
 import threading
 import uuid
 from datetime import datetime
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import tiktoken
 from openai import AsyncStream
@@ -65,17 +65,17 @@ except Exception as e:
     enc = None
 
 
-def generate_unique_tool_id() -> str:
+def generate_unique_id(prefix: str) -> str:
     """
-    Generate a unique tool use ID with timestamp and random suffix.
-    Format: toolu_<timestamp_ms>_<random_hex>
-    This ensures uniqueness across all tool use instances.
+    Generate a unique ID with specified prefix, timestamp and random suffix.
+    Format: <prefix>_<timestamp_ms>_<random_hex>
+    This ensures uniqueness across all instances.
     """
     import time
 
     timestamp_ms = int(time.time() * 1000)
     random_suffix = uuid.uuid4().hex[:8]
-    return f"toolu_{timestamp_ms}_{random_suffix}"
+    return f"{prefix}_{timestamp_ms}_{random_suffix}"
 
 
 # Constants for better maintainability
@@ -111,15 +111,6 @@ class Constants:
     DELTA_INPUT_JSON = "input_json_delta"
 
 
-def generate_thinking_signature(thinking_content: str) -> str:
-    """Generate a signature for thinking content using SHA-256 hash."""
-    if not thinking_content:
-        return ""
-
-    # Create SHA-256 hash of the thinking content
-    hash_object = hashlib.sha256(thinking_content.encode("utf-8"))
-    signature = hash_object.hexdigest()[: ModelDefaults.THINKING_SIGNATURE_LENGTH]
-    return f"thinking_{signature}"
 
 
 def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list]:
@@ -203,12 +194,12 @@ class ClaudeToolChoiceNone(BaseModel):
 
 
 # Union type for all tool choice options
-ClaudeToolChoice = Union[
-    ClaudeToolChoiceAuto,
-    ClaudeToolChoiceAny,
-    ClaudeToolChoiceTool,
-    ClaudeToolChoiceNone,
-]
+ClaudeToolChoice = (
+    ClaudeToolChoiceAuto
+    | ClaudeToolChoiceAny
+    | ClaudeToolChoiceTool
+    | ClaudeToolChoiceNone
+)
 
 
 class ClaudeContentBlockText(BaseModel):
@@ -434,11 +425,17 @@ class ClaudeMessage(BaseModel):
         Note:
             For Claude user message, there is no tool call and thinking content.
             tool call content block and thinking content is for assistant message only
+
+        doc link:
+            https://api-docs.deepseek.com/api/create-chat-completion
+            https://platform.openai.com/docs/api-reference/chat/create
+            https://github.com/anthropics/anthropic-sdk-python/blob/main/api.md
+            https://docs.anthropic.com/en/api/messages
         """
 
         # Debug: Pretty print Claude message before conversion
-        logger.debug("📨 Raw Claude Message")
-        logger.debug(f"   {self.model_dump_json(indent=2)}")
+        # logger.debug("📨 Raw Claude Message")
+        # logger.debug(f"   {self.model_dump_json(indent=2)}")
 
         openai_messages = []
 
@@ -576,6 +573,7 @@ class ClaudeMessagesRequest(BaseModel):
     thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | None = None
 
     @field_validator("thinking")
+    @classmethod
     def validate_thinking_field(cls, v):
         if isinstance(v, dict):
             if v.get("enabled") is True:
@@ -712,7 +710,7 @@ class ClaudeMessagesRequest(BaseModel):
             request_params["tool_choice"] = tool_choice
 
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
-        logger.debug(f"🔄 OpenAI request: {request_params}")
+        # logger.debug(f"🔄 OpenAI request: {request_params}")
 
         # DEBUG: Validate and debug OpenAI message sequence for tool call ordering
         debug_openai_message_sequence(
@@ -746,6 +744,7 @@ class ClaudeTokenCountRequest(BaseModel):
     tool_choice: dict[str, Any] | None = None
 
     @field_validator("thinking")
+    @classmethod
     def validate_thinking_field(cls, v):
         if isinstance(v, dict):
             if v.get("enabled") is True:
@@ -1141,9 +1140,7 @@ def convert_openai_response_to_anthropic(
         # Extract usage information
         usage = openai_response.usage
         if usage:
-            prompt_tokens = usage.prompt_tokens
-            completion_tokens = usage.completion_tokens
-
+            logger.debug(f"token usage from response: {usage}")
         logger.debug(f"Raw content extracted: {len(content_text)} characters")
         logger.debug(f"Tool calls from response: {tool_calls}")
 
@@ -1161,7 +1158,7 @@ def convert_openai_response_to_anthropic(
 
         # Add thinking content first if present (for Claude Code display)
         if thinking_content:
-            thinking_signature = generate_thinking_signature(thinking_content)
+            thinking_signature = generate_unique_id("thinking")
             content_blocks.append(
                 ClaudeContentBlockThinking(
                     type="thinking",
@@ -1188,7 +1185,7 @@ def convert_openai_response_to_anthropic(
                     content_blocks.append(
                         ClaudeContentBlockToolUse(
                             type=Constants.CONTENT_TOOL_USE,
-                            id=generate_unique_tool_id(),
+                            id=generate_unique_id("toolu"),
                             name=tool_call.function.name,
                             input=arguments_dict,
                         )
@@ -1932,7 +1929,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                         if isinstance(function, dict)
                                         else ""
                                     )
-                                    current_tool_id = generate_unique_tool_id()
+                                    current_tool_id = generate_unique_id("toolu")
                                 else:
                                     function = getattr(tool_call, "function", None)
                                     current_tool_name = (
@@ -1940,7 +1937,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                         if function
                                         else ""
                                     )
-                                    current_tool_id = generate_unique_tool_id()
+                                    current_tool_id = generate_unique_id("toolu")
 
                                 # Create tool use block
                                 tool_block = {
@@ -2056,8 +2053,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                 ] = cleaned_thinking
 
                                 # Generate signature for cleaned thinking content
-                                thinking_signature = generate_thinking_signature(
-                                    cleaned_thinking
+                                thinking_signature = generate_thinking_signature(cleaned_thinking
                                 )
                                 current_content_blocks[content_block_index][
                                     "signature"
@@ -2081,7 +2077,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                 )
 
                                 # Create tool use content block
-                                unique_tool_id = generate_unique_tool_id()
+                                unique_tool_id = generate_unique_id("toolu")
                                 tool_block = {
                                     "type": "tool_use",
                                     "id": unique_tool_id,
@@ -2209,7 +2205,7 @@ async def convert_openai_streaming_response_to_anthropic(
                                 )
 
                                 # Create tool use content block
-                                unique_tool_id = generate_unique_tool_id()
+                                unique_tool_id = generate_unique_id("toolu")
                                 tool_block = {
                                     "type": "tool_use",
                                     "id": unique_tool_id,
@@ -2316,7 +2312,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Generate signature for cleaned thinking content
-                    thinking_signature = generate_thinking_signature(cleaned_thinking)
+                    thinking_signature = generate_unique_id("thinking")
                     current_content_blocks[content_block_index]["signature"] = (
                         thinking_signature
                     )
@@ -2339,7 +2335,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Create tool use content block
-                    unique_tool_id = generate_unique_tool_id()
+                    unique_tool_id = generate_unique_id("toolu")
                     tool_block = {
                         "type": "tool_use",
                         "id": unique_tool_id,
@@ -2427,7 +2423,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Generate signature for cleaned thinking content
-                    thinking_signature = generate_thinking_signature(cleaned_thinking)
+                    thinking_signature = generate_unique_id("thinking")
                     current_content_blocks[content_block_index]["signature"] = (
                         thinking_signature
                     )
@@ -2439,7 +2435,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     )
 
                     # Create tool use content block
-                    unique_tool_id = generate_unique_tool_id()
+                    unique_tool_id = generate_unique_id("toolu")
                     tool_block = {
                         "type": "tool_use",
                         "id": unique_tool_id,
@@ -2690,16 +2686,16 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
             tool_call_id = msg.get("tool_call_id", "NO_ID")
             logger.debug(f"    🔧 Tool result for: {tool_call_id}")
 
-            # Check for Gemini API tool result positioning requirement (must be at even index)
+            # Check for Gemini API tool result positioning (Gemini may have issues with tool results at odd indices)
             if i % 2 == 1:  # Odd index
-                logger.error(
-                    f"❌ GEMINI API ERROR: Tool result at odd index {i} (Gemini requires tool results at even indices)"
+                logger.warning(
+                    f"⚠️ GEMINI API WARNING: Tool result at odd index {i} (Gemini may reject requests with tool results at odd indices)"
                 )
-                logger.error(
-                    f"    🔧 Complete tool message: {json.dumps(msg, indent=2)}"
+                logger.warning(
+                    f"    🔧 Tool message: tool_call_id={tool_call_id}"
                 )
-                logger.error(
-                    "    💡 Solution: Ensure tool results are at even indices (0, 2, 4, etc.)"
+                logger.warning(
+                    "    💡 Note: This is only an issue for Gemini API, other models handle this fine"
                 )
 
             if tool_call_id == "NO_ID":
@@ -2741,12 +2737,10 @@ def debug_openai_message_sequence(messages: list[dict], context: str = "") -> No
 
     # Check for unresolved tool calls
     if pending_tool_calls:
-        logger.error(f"❌ UNRESOLVED TOOL CALLS: {pending_tool_calls}")
+        logger.warning(f"⚠️ UNRESOLVED TOOL CALLS: {pending_tool_calls} (tool_calls without corresponding tool_results)")
 
     # Summary
-    errors_found = False
     if any("❌" in line for line in []):  # We'll check the actual logs
-        errors_found = True
         logger.error(f"🚨 MESSAGE SEQUENCE VALIDATION FAILED for {context}")
         logger.error("📋 This will likely cause Google AI Studio/OpenAI API errors")
     else:

@@ -130,7 +130,7 @@ logger.setLevel(getattr(logging, config.log_level.upper()))
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
 # File handler
-file_handler = logging.FileHandler(config.log_file_path, mode="w")
+file_handler = logging.FileHandler(config.log_file_path, mode="a")
 file_handler.setFormatter(formatter)
 
 # Stream handler
@@ -597,17 +597,19 @@ async def create_message(request: ClaudeMessagesRequest, raw_request: Request):
         # 2. Custom `thinking` and `thinkingConfig` in `extra_body`
         if model_config.get("extra_body"):
             # For doubao-style thinking
+            # see https://www.volcengine.com/docs/82379/1449737#fa3f44fa
             if model_config["extra_body"].get("thinking") and isinstance(
                 model_config["extra_body"].get("thinking"), dict
             ):
                 if has_thinking:
-                    openai_request["extra_body"]["thinking"] = {"type": "enabled"}
+                    openai_request["extra_body"]["thinking"] = {"type": "auto"}
                 else:
                     # Pass the thinking block but disable it.
                     openai_request["extra_body"]["thinking"] = {"type": "disabled"}
 
             # For Gemini-style thinking
             if "thinkingConfig" in model_config["extra_body"]:
+                # doc https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig#ThinkingConfig
                 # Start with the base thinking configuration from the model
                 thinking_params = model_config["extra_body"]["thinkingConfig"].copy()
                 if has_thinking:

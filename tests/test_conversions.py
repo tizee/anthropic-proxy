@@ -27,6 +27,8 @@ from models import (
     ClaudeThinkingConfigEnabled,
     ClaudeTool,
     convert_openai_response_to_anthropic,
+    generate_unique_id,
+    parse_function_calls_from_thinking,
 )
 
 
@@ -535,7 +537,6 @@ class TestAdvancedFeatures(unittest.TestCase):
         """Test function call parsing from thinking content."""
         print("🧪 Testing function call parsing from thinking content...")
 
-        from models import parse_function_calls_from_thinking
 
         # Test case 1: Thinking content with function call
         thinking_content = """I need to fix the test_conversions.py file to use Python's unittest framework properly. The previous MultiEdit attempt failed because the exact string pattern couldn't be found. Let me analyze the current state of the file and what needs to be done.
@@ -1370,9 +1371,8 @@ Let me create a new MultiEdit operation with these precise changes for the first
             )
 
         # Test 3: Verify that multiple calls to generate_unique_tool_id() produce different IDs
-        from models import generate_unique_tool_id
 
-        generated_ids = [generate_unique_tool_id() for _ in range(10)]
+        generated_ids = [generate_unique_id("toolu") for _ in range(10)]
         self.assertEqual(
             len(generated_ids),
             len(set(generated_ids)),
@@ -1483,56 +1483,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         print("✅ Tool use ID consistency in streaming test passed")
 
-    @staticmethod
-    def create_mock_openai_response(
-        content: str,
-        tool_calls=None,
-        reasoning_content: str = "",
-        finish_reason: str = "stop",
-    ):
-        """Run all conversion tests."""
-        print("🚀 Running Claude<->OpenAI conversion tests...\n")
-
-        tests = [
-            test_basic_claude_to_openai,
-            test_system_message_conversion,
-            test_tool_conversion,
-            test_openai_to_claude_basic,
-            test_openai_to_claude_with_tools,
-            test_reasoning_content_to_thinking,
-            test_mixed_content_message_conversion,
-            test_tool_result_message_ordering,
-            test_thinking_content_filtering,
-            test_content_block_methods,
-            test_complex_conversation_flow,
-            test_thinking_configuration,
-            test_message_extraction_methods,
-        ]
-
-        passed = 0
-        total = len(tests)
-
-        for test in tests:
-            try:
-                if test():
-                    passed += 1
-            except Exception as e:
-                print(f"❌ Test {test.__name__} failed: {e}")
-                import traceback
-
-                traceback.print_exc()
-
-        print(f"\n📊 Test Results: {passed}/{total} tests passed")
-
-        if passed == total:
-            print("🎉 All conversion tests passed!")
-            return True
-        else:
-            print(f"⚠️ {total - passed} conversion tests failed")
-            return False
 
 
 if __name__ == "__main__":
     unittest.main()
-    success = run_all_conversion_tests()
-    sys.exit(0 if success else 1)
