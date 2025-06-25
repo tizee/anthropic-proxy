@@ -42,6 +42,7 @@ from models import (
 # Load environment variables from .env file
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 
 class Config:
     """Universal proxy server configuration with intelligent routing"""
@@ -104,60 +105,20 @@ class Config:
             return self.custom_api_keys[provider]
         return None
 
+# --- CONFIGURATION & GLOBAL INITIALIZATION ---
+# These objects are created at the global scope so they can be imported by other scripts.
 
-# Initialize configuration
-try:
-    config = Config()
-    if config.log_level.lower() == "debug":
-        # DEBUG mode - OpenAI SDK uses standard logging
-        logging.getLogger("openai").setLevel(logging.DEBUG)
-        logging.getLogger("httpx").setLevel(logging.INFO)
-    # Ensure log directory exists
-    log_dir = os.path.dirname(config.log_file_path)
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir, exist_ok=True)
-    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
-    print(
-        f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
-    )
-except Exception as e:
-    print(f"🔴 Configuration Error: {e}")
-    sys.exit(1)
+config = Config()
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(getattr(logging, config.log_level.upper()))
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-
-# File handler
-file_handler = logging.FileHandler(config.log_file_path, mode="a")
-file_handler.setFormatter(formatter)
-
-# Stream handler
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
-# Add handlers to logger
-logger.addHandler(file_handler)
-logger.addHandler(stream_handler)
-
-logger = logging.getLogger(__name__)
-
-# Initialize tiktoken encoder for token counting
 try:
     enc = tiktoken.get_encoding("cl100k_base")
-    logger.debug("✅ TikToken encoder initialized")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize TikToken encoder: {e}")
+except Exception:
     enc = None
 
-# OpenAI SDK client configurations will be handled per-request
+app = FastAPI()
 
-# Configure uvicorn to be quieter
-logging.getLogger("uvicorn").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 
+# --- Reusable Functions (can be imported) ---
 
 # Create a filter to block any log messages containing specific strings
 class MessageFilter(logging.Filter):
@@ -177,12 +138,6 @@ class MessageFilter(logging.Filter):
                     return False
         return True
 
-
-# Apply the filter to the root logger to catch all messages
-root_logger = logging.getLogger()
-root_logger.addFilter(MessageFilter())
-
-
 # Custom formatter for model mapping logs
 class ColorizedFormatter(logging.Formatter):
     """Custom formatter to highlight model mappings"""
@@ -195,35 +150,13 @@ class ColorizedFormatter(logging.Formatter):
     BOLD = "\033[1m"
 
     def format(self, record):
-        if record.levelno == logging.debug and "MODEL MAPPING" in record.msg:
+        if record.levelno == logging.DEBUG and "MODEL MAPPING" in record.msg:
             # Apply colors and formatting to model mapping logs
             return f"{self.BOLD}{self.GREEN}{record.msg}{self.RESET}"
         return super().format(record)
 
-
-# Apply custom formatter to console handler
-for handler in logger.handlers:
-    if isinstance(handler, logging.StreamHandler):
-        handler.setFormatter(
-            ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
-
-app = FastAPI()
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Load plugins and custom models on startup."""
-    initialize_custom_models()
-    load_all_plugins()
-    logger.info(
-        f"Loaded {len(hook_manager.request_hooks)} request hooks and {len(hook_manager.response_hooks)} response hooks."
-    )
-
-
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
-
 
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
@@ -310,7 +243,6 @@ def load_custom_models(config_file=None):
     except Exception as e:
         logger.error(f"Error loading custom models: {str(e)}")
 
-
 def initialize_custom_models():
     """Initialize custom models and API keys. Called when running as main."""
     load_custom_models()
@@ -324,11 +256,6 @@ def initialize_custom_models():
                 config.add_custom_api_key(api_key_name, api_key_value)
             else:
                 logger.warning(f"Missing API key for {api_key_name}")
-
-
-# Custom models are initialized on app startup
-# initialize_custom_models()
-
 
 def create_openai_client(model_id: str) -> AsyncOpenAI:
     """Create OpenAI client for the given model and return client and request parameters."""
@@ -354,7 +281,6 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     client = AsyncOpenAI(**client_kwargs)
     logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}")
     return client
-
 
 def determine_model_by_router(
     original_model: str, token_count: int, has_thinking: bool
@@ -405,8 +331,21 @@ def determine_model_by_router(
     # should be model id
     return result
 
+# ... (all other functions like _extract_error_details, etc., remain here) ...
 
-# Models for Anthropic API requests
+
+
+# --- FASTAPI ENDPOINTS ---
+
+@app.on_event("startup")
+async def startup_event():
+    """Load plugins and custom models on startup."""
+    # Note: Logging is not configured at this point
+    # It will be configured only when running the script directly.
+    initialize_custom_models()
+    load_all_plugins()
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     # Get request details
@@ -716,7 +655,6 @@ async def create_message(raw_request: Request):
         status_code = error_details.get("status_code", 500)
         raise HTTPException(status_code=status_code, detail=error_message)
 
-
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(raw_request: Request):
     try:
@@ -944,12 +882,64 @@ def log_request_beautifully(
     sys.stdout.flush()
 
 
-if __name__ == "__main__":
-    import sys
+# --- SCRIPT ENTRYPOINT ---
 
+if __name__ == "__main__":
+    # This block is only executed when the script is run directly,
+    # not when it's imported by another script.
+
+    # 1. Setup Logging
+    try:
+        # Ensure log directory exists
+        log_dir = os.path.dirname(config.log_file_path)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+
+        # Configure the root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(getattr(logging, config.log_level.upper()))
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+        # Add file handler
+        file_handler = logging.FileHandler(config.log_file_path, mode="a")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+        # Add stream handler (for console output)
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
+        root_logger.addHandler(stream_handler)
+        
+        # Add custom message filter
+        root_logger.addFilter(MessageFilter())
+
+        # Configure uvicorn and other library logging to be less verbose
+        logging.getLogger("uvicorn").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+        if config.log_level.lower() == "debug":
+            logging.getLogger("openai").setLevel(logging.INFO)
+            logging.getLogger("httpx").setLevel(logging.INFO)
+
+        logger.info("✅ Logging configured for server.")
+
+    except Exception as e:
+        print(f"🔴 Error setting up logging: {e}")
+        sys.exit(1)
+
+    # 2. Print initial configuration status
+    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
+    print(
+        f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
+    )
+    if enc:
+        logger.info("✅ TikToken encoder initialized")
+    else:
+        logger.error("❌ Failed to initialize TikToken encoder")
+    
+    # 3. Run the Server
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
 
-    # Configure uvicorn to run with minimal logs
     uvicorn.run(app, host=config.host, port=config.port, log_level="info")
