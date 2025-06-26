@@ -2366,11 +2366,14 @@ class AnthropicStreamingConverter:
             logger.debug("🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool_use")
             yield self._send_content_block_stop_event()
             self.tool_block_closed = True  # Mark tool block as closed
+            self.content_block_index += 1  # Increment for next block
             
         # Handle text block completion
         elif self.text_block_started and not self.text_block_closed:
             logger.debug("🔚 PREPARE_FINALIZATION: Closing open text block")
             yield self._send_content_block_stop_event()
+            self.text_block_closed = True
+            self.content_block_index += 1
             
         # If we haven't started any blocks yet, start and immediately close a text block
         elif (
@@ -2383,6 +2386,9 @@ class AnthropicStreamingConverter:
             self.current_content_blocks.append(text_block)
             yield self._send_content_block_start_event("text")
             yield self._send_content_block_stop_event()
+            self.text_block_started = True
+            self.text_block_closed = True
+            self.content_block_index += 1
 
     async def _send_final_events(self):
         """Send final events after both finish_reason and usage have been processed."""
