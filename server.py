@@ -175,21 +175,12 @@ def setup_logging():
         # Add custom message filter
         root_logger.addFilter(MessageFilter())
 
-        # Configure uvicorn and other library logging to use our handlers
-        uvicorn_logger = logging.getLogger("uvicorn")
-        uvicorn_logger.setLevel(logging.INFO)
-        uvicorn_logger.addHandler(file_handler)
-        uvicorn_logger.addHandler(stream_handler)
-
+        # Configure uvicorn log levels. Handlers are inherited from the root logger.
+        logging.getLogger("uvicorn").setLevel(logging.INFO)
+        logging.getLogger("uvicorn.error").setLevel(logging.INFO)
         uvicorn_access_logger = logging.getLogger("uvicorn.access")
         uvicorn_access_logger.setLevel(logging.INFO)
-        uvicorn_access_logger.addHandler(file_handler)
-        uvicorn_access_logger.addHandler(stream_handler)
-
-        uvicorn_error_logger = logging.getLogger("uvicorn.error")
-        uvicorn_error_logger.setLevel(logging.INFO)
-        uvicorn_error_logger.addHandler(file_handler)
-        uvicorn_error_logger.addHandler(stream_handler)
+        uvicorn_access_logger.propagate = True  # Ensure access logs reach root handlers
         if config.log_level.lower() == "debug":
             logging.getLogger("openai").setLevel(logging.INFO)
             logging.getLogger("httpx").setLevel(logging.INFO)
@@ -951,4 +942,4 @@ if __name__ == "__main__":
         print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         sys.exit(0)
 
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info")
+    uvicorn.run(app, host=config.host, port=config.port, log_config=None)

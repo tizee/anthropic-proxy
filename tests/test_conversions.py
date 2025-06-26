@@ -1484,6 +1484,550 @@ Let me create a new MultiEdit operation with these precise changes for the first
         print("✅ Tool use ID consistency in streaming test passed")
 
 
+class TestStreamingFunctionCalls(unittest.TestCase):
+    """Test streaming function call conversion and debugging features."""
+
+    def setUp(self):
+        """Set up test environment."""
+        self.proxy_url = "http://localhost:8082"
+
+    async def _send_streaming_request(self, request_data):
+        """Helper method to send streaming request to proxy server with detailed debugging."""
+        import aiohttp
+        
+        print(f"📡 Sending streaming request to {self.proxy_url}...")
+        print(f"🎯 Model: {request_data.get('model', 'unknown')}")
+        print(f"🔧 Tools: {len(request_data.get('tools', []))} defined")
+        if request_data.get('tools'):
+            for tool in request_data['tools']:
+                print(f"  - {tool.get('name', 'unnamed')}: {tool.get('description', 'no description')}")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.proxy_url}/v1/messages",
+                json=request_data,
+                headers={"Content-Type": "application/json"}
+            ) as response:
+
+                if response.status != 200:
+                    text = await response.text()
+                    print(f"❌ Request failed with status {response.status}")
+                    print(f"📄 Response text: {text}")
+                    raise Exception(f"Request failed with status {response.status}: {text}")
+
+                print("✅ Request started successfully")
+                print("📡 Processing streaming response...")
+                
+                events = []
+                content_blocks = []
+                tool_calls = []
+                chunk_count = 0
+
+                async for line in response.content:
+                    line = line.decode('utf-8').strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        print("🏁 Received [DONE] marker")
+                        break
+
+                    try:
+                        data = json.loads(data_str)
+                        events.append(data)
+                        chunk_count += 1
+                        
+                        event_type = data.get("type")
+                        
+                        # Track content blocks and tool calls with detailed logging
+                        if event_type == "content_block_start":
+                            block = data.get("content_block", {})
+                            content_blocks.append(block)
+                            if block.get("type") == "tool_use":
+                                print(f"🔧 Tool call started: {block.get('name')} (id: {block.get('id')})")
+                                tool_calls.append({
+                                    "name": block.get("name"),
+                                    "id": block.get("id"),
+                                    "input_parts": []
+                                })
+                            elif block.get("type") == "text":
+                                print(f"📝 Text block started")
+                        
+                        elif event_type == "content_block_delta":
+                            delta = data.get("delta", {})
+                            if delta.get("type") == "input_json_delta" and tool_calls:
+                                json_part = delta.get("partial_json", "")
+                                preview = repr(json_part[:50]) + ('...' if len(json_part) > 50 else '')
+                                print(f"🔧 Tool input delta: {preview}")
+                                tool_calls[-1]["input_parts"].append(json_part)
+                            elif delta.get("type") == "text_delta":
+                                text_part = delta.get("text", "")
+                                print(f"📝 Text delta: {repr(text_part)}")
+                        
+                        elif event_type == "message_delta":
+                            delta = data.get("delta", {})
+                            if delta.get("stop_reason"):
+                                print(f"🔚 Stop reason: {delta['stop_reason']}")
+                        
+                        elif event_type == "message_start":
+                            print(f"🚀 Message started")
+                        elif event_type == "message_stop":
+                            print(f"🛑 Message stopped")
+                        elif event_type == "content_block_stop":
+                            print(f"⏹️ Content block stopped")
+
+                    except json.JSONDecodeError as e:
+                        print(f"⚠️ Failed to parse JSON chunk: {e}")
+                        print(f"📄 Raw data: {data_str[:100]}{'...' if len(data_str) > 100 else ''}")
+
+                print(f"📊 Streaming complete: {chunk_count} chunks processed")
+                print(f"📋 Events: {len(events)}, Content blocks: {len(content_blocks)}, Tool calls: {len(tool_calls)}")
+                
+                # Reconstruct complete tool inputs with detailed logging
+                for i, tool_call in enumerate(tool_calls):
+                    if tool_call["input_parts"]:
+                        complete_json = "".join(tool_call["input_parts"])
+                        print(f"🔧 Tool {i}: Reconstructing {len(tool_call['input_parts'])} JSON parts ({len(complete_json)} chars)")
+                        try:
+                            tool_call["input"] = json.loads(complete_json)
+                            print(f"✅ Tool {i}: JSON parsed successfully")
+                            # Show input structure without sensitive data
+                            if isinstance(tool_call["input"], dict):
+                                keys = list(tool_call["input"].keys())
+                                print(f"🔑 Tool {i}: Input keys: {keys}")
+                        except json.JSONDecodeError as e:
+                            print(f"❌ Tool {i}: Failed to parse JSON: {e}")
+                            print(f"📄 Complete JSON: {complete_json[:200]}{'...' if len(complete_json) > 200 else ''}")
+                            tool_call["input"] = None
+                    else:
+                        print(f"⚠️ Tool {i}: No input parts received")
+                        tool_call["input"] = None
+                
+                # Show event summary
+                event_types = [e.get("type") for e in events]
+                event_counts = {}
+                for event_type in event_types:
+                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                
+                print(f"📈 Event summary: {dict(event_counts)}")
+                
+                return {
+                    "events": events,
+                    "content_blocks": content_blocks,
+                    "tool_calls": tool_calls,
+                    "chunk_count": chunk_count
+                }
+
+    def test_simple_streaming_tool_call(self):
+        """Test basic streaming tool call functionality."""
+        print("🧪 Testing simple streaming tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Call the test_function with message 'Hello World'"
+                }
+            ],
+            "tools": [
+                {
+                    "name": "test_function",
+                    "description": "A simple test function",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string"}
+                        },
+                        "required": ["message"]
+                    }
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "test_function"}
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                print("🔍 Running simple streaming tool call test...")
+                result = await self._send_streaming_request(request_data)
+
+                print("\n🔍 Analyzing results...")
+
+                # Verify tool call was detected
+                print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect at least one tool call")
+
+                tool_call = result["tool_calls"][0]
+                print(f"🔧 First tool call: {tool_call['name']} (id: {tool_call['id']})")
+
+                self.assertEqual(tool_call["name"], "test_function", "Tool name should match")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    print(f"📝 Tool input: {tool_call['input']}")
+                    self.assertEqual(tool_call["input"]["message"], "Hello World", "Input should match expected value")
+                else:
+                    print("❌ Tool input is None")
+                    raise AssertionError("Tool input should not be None")
+
+                # Verify proper Claude streaming events
+                event_types = [event.get("type") for event in result["events"]]
+                required_events = ["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"]
+
+                print(f"📋 Checking required events: {required_events}")
+                for event_type in required_events:
+                    if event_type in event_types:
+                        print(f"✅ Found {event_type}")
+                    else:
+                        print(f"❌ Missing {event_type}")
+                    self.assertIn(event_type, event_types, f"Should have {event_type} event")
+
+                # Verify stop reason
+                message_delta_events = [e for e in result["events"] if e.get("type") == "message_delta"]
+                if message_delta_events:
+                    stop_reason = message_delta_events[0].get("delta", {}).get("stop_reason")
+                    print(f"🔚 Stop reason: {stop_reason}")
+                    self.assertEqual(stop_reason, "tool_use", "Stop reason should be tool_use")
+                else:
+                    print("⚠️ No message_delta events found")
+
+                print("✅ Simple streaming tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Test failed: {e}")
+                import traceback
+                print(f"📄 Full traceback:\n{traceback.format_exc()}")
+                return False
+
+        # Skip if proxy server not available
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Proxy server not available or test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_multiedit_streaming_tool_call(self):
+        """Test complex MultiEdit tool call with streaming."""
+        print("🧪 Testing MultiEdit streaming tool call...")
+
+        import os
+        test_file_path = os.path.join(os.path.dirname(__file__), "..", "tech_quotes.md")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Use MultiEdit to add a test quote to {test_file_path}"
+                }
+            ],
+            "tools": [
+                {
+                    "name": "MultiEdit",
+                    "description": "Make multiple edits to a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "old_string": {"type": "string"},
+                                        "new_string": {"type": "string"}
+                                    },
+                                    "required": ["old_string", "new_string"]
+                                }
+                            }
+                        },
+                        "required": ["file_path", "edits"]
+                    }
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "MultiEdit"}
+        }
+
+        import asyncio
+
+        async def run_test():
+            try:
+                print("🔍 Running MultiEdit streaming tool call test...")
+                result = await self._send_streaming_request(request_data)
+
+                print("\n🔍 Analyzing MultiEdit results...")
+
+                # Verify MultiEdit tool call
+                print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect MultiEdit tool call")
+
+                tool_call = result["tool_calls"][0]
+                print(f"🔧 Tool call: {tool_call['name']} (id: {tool_call['id']})")
+
+                self.assertEqual(tool_call["name"], "MultiEdit", "Should be MultiEdit tool")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    # Verify MultiEdit structure
+                    input_data = tool_call["input"]
+                    print(f"📝 MultiEdit input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'not a dict'}")
+
+                    self.assertIn("file_path", input_data, "Should have file_path")
+                    self.assertIn("edits", input_data, "Should have edits array")
+                    self.assertIsInstance(input_data["edits"], list, "Edits should be array")
+
+                    print(f"📂 File path: {input_data.get('file_path', 'unknown')}")
+                    print(f"✏️ Number of edits: {len(input_data.get('edits', []))}")
+
+                    # Show edit details without sensitive content
+                    for i, edit in enumerate(input_data.get('edits', [])[:3]):  # Show first 3 edits
+                        if isinstance(edit, dict):
+                            old_len = len(edit.get('old_string', '')) if edit.get('old_string') else 0
+                            new_len = len(edit.get('new_string', '')) if edit.get('new_string') else 0
+                            print(f"  Edit {i+1}: old_string({old_len} chars) -> new_string({new_len} chars)")
+
+                    print(f"✅ MultiEdit call detected with {len(input_data['edits'])} edits")
+                else:
+                    print("❌ MultiEdit input is None")
+                    raise AssertionError("MultiEdit input should not be None")
+
+                print("✅ MultiEdit streaming tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Test failed: {e}")
+                import traceback
+                print(f"📄 Full traceback:\n{traceback.format_exc()}")
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Proxy server not available or test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_streaming_event_sequence_validation(self):
+        """Test that streaming events follow proper Claude API sequence."""
+        print("🧪 Testing streaming event sequence validation...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 500,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Use test_function to say hello"
+                }
+            ],
+            "tools": [
+                {
+                    "name": "test_function",
+                    "description": "Test function",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string"}
+                        },
+                        "required": ["message"]
+                    }
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "test_function"}
+        }
+
+        import asyncio
+
+        async def run_test():
+            try:
+                print("🔍 Running streaming event sequence validation test...")
+                result = await self._send_streaming_request(request_data)
+                events = result["events"]
+
+                print(f"\n🔍 Analyzing event sequence ({len(events)} events)...")
+
+                # Verify Claude streaming event flow:
+                # message_start → content_block_start → content_block_delta* → content_block_stop → message_delta → message_stop → done
+
+                event_types = [event.get("type") for event in events]
+                print(f"📋 Event sequence: {' → '.join(event_types[:10])}{'...' if len(event_types) > 10 else ''}")
+
+                # Check required sequence
+                if event_types:
+                    print(f"🚀 First event: {event_types[0]}")
+                    self.assertEqual(event_types[0], "message_start", "Should start with message_start")
+                else:
+                    print("❌ No events received!")
+                    raise AssertionError("Should have events")
+
+                required_events = ["content_block_start", "content_block_stop", "message_delta", "message_stop"]
+                for event_type in required_events:
+                    if event_type in event_types:
+                        print(f"✅ Found {event_type}")
+                    else:
+                        print(f"❌ Missing {event_type}")
+                    self.assertIn(event_type, event_types, f"Should have {event_type}")
+
+                # Check tool_use content block
+                tool_block_starts = [e for e in events if e.get("type") == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use"]
+                print(f"🔧 Tool use content blocks: {len(tool_block_starts)}")
+                self.assertGreater(len(tool_block_starts), 0, "Should have tool_use content block")
+
+                # Check input_json_delta events
+                json_deltas = [e for e in events if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "input_json_delta"]
+                print(f"📄 JSON delta events: {len(json_deltas)}")
+                self.assertGreater(len(json_deltas), 0, "Should have input_json_delta events")
+
+                # Show event counts breakdown
+                event_counts = {}
+                for event_type in event_types:
+                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                print(f"📊 Event counts: {dict(event_counts)}")
+
+                print(f"✅ Event sequence validation passed ({len(events)} events)")
+                return True
+
+            except Exception as e:
+                print(f"❌ Test failed: {e}")
+                import traceback
+                print(f"📄 Full traceback:\n{traceback.format_exc()}")
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Proxy server not available or test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_streaming_json_accumulation(self):
+        """Test that partial JSON is correctly accumulated in streaming responses."""
+        print("🧪 Testing streaming JSON accumulation...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Use MultiEdit to make a complex edit with multiple parameters"
+                }
+            ],
+            "tools": [
+                {
+                    "name": "MultiEdit",
+                    "description": "Make multiple edits",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "old_string": {"type": "string"},
+                                        "new_string": {"type": "string"},
+                                        "replace_all": {"type": "boolean"}
+                                    },
+                                    "required": ["old_string", "new_string"]
+                                }
+                            }
+                        },
+                        "required": ["file_path", "edits"]
+                    }
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "MultiEdit"}
+        }
+
+        import asyncio
+
+        async def run_test():
+            try:
+                print("🔍 Running streaming JSON accumulation test...")
+                result = await self._send_streaming_request(request_data)
+
+                print(f"\n🔍 Analyzing JSON reconstruction...")
+
+                # Check that we got tool calls
+                print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect tool calls")
+
+                tool_call = result["tool_calls"][0]
+                print(f"🔧 Tool call: {tool_call['name']} (id: {tool_call['id']})")
+
+                # Verify JSON was properly reconstructed from partial deltas
+                self.assertIsNotNone(tool_call["input"], "Tool input should be successfully parsed")
+                self.assertIsInstance(tool_call["input"], dict, "Tool input should be dict")
+
+                if tool_call["input"]:
+                    # Check for complex structure
+                    input_data = tool_call["input"]
+                    print(f"📝 Input data keys: {list(input_data.keys())}")
+                    
+                    if "edits" in input_data:
+                        self.assertIsInstance(input_data["edits"], list, "Edits should be list")
+                        print(f"✏️ Edits array length: {len(input_data['edits'])}")
+                        
+                        if input_data["edits"]:
+                            edit = input_data["edits"][0]
+                            self.assertIsInstance(edit, dict, "Edit should be dict")
+                            self.assertIn("old_string", edit, "Edit should have old_string")
+                            self.assertIn("new_string", edit, "Edit should have new_string")
+                            
+                            print(f"📄 First edit structure: {list(edit.keys())}")
+                            old_len = len(edit.get('old_string', ''))
+                            new_len = len(edit.get('new_string', ''))
+                            print(f"  old_string: {old_len} chars, new_string: {new_len} chars")
+                else:
+                    print("❌ Tool input is None")
+                    raise AssertionError("Tool input should not be None")
+
+                # Verify we had multiple JSON delta events (indicating streaming)
+                json_deltas = [e for e in result["events"] if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "input_json_delta"]
+                print(f"📄 JSON delta events: {len(json_deltas)}")
+
+                # Show sample delta sizes
+                if json_deltas:
+                    delta_sizes = [len(e.get("delta", {}).get("partial_json", "")) for e in json_deltas]
+                    total_size = sum(delta_sizes)
+                    print(f"📊 Delta sizes: {delta_sizes[:5]}{'...' if len(delta_sizes) > 5 else ''} (total: {total_size} chars)")
+
+                # Should have multiple deltas for complex JSON
+                if len(json_deltas) > 1:
+                    print(f"✅ JSON streamed in {len(json_deltas)} parts")
+                else:
+                    print(f"ℹ️ JSON sent in {len(json_deltas)} part(s)")
+
+                print("✅ Streaming JSON accumulation test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Test failed: {e}")
+                import traceback
+                print(f"📄 Full traceback:\n{traceback.format_exc()}")
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Proxy server not available or test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

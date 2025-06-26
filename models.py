@@ -719,7 +719,6 @@ class ClaudeMessagesRequest(BaseModel):
                     else:
                         tool_params["function"]["parameters"] = tool.input_schema
                     openai_tools.append(tool_params)
-                    logger.debug(f"openai_tools append: {tool_params}")
 
         # Handle tool_choice with type validation
         # Claude tool_choice -> OpenAI tool_choice
@@ -2074,11 +2073,14 @@ class AnthropicStreamingConverter:
             )
 
     async def _handle_tool_call_delta(self, tool_call):
-        """Handle tool call delta."""
+        """Handle tool call delta with enhanced debugging."""
+        logger.debug(f"🔧 TOOL_CALL_DELTA: Processing tool call, is_tool_use={self.is_tool_use}")
+        
         # If we haven't started a tool yet, we need to handle any accumulated text first
         if not self.is_tool_use:
             # If we have accumulated text, send it first
             if self.accumulated_text and not self.text_block_started:
+                logger.debug(f"🔧 TOOL_CALL_DELTA: Handling accumulated text first ({len(self.accumulated_text)} chars)")
                 text_block = {"type": "text", "text": ""}
                 self.current_content_blocks.append(text_block)
                 yield self._send_content_block_start_event("text")
@@ -2100,6 +2102,7 @@ class AnthropicStreamingConverter:
                 self.content_block_index += 1
             elif self.text_block_started and not self.text_block_closed:
                 # Close any open text block
+                logger.debug("🔧 TOOL_CALL_DELTA: Closing open text block before starting tool")
                 yield self._send_content_block_stop_event()
                 self.text_block_closed = True
                 self.content_block_index += 1
@@ -2114,12 +2117,14 @@ class AnthropicStreamingConverter:
                     function.get("name", "") if isinstance(function, dict) else ""
                 )
                 self.current_tool_id = generate_unique_id("toolu")
+                logger.debug(f"🔧 TOOL_CALL_DELTA: Extracted tool from dict - name: {self.current_tool_name}, id: {self.current_tool_id}")
             else:
                 function = getattr(tool_call, "function", None)
                 self.current_tool_name = (
                     getattr(function, "name", "") if function else ""
                 )
                 self.current_tool_id = generate_unique_id("toolu")
+                logger.debug(f"🔧 TOOL_CALL_DELTA: Extracted tool from object - name: {self.current_tool_name}, id: {self.current_tool_id}")
 
             # Create tool use block
             tool_block = {
@@ -2129,6 +2134,7 @@ class AnthropicStreamingConverter:
                 "input": {},
             }
             self.current_content_blocks.append(tool_block)
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Created tool_use block at index {self.content_block_index}")
 
             yield self._send_content_block_start_event(
                 "tool_use", id=self.current_tool_id, name=self.current_tool_name
@@ -2148,20 +2154,31 @@ class AnthropicStreamingConverter:
 
         # If we have arguments, send them as a delta
         if arguments:
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Adding {len(arguments)} chars to tool_json")
             self.tool_json += arguments
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Total accumulated tool_json: {len(self.tool_json)} chars")
 
             # Try to parse JSON to update the content block
+            parse_success = False
             try:
                 parsed_json = json.loads(self.tool_json)
                 self.current_content_blocks[self.content_block_index]["input"] = (
                     parsed_json
                 )
-            except json.JSONDecodeError:
+                parse_success = True
+                logger.debug(f"🔧 TOOL_CALL_DELTA: Successfully parsed complete JSON: {json.dumps(parsed_json, indent=2)}")
+            except json.JSONDecodeError as e:
                 # JSON not yet complete, continue accumulating
-                pass
+                logger.debug(f"🔧 TOOL_CALL_DELTA: JSON not complete yet (pos {e.pos}), continuing to accumulate")
 
             # Send the delta
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Sending input_json_delta with {len(arguments)} chars")
             yield self._send_content_block_delta_event("input_json_delta", arguments)
+            
+            # Log current state for debugging
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Current state - parse_success={parse_success}, total_json_length={len(self.tool_json)}")
+        else:
+            logger.debug("🔧 TOOL_CALL_DELTA: No arguments in this delta")
 
     async def process_chunk(self, chunk: ChatCompletionChunk):
         """Process a single chunk from the OpenAI streaming response."""
@@ -2203,17 +2220,34 @@ class AnthropicStreamingConverter:
             logger.debug(f"🔄 CHUNK_DATA: id={chunk_data['chunk_id']}, finish_reason={chunk_data.get('finish_reason')}")
             logger.debug(f"🔄 CHUNK_CONTENT: content={chunk_data.get('delta_content')}, tool_calls={bool(chunk_data.get('delta_tool_calls'))}, reasoning={bool(chunk_data.get('delta_reasoning'))}")
 
+            # 🐛 DEBUG: Print complete chunk raw data for debugging early stop issue
+            if hasattr(chunk, 'model_dump'):
+                try:
+                    raw_chunk_data = chunk.model_dump()
+                    logger.debug(f"🔍 RAW_CHUNK_COMPLETE: {json.dumps(raw_chunk_data, indent=2)}")
+                except Exception as e:
+                    logger.debug(f"🔍 RAW_CHUNK_COMPLETE (fallback): {str(chunk)}")
+            else:
+                logger.debug(f"🔍 RAW_CHUNK_COMPLETE (str): {str(chunk)}")
+
+            # 🐛 DEBUG: Print detailed delta content
+            delta_content = chunk_data.get('delta_content')
+            if delta_content:
+                logger.debug(f"🔍 DELTA_CONTENT_DETAIL: {repr(delta_content)}")
+            else:
+                logger.debug(f"🔍 DELTA_CONTENT_DETAIL: None or empty")
+
             # Enhanced logging for non-Claude supported event types and errors
             if chunk_data.get('finish_reason'):
                 finish_reason = str(chunk_data['finish_reason'])
                 logger.debug(f"🚨 FINISH_REASON_DETECTED: {finish_reason} in chunk #{self.openai_chunks_received}")
-                
+
                 # Log non-Claude supported finish reasons
                 non_claude_reasons = ['MALFORMED_FUNCTION_CALL', 'MALFORMED', 'SAFETY', 'RECITATION', 'OTHER']
                 if any(reason in finish_reason.upper() for reason in non_claude_reasons):
                     logger.error(f"🚨 NON_CLAUDE_FINISH_REASON detected: {finish_reason} in chunk #{self.openai_chunks_received}")
                     logger.error(f"🚨 This finish_reason is not supported by Claude API and may cause conversion issues")
-                
+
                 # Special handling for MALFORMED_FUNCTION_CALL
                 if 'MALFORMED' in finish_reason.upper():
                     logger.error(f"🚨 MALFORMED_FUNCTION_CALL detected - this indicates tool call format issues")
@@ -2289,25 +2323,48 @@ class AnthropicStreamingConverter:
 
     async def _prepare_finalization(self, finish_reason: str):
         """Prepare for finalization by closing blocks, but don't send stop events yet."""
-        logger.debug(f"Preparing finalization for finish_reason: {finish_reason}")
+        logger.debug(f"🔚 PREPARE_FINALIZATION: finish_reason={finish_reason}")
+        logger.debug(f"🔚 PREPARE_FINALIZATION: Current state - text_started={self.text_block_started}, is_tool_use={self.is_tool_use}, thinking_started={self.thinking_block_started}")
 
         # Close thinking block if it was started
         if self.thinking_block_started and not self.thinking_block_closed:
+            logger.debug("🔚 PREPARE_FINALIZATION: Closing thinking block")
             async for event in self._close_thinking_block():
                 yield event
 
+        # Handle tool use completion
+        if self.is_tool_use:
+            logger.debug(f"🔚 PREPARE_FINALIZATION: Finalizing tool call - name={self.current_tool_name}, json_length={len(self.tool_json)}")
+            
+            # Ensure tool JSON is complete and parsed
+            if self.tool_json:
+                try:
+                    final_parsed_json = json.loads(self.tool_json)
+                    self.current_content_blocks[self.content_block_index]["input"] = final_parsed_json
+                    logger.debug(f"🔚 PREPARE_FINALIZATION: Final tool input: {json.dumps(final_parsed_json, indent=2)}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"🔚 PREPARE_FINALIZATION: Failed to parse final tool JSON: {e}")
+                    logger.error(f"🔚 PREPARE_FINALIZATION: Raw tool JSON: {self.tool_json}")
+            
+            # Close the tool use block
+            logger.debug("🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool_use")
+            yield self._send_content_block_stop_event()
+            
+        # Handle text block completion
+        elif self.text_block_started and not self.text_block_closed:
+            logger.debug("🔚 PREPARE_FINALIZATION: Closing open text block")
+            yield self._send_content_block_stop_event()
+            
         # If we haven't started any blocks yet, start and immediately close a text block
-        if (
+        elif (
             not self.text_block_started
             and not self.is_tool_use
             and not self.thinking_block_started
         ):
+            logger.debug("🔚 PREPARE_FINALIZATION: No blocks started, creating empty text block")
             text_block = {"type": "text", "text": ""}
             self.current_content_blocks.append(text_block)
             yield self._send_content_block_start_event("text")
-            yield self._send_content_block_stop_event()
-        elif self.text_block_started or self.is_tool_use:
-            # Close the current content block
             yield self._send_content_block_stop_event()
 
     async def _send_final_events(self):
@@ -2370,13 +2427,13 @@ async def convert_openai_streaming_response_to_anthropic(
             try:
                 # Debug log raw chunk info (commented out to reduce noise)
                 # logger.debug(f"🌊 RAW_CHUNK #{chunk_count}: id={chunk.id}, choices={len(chunk.choices)}, usage={chunk.usage is not None}")
-                
+
                 # Enhanced chunk debugging for MALFORMED_FUNCTION_CALL investigation
                 if chunk.choices and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
                     if hasattr(choice, 'finish_reason') and choice.finish_reason:
                         logger.debug(f"🌊 CHUNK_FINISH_REASON #{chunk_count}: {choice.finish_reason}")
-                    
+
                     # Log tool calls in chunks to help debug malformed function calls
                     if hasattr(choice, 'delta') and choice.delta and hasattr(choice.delta, 'tool_calls'):
                         tool_calls = choice.delta.tool_calls
@@ -2402,7 +2459,7 @@ async def convert_openai_streaming_response_to_anthropic(
                     if "event:" in event:
                         event_type = event.split("event:")[1].split("\n")[0].strip()
                         logger.debug(f"🌊 YIELDING_EVENT: {event_type}")
-                        
+
                         # Log event data for debugging
                         if "data:" in event:
                             try:
@@ -2421,7 +2478,7 @@ async def convert_openai_streaming_response_to_anthropic(
                         # Log non-standard events that might not be Claude-compatible
                         if event.strip() and not event.startswith("data: [DONE]"):
                             logger.debug(f"🌊 NON_STANDARD_EVENT: {event.strip()}")
-                    
+
                     yield event
 
                 # If response is finalized, break out of loop
@@ -2490,29 +2547,62 @@ async def convert_openai_streaming_response_to_anthropic(
                 "Final streaming cleanup",
             )
 
-            # Track usage statistics
-            if converter.accumulated_text or converter.accumulated_thinking:
-                input_tokens = count_tokens_in_messages(
-                    original_request.messages, original_request.model
-                )
+            # Track usage statistics and log completion summary (always, even for tool-only responses)
+            input_tokens = count_tokens_in_messages(
+                original_request.messages, original_request.model
+            )
 
-                add_session_stats(
-                    model=original_request.model,
-                    input_tokens=input_tokens,
-                    output_tokens=final_output_tokens,
-                    cost=calculate_cost(
-                        original_request.model, input_tokens, final_output_tokens
-                    ),
-                    routed_model=routed_model,
-                )
+            add_session_stats(
+                model=original_request.model,
+                input_tokens=input_tokens,
+                output_tokens=final_output_tokens,
+                cost=calculate_cost(
+                    original_request.model, input_tokens, final_output_tokens
+                ),
+                routed_model=routed_model,
+            )
 
-                logger.info(
-                    f"STREAMING COMPLETE - Model: {original_request.model}, "
-                    f"Chunks: {converter.openai_chunks_received}, "
-                    f"Input tokens: {input_tokens}, Output tokens: {final_output_tokens}, "
-                    f"Text: {len(converter.accumulated_text)} chars, "
-                    f"Thinking: {len(converter.accumulated_thinking)} chars"
-                )
+            # Log detailed streaming completion summary (always show content blocks and tool calls)
+            content_blocks_summary = []
+            tool_calls_summary = []
+            
+            for i, block in enumerate(converter.current_content_blocks):
+                if block.get("type") == "text":
+                    content_blocks_summary.append(f"Block {i}: text ({len(block.get('text', ''))} chars)")
+                elif block.get("type") == "tool_use":
+                    tool_name = block.get("name", "unknown")
+                    tool_id = block.get("id", "unknown")
+                    input_data = block.get("input", {})
+                    tool_calls_summary.append({
+                        "name": tool_name,
+                        "id": tool_id,
+                        "input": input_data
+                    })
+                    content_blocks_summary.append(f"Block {i}: tool_use (name={tool_name}, input_keys={list(input_data.keys())})")
+                elif block.get("type") == "thinking":
+                    content_blocks_summary.append(f"Block {i}: thinking ({len(block.get('thinking', ''))} chars)")
+            
+            logger.info(
+                f"STREAMING COMPLETE - Model: {original_request.model}, "
+                f"Chunks: {converter.openai_chunks_received}, "
+                f"Input tokens: {input_tokens}, Output tokens: {final_output_tokens}, "
+                f"Text: {len(converter.accumulated_text)} chars, "
+                f"Thinking: {len(converter.accumulated_thinking)} chars"
+            )
+            
+            # Log content blocks summary
+            logger.info(f"📋 STREAMING_CONTENT_BLOCKS: {len(converter.current_content_blocks)} blocks")
+            for block_summary in content_blocks_summary:
+                logger.info(f"📋   {block_summary}")
+            
+            # Log tool calls summary if any
+            if tool_calls_summary:
+                logger.info(f"🔧 STREAMING_TOOL_CALLS: {len(tool_calls_summary)} tool calls")
+                for tool_call in tool_calls_summary:
+                    logger.info(f"🔧   Tool: {tool_call['name']} (id: {tool_call['id']})")
+                    logger.info(f"🔧   Input: {json.dumps(tool_call['input'], indent=4)}")
+            else:
+                logger.info("🔧 STREAMING_TOOL_CALLS: No tool calls")
 
         except Exception as cleanup_error:
             logger.error(f"Error in streaming cleanup: {cleanup_error}")
@@ -2680,6 +2770,19 @@ def _debug_openai_message_sequence(openai_messages: list, context: str):
                 f"  [{i}] Role: {role}, Content: {has_content}, Tool calls: {has_tool_calls}, Tool call ID: {tool_call_id}"
             )
 
+            # 🐛 DEBUG: Print actual message content for debugging message merging issues
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                # Truncate very long content for readability
+                content_preview = content[:200] + "..." if len(content) > 200 else content
+                logger.debug(f"    🔍 Message Content Preview: {repr(content_preview)}")
+            elif isinstance(content, list):
+                logger.debug(f"    🔍 Message Content (list): {len(content)} items")
+                for j, item in enumerate(content[:3]):  # Show first 3 items only
+                    logger.debug(f"      [{j}] {type(item).__name__}: {repr(str(item)[:100])}")
+            else:
+                logger.debug(f"    🔍 Message Content: {type(content).__name__} = {repr(content)}")
+
         # Validate tool call sequence
         for i, msg in enumerate(openai_messages):
             if msg.get("role") == "tool":
@@ -2746,30 +2849,45 @@ def _compare_request_data(
         logger.debug(
             f"  🔧 Tool Results: {claude_has_tool_result} -> {openai_has_tool_msg}"
         )
-        
+
         # Log detailed request structures for debugging MALFORMED_FUNCTION_CALL issues
         logger.debug("📋 CLAUDE_REQUEST_STRUCTURE:")
         logger.debug(f"  Model: {claude_request.model}")
         logger.debug(f"  Max Tokens: {claude_request.max_tokens}")
         logger.debug(f"  Temperature: {claude_request.temperature}")
         logger.debug(f"  Stream: {claude_request.stream}")
-        
+
         # Log message types and roles to help debug tool call issues
         claude_msg_summary = []
         for i, msg in enumerate(claude_request.messages):
             if hasattr(msg, 'content') and isinstance(msg.content, list):
                 content_types = [type(c).__name__ for c in msg.content]
                 claude_msg_summary.append(f"{msg.role}[{','.join(content_types)}]")
+
+                # 🐛 DEBUG: Print actual Claude message content for debugging
+                logger.debug(f"  📨 Claude Message [{i}] Role: {msg.role}")
+                for j, content_block in enumerate(msg.content):
+                    if hasattr(content_block, 'text'):
+                        text_preview = content_block.text[:200] + "..." if len(content_block.text) > 200 else content_block.text
+                        logger.debug(f"    🔍 Content Block [{j}] Text: {repr(text_preview)}")
+                    elif hasattr(content_block, 'tool_result_id'):
+                        logger.debug(f"    🔧 Content Block [{j}] Tool Result ID: {content_block.tool_result_id}")
+                    else:
+                        logger.debug(f"    📝 Content Block [{j}] Type: {type(content_block).__name__}")
             else:
                 claude_msg_summary.append(f"{msg.role}[text]")
+                # 🐛 DEBUG: Print text content
+                if hasattr(msg, 'content') and isinstance(msg.content, str):
+                    content_preview = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                    logger.debug(f"  📨 Claude Message [{i}] Role: {msg.role}, Content: {repr(content_preview)}")
         logger.debug(f"  Messages: {' -> '.join(claude_msg_summary)}")
-        
+
         logger.debug("🔄 OPENAI_REQUEST_STRUCTURE:")
         logger.debug(f"  Model: {openai_request.get('model')}")
         logger.debug(f"  Max Tokens: {openai_request.get('max_tokens')}")
         logger.debug(f"  Temperature: {openai_request.get('temperature')}")
         logger.debug(f"  Stream: {openai_request.get('stream')}")
-        
+
         # Log OpenAI message structure to help debug function call format
         openai_msg_summary = []
         for msg in openai_request.get('messages', []):
@@ -2782,12 +2900,12 @@ def _compare_request_data(
             else:
                 openai_msg_summary.append(f"{role}[content]")
         logger.debug(f"  Messages: {' -> '.join(openai_msg_summary)}")
-        
+
         # Log tool definitions for debugging MALFORMED_FUNCTION_CALL
         if claude_tools_count > 0:
             logger.debug("🛠️ TOOLS_COMPARISON:")
             for i, tool in enumerate(claude_request.tools or []):
-                logger.debug(f"  Claude Tool {i+1}: {tool.name} ({tool.type})")
+                logger.debug(f"  Claude Tool {i+1}: {tool.name}")
             for i, tool in enumerate(openai_request.get('tools', [])):
                 func_info = tool.get('function', {})
                 logger.debug(f"  OpenAI Tool {i+1}: {func_info.get('name')} (function)")
