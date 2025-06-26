@@ -5,44 +5,20 @@ dev-stable:
 	uv run uvicorn server:app --host 0.0.0.0 --port 8082
 
 run:
-	uv run python server.py --reload > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
+	@echo "Starting server with auto-reload..."
+	@uv run python server.py --reload > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "python server.py" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
 run-stable:
-	uv run python server.py > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
+	@echo "Starting server..."
+	@uv run python server.py > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "python server.py" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
 stop:
-	@stopped=false; \
-	if [ -f uvicorn.pid ]; then \
-	  PID=$$(cat uvicorn.pid); \
-	  if ps -p $$PID > /dev/null; then \
-	    CMDLINE=$$(ps -p $$PID -o args=); \
-	    if echo "$$CMDLINE" | grep -q "python server.py"; then \
-	      echo "Stopping server (from 'run') with PID $$PID..."; \
-	      kill $$PID && rm uvicorn.pid; \
-	      echo "Server stopped."; \
-	      stopped=true; \
-	    fi; \
-	  else \
-	    echo "Stale PID file found. Removing it."; \
-	    rm uvicorn.pid; \
-	  fi; \
-	fi; \
-	if [ "$$stopped" = "false" ]; then \
-	  PIDS=$$(pgrep -f "uvicorn server:app"); \
-	  if [ -n "$$PIDS" ]; then \
-	    echo "Stopping server (from 'dev') with PID(s) $$PIDS..."; \
-	    kill $$PIDS; \
-	    echo "Server stopped."; \
-	    stopped=true; \
-	  fi; \
-	fi; \
-	if [ "$$stopped" = "false" ]; then \
-	  echo "No running server found."; \
-	fi
+	@./scripts/stop.sh
 
 restart: stop
-	sleep 1
-	uv run python server.py --reload > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
+	@sleep 1
+	@echo "Restarting server..."
+	@$(MAKE) -s run-stable
 
 .PHONY:stop restart run run-stable dev-stable test test-unittest lint format
 
@@ -100,7 +76,7 @@ lint: format
 	uv run ruff check . --fix
 
 format:
-	uv run ruff format .
+	uv run ruff format . tests/*.py performance_test.py
 
 # Help command
 help:
@@ -111,6 +87,11 @@ help:
 	@echo "  make test             - Run pytest suite (recommended)"
 	@echo "  make test-pytest      - Run pytest suite"
 	@echo "  make test-unittest    - Run unittest suite"
+	@echo "  make test-cov         - Generate terminal test coverage report"
+	@echo "  make test-cov-html    - Generate HTML test coverage report"
+	@echo "  make test-routing     - Run routing-specific tests"
+	@echo "  make test-hooks       - Run hook-specific tests"
+	@echo "  make test-conversion  - Run conversion-specific tests"
 	@echo ""
 	@echo "  make test-basic       - Quick basic request tests"
 	@echo "  make test-tools       - Tool usage tests"
@@ -119,8 +100,8 @@ help:
 	@echo "  make test-comparison  - Proxy vs Anthropic API comparison"
 	@echo "  make test-gemini      - Gemini model conversion test"
 	@echo "  make test-calculator  - Calculator tool test"
-	@echo "  make test-cov         - Generate terminal test coverage report"
-	@echo "  make test-cov-html  - Generate HTML test coverage report""
 	@echo "  make lint             - Check code quality with ruff"
 	@echo "  make format           - Format code with ruff"
+	@echo "  make stop             - Stop the running server"
+	@echo "  make restart          - Restart the server"
 	@echo "  make help             - Show this help message"

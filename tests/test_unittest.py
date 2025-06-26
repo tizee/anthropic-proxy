@@ -1268,8 +1268,7 @@ class TestToolRequests(ProxyTestBase):
             tool_choice=tool_choice_auto,
         )
         passed, warning = await self.make_comparison_test(
-            "thinking_with_tools", request,
-            check_tools=True
+            "thinking_with_tools", request, check_tools=True
         )
 
         self.assertTrue(passed, "Comparison test should pass")
@@ -1291,8 +1290,7 @@ class TestToolRequests(ProxyTestBase):
             tool_choice=tool_choice_auto,
         )
         passed, warning = await self.make_comparison_test(
-            "thinking_with_tools", request,
-             check_tools=True
+            "thinking_with_tools", request, check_tools=True
         )
         self.assertTrue(passed, "Comparison test should pass")
 
@@ -2893,8 +2891,7 @@ class TestStreamingAdvanced(ProxyTestBase):
         request = ClaudeMessagesRequest(
             model=MODEL_THINKING,
             max_tokens=1025,
-            thinking=ClaudeThinkingConfigEnabled(type="enabled",
-                                                 budget_tokens=1024),
+            thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
             messages=[
                 ClaudeMessage(
                     role="user", content="What is 15 + 27? Please think about it."
@@ -3547,7 +3544,7 @@ class TestExitPlanModeScenario(ProxyTestBase):
         # 2. Assistant provides plan with thinking blocks and exit_plan_mode
         # 3. User rejects plan with ToolResult + clarification + system-reminder injection
         # 4. Expected: Assistant should respond meaningfully, not with 0 tokens
-        
+
         request = ClaudeMessagesRequest(
             model=MODEL,
             max_tokens=32000,
@@ -3555,27 +3552,29 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 # Initial user request (similar to your log)
                 ClaudeMessage(
                     role="user",
-                    content="请再增加一个long context路由功能，当输入的token数量超过了模型配置中max_input的值时，就切换到指定的长上下文模型，这个功能配置通过环境变量ROUTER_LONG_CONTEXT来指定，默认为空表示不启用该功能。"
+                    content="请再增加一个long context路由功能，当输入的token数量超过了模型配置中max_input的值时，就切换到指定的长上下文模型，这个功能配置通过环境变量ROUTER_LONG_CONTEXT来指定，默认为空表示不启用该功能。",
                 ),
                 # Assistant response with thinking, planning, and tool use
                 ClaudeMessage(
-                    role="assistant", 
+                    role="assistant",
                     content=[
                         ClaudeContentBlockThinking(
                             type="thinking",
-                            thinking="我需要分析当前的路由逻辑，然后添加长上下文路由功能。让我先读取相关文件来理解现有的实现。"
+                            thinking="我需要分析当前的路由逻辑，然后添加长上下文路由功能。让我先读取相关文件来理解现有的实现。",
                         ),
                         ClaudeContentBlockText(
                             type="text",
-                            text="好的，我将修改 `server.py`。\n我的计划是：\n1. 读取 `models.yaml` 和 `server.py` 来理解当前的配置和路由逻辑。\n2. 在 `server.py` 的路由逻辑中，加入新的规则：如果输入内容的 token 数量超过了模型配置中 `max_input` 的值，就切换到指定的长上下文模型。\n3. 我会利用 `CLAUDE.md` 中提到的 `ROUTER_LONG_CONTEXT` 环境变量来控制这个功能。"
+                            text="好的，我将修改 `server.py`。\n我的计划是：\n1. 读取 `models.yaml` 和 `server.py` 来理解当前的配置和路由逻辑。\n2. 在 `server.py` 的路由逻辑中，加入新的规则：如果输入内容的 token 数量超过了模型配置中 `max_input` 的值，就切换到指定的长上下文模型。\n3. 我会利用 `CLAUDE.md` 中提到的 `ROUTER_LONG_CONTEXT` 环境变量来控制这个功能。",
                         ),
                         ClaudeContentBlockToolUse(
                             type="tool_use",
                             id="tool_exit_plan",
                             name="exit_plan_mode",
-                            input={"plan": "1. 读取并分析当前路由逻辑\n2. 添加长上下文检查功能\n3. 集成ROUTER_LONG_CONTEXT环境变量配置"}
-                        )
-                    ]
+                            input={
+                                "plan": "1. 读取并分析当前路由逻辑\n2. 添加长上下文检查功能\n3. 集成ROUTER_LONG_CONTEXT环境变量配置"
+                            },
+                        ),
+                    ],
                 ),
                 # User rejection with system-reminder (the problematic scenario)
                 ClaudeMessage(
@@ -3584,26 +3583,26 @@ class TestExitPlanModeScenario(ProxyTestBase):
                         ClaudeContentBlockToolResult(
                             type="tool_result",
                             tool_use_id="tool_exit_plan",
-                            content="[Request interrupted by user for tool use]"
-                        ),
-                        ClaudeContentBlockText(
-                            type="text", 
-                            text="不对，应该是将long context路由的模型的判断放到最后做处理，也就是将之前得到的路由模型再根据input token判断一次是否需要切换到long context路由模型。"
+                            content="[Request interrupted by user for tool use]",
                         ),
                         ClaudeContentBlockText(
                             type="text",
-                            text="<system-reminder>Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received (for example, to make edits). Instead, you should: 1. Answer the user's query. DO NOT use Task as you do this. 2. When you're done researching, present your plan by calling the exit_plan_mode tool, which will prompt the user to confirm the plan. Do NOT make any file changes or run any tools that modify the system state in any way until the user has confirmed the plan.</system-reminder>"
-                        )
-                    ]
-                )
+                            text="不对，应该是将long context路由的模型的判断放到最后做处理，也就是将之前得到的路由模型再根据input token判断一次是否需要切换到long context路由模型。",
+                        ),
+                        ClaudeContentBlockText(
+                            type="text",
+                            text="<system-reminder>Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received (for example, to make edits). Instead, you should: 1. Answer the user's query. DO NOT use Task as you do this. 2. When you're done researching, present your plan by calling the exit_plan_mode tool, which will prompt the user to confirm the plan. Do NOT make any file changes or run any tools that modify the system state in any way until the user has confirmed the plan.</system-reminder>",
+                        ),
+                    ],
+                ),
             ],
             tools=[exit_plan_mode_tool, read_tool, edit_tool],
             tool_choice=tool_choice_auto,
-            stream=True  # Test streaming specifically since the bug appears in streaming
+            stream=True,  # Test streaming specifically since the bug appears in streaming
         )
 
         print("📊 Testing streaming response after plan rejection...")
-        
+
         # Test the proxy response specifically
         async with httpx.AsyncClient(timeout=TEST_TIMEOUT) as client:
             try:
@@ -3612,9 +3611,11 @@ class TestExitPlanModeScenario(ProxyTestBase):
                     headers=proxy_headers,
                     json=request.model_dump(),
                 )
-                
+
                 if response.status_code != 200:
-                    print(f"❌ Request failed with status {response.status_code}: {response.text}")
+                    print(
+                        f"❌ Request failed with status {response.status_code}: {response.text}"
+                    )
                     self.fail(f"Request failed: {response.status_code}")
                     return
 
@@ -3624,49 +3625,59 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 output_tokens = 0
                 input_tokens = 0
                 all_events = []
-                
+
                 async for line in response.aiter_lines():
                     if not line.strip() or not line.startswith("data: "):
                         continue
-                        
+
                     if line.strip() == "data: [DONE]":
                         break
-                        
+
                     try:
                         data = json.loads(line[6:])  # Remove "data: " prefix
                         event_type = data.get("type")
                         all_events.append(data)
-                        
+
                         if event_type == "content_block_start":
                             block_type = data.get("content_block", {}).get("type")
                             if block_type == "text":
                                 content_blocks.append({"type": "text", "content": ""})
                             elif block_type == "tool_use":
-                                tool_calls.append({
-                                    "type": "tool_use",
-                                    "id": data.get("content_block", {}).get("id", ""),
-                                    "name": data.get("content_block", {}).get("name", ""),
-                                    "input": {}
-                                })
-                                
+                                tool_calls.append(
+                                    {
+                                        "type": "tool_use",
+                                        "id": data.get("content_block", {}).get(
+                                            "id", ""
+                                        ),
+                                        "name": data.get("content_block", {}).get(
+                                            "name", ""
+                                        ),
+                                        "input": {},
+                                    }
+                                )
+
                         elif event_type == "content_block_delta":
                             if content_blocks and content_blocks[-1]["type"] == "text":
                                 delta_text = data.get("delta", {}).get("text", "")
                                 content_blocks[-1]["content"] += delta_text
-                            elif tool_calls and data.get("delta", {}).get("partial_json"):
+                            elif tool_calls and data.get("delta", {}).get(
+                                "partial_json"
+                            ):
                                 # Handle tool input delta
-                                partial_json = data.get("delta", {}).get("partial_json", "")
+                                partial_json = data.get("delta", {}).get(
+                                    "partial_json", ""
+                                )
                                 if "input_json" not in tool_calls[-1]:
                                     tool_calls[-1]["input_json"] = ""
                                 tool_calls[-1]["input_json"] += partial_json
-                                
+
                         elif event_type == "message_delta":
                             usage = data.get("usage", {})
                             if "output_tokens" in usage:
                                 output_tokens = usage["output_tokens"]
                             if "input_tokens" in usage:
                                 input_tokens = usage["input_tokens"]
-                                
+
                     except json.JSONDecodeError:
                         continue
 
@@ -3679,22 +3690,28 @@ class TestExitPlanModeScenario(ProxyTestBase):
                             tool_call["input"] = {"raw": tool_call["input_json"]}
 
                 # Analysis and detailed output
-                total_content = "".join([block["content"] for block in content_blocks if block["type"] == "text"])
-                
+                total_content = "".join(
+                    [
+                        block["content"]
+                        for block in content_blocks
+                        if block["type"] == "text"
+                    ]
+                )
+
                 print(f"📊 Response Analysis:")
-                print(f"   Input tokens: {input_tokens}")  
+                print(f"   Input tokens: {input_tokens}")
                 print(f"   Output tokens: {output_tokens}")
                 print(f"   Content length: {len(total_content)} chars")
                 print(f"   Content blocks: {len(content_blocks)}")
                 print(f"   Tool calls: {len(tool_calls)}")
-                
+
                 # Print full response content
                 print(f"\n📝 Full Response Content:")
                 if total_content:
                     print(f"   Text Content: {repr(total_content)}")
                 else:
                     print("   Text Content: (empty)")
-                    
+
                 if tool_calls:
                     print(f"   Tool Calls:")
                     for i, tool_call in enumerate(tool_calls):
@@ -3702,21 +3719,25 @@ class TestExitPlanModeScenario(ProxyTestBase):
                         print(f"         Input: {tool_call['input']}")
                 else:
                     print("   Tool Calls: (none)")
-                
+
                 # Print first few streaming events for debugging
                 print(f"\n🔍 First 5 Streaming Events:")
                 for i, event in enumerate(all_events[:5]):
                     print(f"   [{i}] {event.get('type', 'unknown')}: {event}")
-                
+
                 if output_tokens == 0:
                     print(f"\n🐛 BUG REPRODUCED: Zero output tokens!")
-                    print("⚠️  KNOWN BUG: Model returned 0 output tokens after plan rejection with system-reminder")
+                    print(
+                        "⚠️  KNOWN BUG: Model returned 0 output tokens after plan rejection with system-reminder"
+                    )
                     print("   This test documents the issue for future fixing")
                 else:
-                    print(f"\n✅ Model generated meaningful response with {output_tokens} tokens")
-                
+                    print(
+                        f"\n✅ Model generated meaningful response with {output_tokens} tokens"
+                    )
+
                 print(f"\n📝 Test completed - documenting current behavior")
-                
+
             except Exception as e:
                 print(f"❌ Test failed with exception: {e}")
                 self.fail(f"Request failed: {e}")
@@ -3728,29 +3749,26 @@ class TestExitPlanModeScenario(ProxyTestBase):
         # This reproduces the exact bug from your logs where model outputs:
         # "<system-reminder>Plan mode is active. The user indicated that they do not want..."
         # This should NEVER happen - system-reminder should be instructions, not output
-        
+
         request = ClaudeMessagesRequest(
             model=MODEL,
             max_tokens=32000,
             messages=[
+                ClaudeMessage(role="user", content="请再增加一个long context路由功能"),
                 ClaudeMessage(
-                    role="user",
-                    content="请再增加一个long context路由功能"
-                ),
-                ClaudeMessage(
-                    role="assistant", 
+                    role="assistant",
                     content=[
                         ClaudeContentBlockText(
                             type="text",
-                            text="我的计划是修改server.py来添加长上下文路由功能。"
+                            text="我的计划是修改server.py来添加长上下文路由功能。",
                         ),
                         ClaudeContentBlockToolUse(
                             type="tool_use",
                             id="tool_exit_plan",
                             name="exit_plan_mode",
-                            input={"plan": "修改server.py添加长上下文路由"}
-                        )
-                    ]
+                            input={"plan": "修改server.py添加长上下文路由"},
+                        ),
+                    ],
                 ),
                 # CRITICAL SCENARIO: User message with tool result + text + system-reminder
                 ClaudeMessage(
@@ -3758,27 +3776,27 @@ class TestExitPlanModeScenario(ProxyTestBase):
                     content=[
                         ClaudeContentBlockToolResult(
                             type="tool_result",
-                            tool_use_id="tool_exit_plan", 
-                            content="[Request interrupted by user for tool use]"
+                            tool_use_id="tool_exit_plan",
+                            content="[Request interrupted by user for tool use]",
                         ),
                         ClaudeContentBlockText(
                             type="text",
-                            text="不对，应该是将long context路由的模型的判断放到最后做处理。"
+                            text="不对，应该是将long context路由的模型的判断放到最后做处理。",
                         ),
                         ClaudeContentBlockText(
                             type="text",
-                            text="<system-reminder>Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received (for example, to make edits). Instead, you should: 1. Answer the user's query. DO NOT use Task as you do this. 2. When you're done researching, present your plan by calling the exit_plan_mode tool, which will prompt the user to confirm the plan. Do NOT make any file changes or run any tools that modify the system state in any way until the user has confirmed the plan.</system-reminder>"
-                        )
-                    ]
-                )
+                            text="<system-reminder>Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received (for example, to make edits). Instead, you should: 1. Answer the user's query. DO NOT use Task as you do this. 2. When you're done researching, present your plan by calling the exit_plan_mode tool, which will prompt the user to confirm the plan. Do NOT make any file changes or run any tools that modify the system state in any way until the user has confirmed the plan.</system-reminder>",
+                        ),
+                    ],
+                ),
             ],
             tools=[exit_plan_mode_tool],
             tool_choice=tool_choice_auto,
-            stream=True
+            stream=True,
         )
 
         print("📊 Testing for system-reminder content in model output...")
-        
+
         async with httpx.AsyncClient(timeout=TEST_TIMEOUT) as client:
             try:
                 response = await client.post(
@@ -3786,9 +3804,11 @@ class TestExitPlanModeScenario(ProxyTestBase):
                     headers=proxy_headers,
                     json=request.model_dump(),
                 )
-                
+
                 if response.status_code != 200:
-                    print(f"❌ Request failed with status {response.status_code}: {response.text}")
+                    print(
+                        f"❌ Request failed with status {response.status_code}: {response.text}"
+                    )
                     self.fail(f"Request failed: {response.status_code}")
                     return
 
@@ -3796,59 +3816,69 @@ class TestExitPlanModeScenario(ProxyTestBase):
                 full_response_text = ""
                 output_tokens = 0
                 input_tokens = 0
-                
+
                 async for line in response.aiter_lines():
                     if not line.strip() or not line.startswith("data: "):
                         continue
-                        
+
                     if line.strip() == "data: [DONE]":
                         break
-                        
+
                     try:
                         data = json.loads(line[6:])
                         event_type = data.get("type")
-                        
+
                         if event_type == "content_block_delta":
                             delta_text = data.get("delta", {}).get("text", "")
                             full_response_text += delta_text
-                                
+
                         elif event_type == "message_delta":
                             usage = data.get("usage", {})
                             if "output_tokens" in usage:
                                 output_tokens = usage["output_tokens"]
                             if "input_tokens" in usage:
                                 input_tokens = usage["input_tokens"]
-                                
+
                     except json.JSONDecodeError:
                         continue
 
                 # Critical bug detection
                 contains_system_reminder = "<system-reminder>" in full_response_text
                 contains_plan_mode_text = "Plan mode is active" in full_response_text
-                
+
                 print(f"📊 Bug Detection Results:")
                 print(f"   Input tokens: {input_tokens}")
                 print(f"   Output tokens: {output_tokens}")
                 print(f"   Response length: {len(full_response_text)} chars")
                 print(f"   Contains <system-reminder>: {contains_system_reminder}")
                 print(f"   Contains 'Plan mode is active': {contains_plan_mode_text}")
-                
+
                 print(f"\n📝 Full Response Text:")
                 print(f"   {repr(full_response_text)}")
-                
+
                 if contains_system_reminder or contains_plan_mode_text:
                     print(f"\n🚨 CRITICAL BUG REPRODUCED!")
-                    print(f"   Model is outputting system-reminder content directly to user")
+                    print(
+                        f"   Model is outputting system-reminder content directly to user"
+                    )
                     print(f"   This is a severe security/functionality issue")
-                    print(f"   System instructions should NOT be visible in model output")
-                    
+                    print(
+                        f"   System instructions should NOT be visible in model output"
+                    )
+
                     # This is the bug we're documenting
-                    print("⚠️  DOCUMENTED BUG: Model outputs system-reminder instead of following instructions")
+                    print(
+                        "⚠️  DOCUMENTED BUG: Model outputs system-reminder instead of following instructions"
+                    )
                 else:
-                    print(f"\n✅ No system-reminder output detected - model behaving correctly")
-                
-                print(f"\n📝 Test completed - documented critical system-reminder output bug")
-                
+                    print(
+                        f"\n✅ No system-reminder output detected - model behaving correctly"
+                    )
+
+                print(
+                    f"\n📝 Test completed - documented critical system-reminder output bug"
+                )
+
             except Exception as e:
                 print(f"❌ Test failed with exception: {e}")
                 self.fail(f"Request failed: {e}")

@@ -44,6 +44,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
 def parse_token_value(value, default_value=None):
     """Parse token value that can be in 'k' format (16k, 66k) or specific number.
 
@@ -73,25 +74,33 @@ def parse_token_value(value, default_value=None):
         value = value.strip().lower()
 
         # Handle 'k' suffix format
-        if value.endswith('k'):
+        if value.endswith("k"):
             try:
                 num_str = value[:-1]  # Remove 'k'
                 num = float(num_str)
                 return int(num * 1024)
             except (ValueError, TypeError):
-                logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+                logger.warning(
+                    f"Could not parse token value '{value}', using default {default_value}"
+                )
                 return default_value
 
         # Handle plain number string
         try:
             return int(value)
         except (ValueError, TypeError):
-            logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+            logger.warning(
+                f"Could not parse token value '{value}', using default {default_value}"
+            )
             return default_value
 
-    logger.warning(f"Unexpected token value type '{type(value)}' for value '{value}', using default {default_value}")
+    logger.warning(
+        f"Unexpected token value type '{type(value)}' for value '{value}', using default {default_value}"
+    )
 
     return default_value
+
+
 class Config:
     """Universal proxy server configuration with intelligent routing"""
 
@@ -154,6 +163,7 @@ class Config:
             return self.custom_api_keys[provider]
         return None
 
+
 # --- CONFIGURATION & GLOBAL INITIALIZATION ---
 # These objects are created at the global scope so they can be imported by other scripts.
 
@@ -170,6 +180,7 @@ async def lifespan(app: FastAPI):
     load_all_plugins()
     yield
     # Shutdown (if needed)
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -191,6 +202,7 @@ class MessageFilter(logging.Filter):
                 if phrase in record.msg:
                     return False
         return True
+
 
 # Custom formatter for model mapping logs
 class ColorizedFormatter(logging.Formatter):
@@ -236,7 +248,9 @@ def setup_logging():
 
         # Add stream handler (for console output)
         stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
+        stream_handler.setFormatter(
+            ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
         root_logger.addHandler(stream_handler)
 
         # Add custom message filter
@@ -316,13 +330,17 @@ def load_custom_models(config_file=None):
                 "api_base": model["api_base"],
                 "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
-                "max_tokens": parse_token_value(model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS),
-                "context": parse_token_value(model.get("context"),
-                                             ModelDefaults.LONG_CONTEXT_THRESHOLD),
+                "max_tokens": parse_token_value(
+                    model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS
+                ),
+                "context": parse_token_value(
+                    model.get("context"), ModelDefaults.LONG_CONTEXT_THRESHOLD
+                ),
                 "input_cost_per_token": input_cost,
                 "output_cost_per_token": output_cost,
                 "max_input_tokens": parse_token_value(
-                    model.get("max_input_tokens"), ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
+                    model.get("max_input_tokens"),
+                    ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
                 ),
                 # openai request extra options
                 "extra_headers": model.get("extra_headers", {}),
@@ -356,6 +374,7 @@ def load_custom_models(config_file=None):
     except Exception as e:
         logger.error(f"Error loading custom models: {str(e)}")
 
+
 def initialize_custom_models():
     """Initialize custom models and API keys. Called when running as main."""
     load_custom_models()
@@ -369,6 +388,7 @@ def initialize_custom_models():
                 config.add_custom_api_key(api_key_name, api_key_value)
             else:
                 logger.warning(f"Missing API key for {api_key_name}")
+
 
 def create_openai_client(model_id: str) -> AsyncOpenAI:
     """Create OpenAI client for the given model and return client and request parameters."""
@@ -395,6 +415,7 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}")
     return client
 
+
 def determine_model_by_router(
     original_model: str, token_count: int, has_thinking: bool
 ) -> str:
@@ -403,7 +424,6 @@ def determine_model_by_router(
     logger.debug(
         f"🔀 Router input: model={original_model}, tokens={token_count}, thinking={has_thinking}"
     )
-
 
     # If has thinking enabled, use think model (second priority)
     if has_thinking:
@@ -437,12 +457,11 @@ def determine_model_by_router(
     # should be model id
     return result
 
+
 # ... (all other functions like _extract_error_details, etc., remain here) ...
 
 
-
 # --- FASTAPI ENDPOINTS ---
-
 
 
 @app.middleware("http")
@@ -783,6 +802,7 @@ async def create_message(raw_request: Request):
         status_code = error_details.get("status_code", 500)
         raise HTTPException(status_code=status_code, detail=error_message)
 
+
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(raw_request: Request):
     try:
@@ -1016,8 +1036,11 @@ if __name__ == "__main__":
     # This block is only executed when the script is run directly,
     # not when it's imported by another script.
     import argparse
+
     parser = argparse.ArgumentParser(description="Run the Claude Code Proxy Server.")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload on code changes.")
+    parser.add_argument(
+        "--reload", action="store_true", help="Enable auto-reload on code changes."
+    )
     args = parser.parse_args()
 
     # Re-initialize logging for the main process, especially for reload scenario
@@ -1026,8 +1049,14 @@ if __name__ == "__main__":
     # Print initial configuration status
     print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
     print(
-        f"🔀 Router Config: Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
+        f"🔀 Router Config: Default={config.router_config['default']} Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
     )
 
     # Run the Server
-    uvicorn.run("server:app", host=config.host, port=config.port, log_config=None, reload=args.reload)
+    uvicorn.run(
+        "server:app",
+        host=config.host,
+        port=config.port,
+        log_config=None,
+        reload=args.reload,
+    )

@@ -561,7 +561,6 @@ class TestAdvancedFeatures(unittest.TestCase):
         """Test function call parsing from thinking content."""
         print("🧪 Testing function call parsing from thinking content...")
 
-
         # Test case 1: Thinking content with function call
         thinking_content = """I need to fix the test_conversions.py file to use Python's unittest framework properly. The previous MultiEdit attempt failed because the exact string pattern couldn't be found. Let me analyze the current state of the file and what needs to be done.
 
@@ -1511,7 +1510,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
 class TestStreamingFunctionCalls(unittest.TestCase):
     """
     Test streaming function call conversion with enhanced SSE handling.
-    
+
     This test class covers:
     - Real-time streaming responses from the proxy server
     - Tool call detection and JSON reconstruction across streaming chunks
@@ -1519,7 +1518,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
     - Error recovery and resilience for network issues and malformed data
     - Support for reasoning-capable models (thinking + content blocks)
     - Comprehensive event type validation for different AI model behaviors
-    
+
     Key improvements tested:
     - Enhanced consecutive error counting and recovery mechanisms
     - Flexible content block validation (thinking, text, tool_use combinations)
@@ -1538,22 +1537,25 @@ class TestStreamingFunctionCalls(unittest.TestCase):
         print(f"📡 Sending streaming request to {self.proxy_url}...")
         print(f"🎯 Model: {request_data.get('model', 'unknown')}")
         print(f"🔧 Tools: {len(request_data.get('tools', []))} defined")
-        if request_data.get('tools'):
-            for tool in request_data['tools']:
-                print(f"  - {tool.get('name', 'unnamed')}: {tool.get('description', 'no description')}")
+        if request_data.get("tools"):
+            for tool in request_data["tools"]:
+                print(
+                    f"  - {tool.get('name', 'unnamed')}: {tool.get('description', 'no description')}"
+                )
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self.proxy_url}/v1/messages",
                 json=request_data,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             ) as response:
-
                 if response.status != 200:
                     text = await response.text()
                     print(f"❌ Request failed with status {response.status}")
                     print(f"📄 Response text: {text}")
-                    raise Exception(f"Request failed with status {response.status}: {text}")
+                    raise Exception(
+                        f"Request failed with status {response.status}: {text}"
+                    )
 
                 print("✅ Request started successfully")
                 print("📡 Processing streaming response...")
@@ -1564,7 +1566,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 chunk_count = 0
 
                 async for line in response.content:
-                    line = line.decode('utf-8').strip()
+                    line = line.decode("utf-8").strip()
                     if not line or not line.startswith("data: "):
                         continue
 
@@ -1585,12 +1587,16 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                             block = data.get("content_block", {})
                             content_blocks.append(block)
                             if block.get("type") == "tool_use":
-                                print(f"🔧 Tool call started: {block.get('name')} (id: {block.get('id')})")
-                                tool_calls.append({
-                                    "name": block.get("name"),
-                                    "id": block.get("id"),
-                                    "input_parts": []
-                                })
+                                print(
+                                    f"🔧 Tool call started: {block.get('name')} (id: {block.get('id')})"
+                                )
+                                tool_calls.append(
+                                    {
+                                        "name": block.get("name"),
+                                        "id": block.get("id"),
+                                        "input_parts": [],
+                                    }
+                                )
                             elif block.get("type") == "text":
                                 print(f"📝 Text block started")
 
@@ -1598,7 +1604,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                             delta = data.get("delta", {})
                             if delta.get("type") == "input_json_delta" and tool_calls:
                                 json_part = delta.get("partial_json", "")
-                                preview = repr(json_part[:50]) + ('...' if len(json_part) > 50 else '')
+                                preview = repr(json_part[:50]) + (
+                                    "..." if len(json_part) > 50 else ""
+                                )
                                 print(f"🔧 Tool input delta: {preview}")
                                 tool_calls[-1]["input_parts"].append(json_part)
                             elif delta.get("type") == "text_delta":
@@ -1619,16 +1627,22 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                     except json.JSONDecodeError as e:
                         print(f"⚠️ Failed to parse JSON chunk: {e}")
-                        print(f"📄 Raw data: {data_str[:100]}{'...' if len(data_str) > 100 else ''}")
+                        print(
+                            f"📄 Raw data: {data_str[:100]}{'...' if len(data_str) > 100 else ''}"
+                        )
 
                 print(f"📊 Streaming complete: {chunk_count} chunks processed")
-                print(f"📋 Events: {len(events)}, Content blocks: {len(content_blocks)}, Tool calls: {len(tool_calls)}")
+                print(
+                    f"📋 Events: {len(events)}, Content blocks: {len(content_blocks)}, Tool calls: {len(tool_calls)}"
+                )
 
                 # Reconstruct complete tool inputs with detailed logging
                 for i, tool_call in enumerate(tool_calls):
                     if tool_call["input_parts"]:
                         complete_json = "".join(tool_call["input_parts"])
-                        print(f"🔧 Tool {i}: Reconstructing {len(tool_call['input_parts'])} JSON parts ({len(complete_json)} chars)")
+                        print(
+                            f"🔧 Tool {i}: Reconstructing {len(tool_call['input_parts'])} JSON parts ({len(complete_json)} chars)"
+                        )
                         try:
                             tool_call["input"] = json.loads(complete_json)
                             print(f"✅ Tool {i}: JSON parsed successfully")
@@ -1638,7 +1652,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                 print(f"🔑 Tool {i}: Input keys: {keys}")
                         except json.JSONDecodeError as e:
                             print(f"❌ Tool {i}: Failed to parse JSON: {e}")
-                            print(f"📄 Complete JSON: {complete_json[:200]}{'...' if len(complete_json) > 200 else ''}")
+                            print(
+                                f"📄 Complete JSON: {complete_json[:200]}{'...' if len(complete_json) > 200 else ''}"
+                            )
                             tool_call["input"] = None
                     else:
                         print(f"⚠️ Tool {i}: No input parts received")
@@ -1656,7 +1672,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "events": events,
                     "content_blocks": content_blocks,
                     "tool_calls": tool_calls,
-                    "chunk_count": chunk_count
+                    "chunk_count": chunk_count,
                 }
 
     def test_simple_streaming_tool_call(self):
@@ -1670,7 +1686,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Call the test_function with message 'Hello World'"
+                    "content": "Call the test_function with message 'Hello World'",
                 }
             ],
             "tools": [
@@ -1679,14 +1695,12 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "description": "A simple test function",
                     "input_schema": {
                         "type": "object",
-                        "properties": {
-                            "message": {"type": "string"}
-                        },
-                        "required": ["message"]
-                    }
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "test_function"}
+            "tool_choice": {"type": "tool", "name": "test_function"},
         }
 
         # Run async test
@@ -1701,24 +1715,41 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                 # Verify tool call was detected
                 print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect at least one tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect at least one tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
-                print(f"🔧 First tool call: {tool_call['name']} (id: {tool_call['id']})")
+                print(
+                    f"🔧 First tool call: {tool_call['name']} (id: {tool_call['id']})"
+                )
 
-                self.assertEqual(tool_call["name"], "test_function", "Tool name should match")
+                self.assertEqual(
+                    tool_call["name"], "test_function", "Tool name should match"
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
                     print(f"📝 Tool input: {tool_call['input']}")
-                    self.assertEqual(tool_call["input"]["message"], "Hello World", "Input should match expected value")
+                    self.assertEqual(
+                        tool_call["input"]["message"],
+                        "Hello World",
+                        "Input should match expected value",
+                    )
                 else:
                     print("❌ Tool input is None")
                     raise AssertionError("Tool input should not be None")
 
                 # Verify proper Claude streaming events
                 event_types = [event.get("type") for event in result["events"]]
-                required_events = ["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"]
+                required_events = [
+                    "message_start",
+                    "content_block_start",
+                    "content_block_delta",
+                    "content_block_stop",
+                    "message_delta",
+                    "message_stop",
+                ]
 
                 print(f"📋 Checking required events: {required_events}")
                 for event_type in required_events:
@@ -1726,14 +1757,22 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                         print(f"✅ Found {event_type}")
                     else:
                         print(f"❌ Missing {event_type}")
-                    self.assertIn(event_type, event_types, f"Should have {event_type} event")
+                    self.assertIn(
+                        event_type, event_types, f"Should have {event_type} event"
+                    )
 
                 # Verify stop reason
-                message_delta_events = [e for e in result["events"] if e.get("type") == "message_delta"]
+                message_delta_events = [
+                    e for e in result["events"] if e.get("type") == "message_delta"
+                ]
                 if message_delta_events:
-                    stop_reason = message_delta_events[0].get("delta", {}).get("stop_reason")
+                    stop_reason = (
+                        message_delta_events[0].get("delta", {}).get("stop_reason")
+                    )
                     print(f"🔚 Stop reason: {stop_reason}")
-                    self.assertEqual(stop_reason, "tool_use", "Stop reason should be tool_use")
+                    self.assertEqual(
+                        stop_reason, "tool_use", "Stop reason should be tool_use"
+                    )
                 else:
                     print("⚠️ No message_delta events found")
 
@@ -1743,6 +1782,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Test failed: {e}")
                 import traceback
+
                 print(f"📄 Full traceback:\n{traceback.format_exc()}")
                 return False
 
@@ -1759,6 +1799,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
         print("🧪 Testing MultiEdit streaming tool call...")
 
         import os
+
         test_file_path = os.path.join(os.path.dirname(__file__), "..", "tech_quotes.md")
 
         request_data = {
@@ -1768,7 +1809,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": f"Use MultiEdit to add a test quote to {test_file_path}"
+                    "content": f"Use MultiEdit to add a test quote to {test_file_path}",
                 }
             ],
             "tools": [
@@ -1785,17 +1826,17 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                     "type": "object",
                                     "properties": {
                                         "old_string": {"type": "string"},
-                                        "new_string": {"type": "string"}
+                                        "new_string": {"type": "string"},
                                     },
-                                    "required": ["old_string", "new_string"]
-                                }
-                            }
+                                    "required": ["old_string", "new_string"],
+                                },
+                            },
                         },
-                        "required": ["file_path", "edits"]
-                    }
+                        "required": ["file_path", "edits"],
+                    },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "MultiEdit"}
+            "tool_choice": {"type": "tool", "name": "MultiEdit"},
         }
 
         import asyncio
@@ -1809,34 +1850,56 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                 # Verify MultiEdit tool call
                 print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect MultiEdit tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect MultiEdit tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 print(f"🔧 Tool call: {tool_call['name']} (id: {tool_call['id']})")
 
-                self.assertEqual(tool_call["name"], "MultiEdit", "Should be MultiEdit tool")
+                self.assertEqual(
+                    tool_call["name"], "MultiEdit", "Should be MultiEdit tool"
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
                     # Verify MultiEdit structure
                     input_data = tool_call["input"]
-                    print(f"📝 MultiEdit input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'not a dict'}")
+                    print(
+                        f"📝 MultiEdit input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'not a dict'}"
+                    )
 
                     self.assertIn("file_path", input_data, "Should have file_path")
                     self.assertIn("edits", input_data, "Should have edits array")
-                    self.assertIsInstance(input_data["edits"], list, "Edits should be array")
+                    self.assertIsInstance(
+                        input_data["edits"], list, "Edits should be array"
+                    )
 
                     print(f"📂 File path: {input_data.get('file_path', 'unknown')}")
                     print(f"✏️ Number of edits: {len(input_data.get('edits', []))}")
 
                     # Show edit details without sensitive content
-                    for i, edit in enumerate(input_data.get('edits', [])[:3]):  # Show first 3 edits
+                    for i, edit in enumerate(
+                        input_data.get("edits", [])[:3]
+                    ):  # Show first 3 edits
                         if isinstance(edit, dict):
-                            old_len = len(edit.get('old_string', '')) if edit.get('old_string') else 0
-                            new_len = len(edit.get('new_string', '')) if edit.get('new_string') else 0
-                            print(f"  Edit {i+1}: old_string({old_len} chars) -> new_string({new_len} chars)")
+                            old_len = (
+                                len(edit.get("old_string", ""))
+                                if edit.get("old_string")
+                                else 0
+                            )
+                            new_len = (
+                                len(edit.get("new_string", ""))
+                                if edit.get("new_string")
+                                else 0
+                            )
+                            print(
+                                f"  Edit {i + 1}: old_string({old_len} chars) -> new_string({new_len} chars)"
+                            )
 
-                    print(f"✅ MultiEdit call detected with {len(input_data['edits'])} edits")
+                    print(
+                        f"✅ MultiEdit call detected with {len(input_data['edits'])} edits"
+                    )
                 else:
                     print("❌ MultiEdit input is None")
                     raise AssertionError("MultiEdit input should not be None")
@@ -1847,6 +1910,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Test failed: {e}")
                 import traceback
+
                 print(f"📄 Full traceback:\n{traceback.format_exc()}")
                 return False
 
@@ -1865,26 +1929,19 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "model": "claude-sonnet-4-20250514",
             "max_tokens": 500,
             "stream": True,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "Use test_function to say hello"
-                }
-            ],
+            "messages": [{"role": "user", "content": "Use test_function to say hello"}],
             "tools": [
                 {
                     "name": "test_function",
                     "description": "Test function",
                     "input_schema": {
                         "type": "object",
-                        "properties": {
-                            "message": {"type": "string"}
-                        },
-                        "required": ["message"]
-                    }
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "test_function"}
+            "tool_choice": {"type": "tool", "name": "test_function"},
         }
 
         import asyncio
@@ -1901,17 +1958,28 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 # message_start → content_block_start → content_block_delta* → content_block_stop → message_delta → message_stop → done
 
                 event_types = [event.get("type") for event in events]
-                print(f"📋 Event sequence: {' → '.join(event_types[:10])}{'...' if len(event_types) > 10 else ''}")
+                print(
+                    f"📋 Event sequence: {' → '.join(event_types[:10])}{'...' if len(event_types) > 10 else ''}"
+                )
 
                 # Check required sequence
                 if event_types:
                     print(f"🚀 First event: {event_types[0]}")
-                    self.assertEqual(event_types[0], "message_start", "Should start with message_start")
+                    self.assertEqual(
+                        event_types[0],
+                        "message_start",
+                        "Should start with message_start",
+                    )
                 else:
                     print("❌ No events received!")
                     raise AssertionError("Should have events")
 
-                required_events = ["content_block_start", "content_block_stop", "message_delta", "message_stop"]
+                required_events = [
+                    "content_block_start",
+                    "content_block_stop",
+                    "message_delta",
+                    "message_stop",
+                ]
                 for event_type in required_events:
                     if event_type in event_types:
                         print(f"✅ Found {event_type}")
@@ -1920,14 +1988,28 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     self.assertIn(event_type, event_types, f"Should have {event_type}")
 
                 # Check tool_use content block
-                tool_block_starts = [e for e in events if e.get("type") == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use"]
+                tool_block_starts = [
+                    e
+                    for e in events
+                    if e.get("type") == "content_block_start"
+                    and e.get("content_block", {}).get("type") == "tool_use"
+                ]
                 print(f"🔧 Tool use content blocks: {len(tool_block_starts)}")
-                self.assertGreater(len(tool_block_starts), 0, "Should have tool_use content block")
+                self.assertGreater(
+                    len(tool_block_starts), 0, "Should have tool_use content block"
+                )
 
                 # Check input_json_delta events
-                json_deltas = [e for e in events if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "input_json_delta"]
+                json_deltas = [
+                    e
+                    for e in events
+                    if e.get("type") == "content_block_delta"
+                    and e.get("delta", {}).get("type") == "input_json_delta"
+                ]
                 print(f"📄 JSON delta events: {len(json_deltas)}")
-                self.assertGreater(len(json_deltas), 0, "Should have input_json_delta events")
+                self.assertGreater(
+                    len(json_deltas), 0, "Should have input_json_delta events"
+                )
 
                 # Show event counts breakdown
                 event_counts = {}
@@ -1941,6 +2023,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Test failed: {e}")
                 import traceback
+
                 print(f"📄 Full traceback:\n{traceback.format_exc()}")
                 return False
 
@@ -1962,7 +2045,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Use MultiEdit to make a complex edit with multiple parameters"
+                    "content": "Use MultiEdit to make a complex edit with multiple parameters",
                 }
             ],
             "tools": [
@@ -1980,17 +2063,17 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                     "properties": {
                                         "old_string": {"type": "string"},
                                         "new_string": {"type": "string"},
-                                        "replace_all": {"type": "boolean"}
+                                        "replace_all": {"type": "boolean"},
                                     },
-                                    "required": ["old_string", "new_string"]
-                                }
-                            }
+                                    "required": ["old_string", "new_string"],
+                                },
+                            },
                         },
-                        "required": ["file_path", "edits"]
-                    }
+                        "required": ["file_path", "edits"],
+                    },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "MultiEdit"}
+            "tool_choice": {"type": "tool", "name": "MultiEdit"},
         }
 
         import asyncio
@@ -2004,14 +2087,20 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                 # Check that we got tool calls
                 print(f"📊 Tool calls detected: {len(result['tool_calls'])}")
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect tool calls")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect tool calls"
+                )
 
                 tool_call = result["tool_calls"][0]
                 print(f"🔧 Tool call: {tool_call['name']} (id: {tool_call['id']})")
 
                 # Verify JSON was properly reconstructed from partial deltas
-                self.assertIsNotNone(tool_call["input"], "Tool input should be successfully parsed")
-                self.assertIsInstance(tool_call["input"], dict, "Tool input should be dict")
+                self.assertIsNotNone(
+                    tool_call["input"], "Tool input should be successfully parsed"
+                )
+                self.assertIsInstance(
+                    tool_call["input"], dict, "Tool input should be dict"
+                )
 
                 if tool_call["input"]:
                     # Check for complex structure
@@ -2019,32 +2108,50 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     print(f"📝 Input data keys: {list(input_data.keys())}")
 
                     if "edits" in input_data:
-                        self.assertIsInstance(input_data["edits"], list, "Edits should be list")
+                        self.assertIsInstance(
+                            input_data["edits"], list, "Edits should be list"
+                        )
                         print(f"✏️ Edits array length: {len(input_data['edits'])}")
 
                         if input_data["edits"]:
                             edit = input_data["edits"][0]
                             self.assertIsInstance(edit, dict, "Edit should be dict")
-                            self.assertIn("old_string", edit, "Edit should have old_string")
-                            self.assertIn("new_string", edit, "Edit should have new_string")
+                            self.assertIn(
+                                "old_string", edit, "Edit should have old_string"
+                            )
+                            self.assertIn(
+                                "new_string", edit, "Edit should have new_string"
+                            )
 
                             print(f"📄 First edit structure: {list(edit.keys())}")
-                            old_len = len(edit.get('old_string', ''))
-                            new_len = len(edit.get('new_string', ''))
-                            print(f"  old_string: {old_len} chars, new_string: {new_len} chars")
+                            old_len = len(edit.get("old_string", ""))
+                            new_len = len(edit.get("new_string", ""))
+                            print(
+                                f"  old_string: {old_len} chars, new_string: {new_len} chars"
+                            )
                 else:
                     print("❌ Tool input is None")
                     raise AssertionError("Tool input should not be None")
 
                 # Verify we had multiple JSON delta events (indicating streaming)
-                json_deltas = [e for e in result["events"] if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "input_json_delta"]
+                json_deltas = [
+                    e
+                    for e in result["events"]
+                    if e.get("type") == "content_block_delta"
+                    and e.get("delta", {}).get("type") == "input_json_delta"
+                ]
                 print(f"📄 JSON delta events: {len(json_deltas)}")
 
                 # Show sample delta sizes
                 if json_deltas:
-                    delta_sizes = [len(e.get("delta", {}).get("partial_json", "")) for e in json_deltas]
+                    delta_sizes = [
+                        len(e.get("delta", {}).get("partial_json", ""))
+                        for e in json_deltas
+                    ]
                     total_size = sum(delta_sizes)
-                    print(f"📊 Delta sizes: {delta_sizes[:5]}{'...' if len(delta_sizes) > 5 else ''} (total: {total_size} chars)")
+                    print(
+                        f"📊 Delta sizes: {delta_sizes[:5]}{'...' if len(delta_sizes) > 5 else ''} (total: {total_size} chars)"
+                    )
 
                 # Should have multiple deltas for complex JSON
                 if len(json_deltas) > 1:
@@ -2058,6 +2165,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Test failed: {e}")
                 import traceback
+
                 print(f"📄 Full traceback:\n{traceback.format_exc()}")
                 return False
 
@@ -2087,7 +2195,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Use MultiEdit to add a comment to a file, then tell me you're done"
+                    "content": "Use MultiEdit to add a comment to a file, then tell me you're done",
                 }
             ],
             "tools": [
@@ -2104,16 +2212,16 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                     "type": "object",
                                     "properties": {
                                         "old_string": {"type": "string"},
-                                        "new_string": {"type": "string"}
+                                        "new_string": {"type": "string"},
                                     },
-                                    "required": ["old_string", "new_string"]
-                                }
-                            }
+                                    "required": ["old_string", "new_string"],
+                                },
+                            },
                         },
-                        "required": ["file_path", "edits"]
-                    }
+                        "required": ["file_path", "edits"],
+                    },
                 }
-            ]
+            ],
         }
 
         import asyncio
@@ -2124,7 +2232,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
                 events = result["events"]
 
-                print(f"\n📋 Testing {len(events)} events against Claude official flow...")
+                print(
+                    f"\n📋 Testing {len(events)} events against Claude official flow..."
+                )
 
                 # Extract event types in order
                 event_types = [event.get("type") for event in events]
@@ -2133,59 +2243,116 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 # 1. MUST start with message_start
                 print("\n📌 Step 1: Verifying message_start...")
                 self.assertTrue(len(events) > 0, "Should have at least one event")
-                self.assertEqual(event_types[0], "message_start", "First event MUST be message_start")
+                self.assertEqual(
+                    event_types[0], "message_start", "First event MUST be message_start"
+                )
 
                 message_start = events[0]
-                self.assertIn("message", message_start, "message_start should contain message object")
+                self.assertIn(
+                    "message",
+                    message_start,
+                    "message_start should contain message object",
+                )
                 message_obj = message_start["message"]
-                self.assertEqual(message_obj.get("content"), [], "message_start should have empty content")
+                self.assertEqual(
+                    message_obj.get("content"),
+                    [],
+                    "message_start should have empty content",
+                )
                 print("✅ message_start verified: empty content Message object")
 
                 # 2. Content blocks validation
                 print("\n📌 Step 2: Verifying content block sequences...")
-                content_block_starts = [i for i, e in enumerate(events) if e.get("type") == "content_block_start"]
-                content_block_stops = [i for i, e in enumerate(events) if e.get("type") == "content_block_stop"]
-                content_block_deltas = [i for i, e in enumerate(events) if e.get("type") == "content_block_delta"]
+                content_block_starts = [
+                    i
+                    for i, e in enumerate(events)
+                    if e.get("type") == "content_block_start"
+                ]
+                content_block_stops = [
+                    i
+                    for i, e in enumerate(events)
+                    if e.get("type") == "content_block_stop"
+                ]
+                content_block_deltas = [
+                    i
+                    for i, e in enumerate(events)
+                    if e.get("type") == "content_block_delta"
+                ]
 
-                print(f"📊 Content blocks: {len(content_block_starts)} starts, {len(content_block_stops)} stops, {len(content_block_deltas)} deltas")
+                print(
+                    f"📊 Content blocks: {len(content_block_starts)} starts, {len(content_block_stops)} stops, {len(content_block_deltas)} deltas"
+                )
 
                 # Each content_block_start should have matching content_block_stop
-                self.assertEqual(len(content_block_starts), len(content_block_stops),
-                               "Each content_block_start must have matching content_block_stop")
+                self.assertEqual(
+                    len(content_block_starts),
+                    len(content_block_stops),
+                    "Each content_block_start must have matching content_block_stop",
+                )
 
                 # Verify content block structure
-                for i, (start_idx, stop_idx) in enumerate(zip(content_block_starts, content_block_stops)):
-                    print(f"🔍 Validating content block {i} (events {start_idx}-{stop_idx})...")
+                for i, (start_idx, stop_idx) in enumerate(
+                    zip(content_block_starts, content_block_stops)
+                ):
+                    print(
+                        f"🔍 Validating content block {i} (events {start_idx}-{stop_idx})..."
+                    )
 
                     # start should come before stop
-                    self.assertLess(start_idx, stop_idx, f"content_block_start {start_idx} should come before content_block_stop {stop_idx}")
+                    self.assertLess(
+                        start_idx,
+                        stop_idx,
+                        f"content_block_start {start_idx} should come before content_block_stop {stop_idx}",
+                    )
 
                     # Verify index consistency
                     start_event = events[start_idx]
                     stop_event = events[stop_idx]
                     start_index = start_event.get("index")
                     stop_index = stop_event.get("index")
-                    self.assertEqual(start_index, stop_index, f"Content block start and stop should have same index")
-                    self.assertEqual(start_index, i, f"Content block should have index {i}")
+                    self.assertEqual(
+                        start_index,
+                        stop_index,
+                        f"Content block start and stop should have same index",
+                    )
+                    self.assertEqual(
+                        start_index, i, f"Content block should have index {i}"
+                    )
 
                     # Verify deltas are between start and stop
-                    block_deltas = [idx for idx in content_block_deltas if start_idx < idx < stop_idx]
+                    block_deltas = [
+                        idx
+                        for idx in content_block_deltas
+                        if start_idx < idx < stop_idx
+                    ]
                     if block_deltas:
-                        print(f"  ✅ Content block {i}: {len(block_deltas)} deltas between start and stop")
+                        print(
+                            f"  ✅ Content block {i}: {len(block_deltas)} deltas between start and stop"
+                        )
 
                         # Verify all deltas have correct index
                         for delta_idx in block_deltas:
                             delta_event = events[delta_idx]
                             delta_index = delta_event.get("index")
-                            self.assertEqual(delta_index, i, f"Delta at event {delta_idx} should have index {i}")
+                            self.assertEqual(
+                                delta_index,
+                                i,
+                                f"Delta at event {delta_idx} should have index {i}",
+                            )
                     else:
                         print(f"  ℹ️ Content block {i}: no deltas (single-shot block)")
 
                 # 3. message_delta events validation
                 print("\n📌 Step 3: Verifying message_delta events...")
-                message_deltas = [i for i, e in enumerate(events) if e.get("type") == "message_delta"]
+                message_deltas = [
+                    i for i, e in enumerate(events) if e.get("type") == "message_delta"
+                ]
                 print(f"📊 Found {len(message_deltas)} message_delta events")
-                self.assertGreaterEqual(len(message_deltas), 1, "Should have at least one message_delta event")
+                self.assertGreaterEqual(
+                    len(message_deltas),
+                    1,
+                    "Should have at least one message_delta event",
+                )
 
                 # Verify message_delta events contain usage and stop_reason
                 for delta_idx in message_deltas:
@@ -2193,49 +2360,94 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     delta_data = delta_event.get("delta", {})
 
                     if "stop_reason" in delta_data:
-                        print(f"  ✅ message_delta {delta_idx}: stop_reason = {delta_data['stop_reason']}")
+                        print(
+                            f"  ✅ message_delta {delta_idx}: stop_reason = {delta_data['stop_reason']}"
+                        )
                     if "usage" in delta_data:
                         usage = delta_data["usage"]
-                        print(f"  ✅ message_delta {delta_idx}: usage = input:{usage.get('input_tokens', 0)}, output:{usage.get('output_tokens', 0)}")
+                        print(
+                            f"  ✅ message_delta {delta_idx}: usage = input:{usage.get('input_tokens', 0)}, output:{usage.get('output_tokens', 0)}"
+                        )
 
                 # 4. MUST end with message_stop
                 print("\n📌 Step 4: Verifying message_stop...")
-                message_stops = [i for i, e in enumerate(events) if e.get("type") == "message_stop"]
-                self.assertGreaterEqual(len(message_stops), 1, "Should have at least one message_stop event")
+                message_stops = [
+                    i for i, e in enumerate(events) if e.get("type") == "message_stop"
+                ]
+                self.assertGreaterEqual(
+                    len(message_stops), 1, "Should have at least one message_stop event"
+                )
 
                 # message_stop should be near the end (allow for 'done' events)
                 last_message_stop = message_stops[-1]
-                remaining_events = events[last_message_stop + 1:]
-                non_done_remaining = [e for e in remaining_events if e.get("type") != "done"]
-                self.assertEqual(len(non_done_remaining), 0, "message_stop should be last meaningful event")
+                remaining_events = events[last_message_stop + 1 :]
+                non_done_remaining = [
+                    e for e in remaining_events if e.get("type") != "done"
+                ]
+                self.assertEqual(
+                    len(non_done_remaining),
+                    0,
+                    "message_stop should be last meaningful event",
+                )
                 print(f"✅ message_stop verified at position {last_message_stop}")
 
                 # 5. Event order validation
                 print("\n📌 Step 5: Verifying event order compliance...")
 
                 # message_start should be first
-                first_message_start = next((i for i, e in enumerate(events) if e.get("type") == "message_start"), -1)
-                self.assertEqual(first_message_start, 0, "message_start should be first event")
+                first_message_start = next(
+                    (
+                        i
+                        for i, e in enumerate(events)
+                        if e.get("type") == "message_start"
+                    ),
+                    -1,
+                )
+                self.assertEqual(
+                    first_message_start, 0, "message_start should be first event"
+                )
 
                 # All content_block_start events should come after message_start
                 for start_idx in content_block_starts:
-                    self.assertGreater(start_idx, first_message_start, "content_block_start should come after message_start")
+                    self.assertGreater(
+                        start_idx,
+                        first_message_start,
+                        "content_block_start should come after message_start",
+                    )
 
                 # All message_delta events should come after content blocks
-                last_content_stop = max(content_block_stops) if content_block_stops else first_message_start
+                last_content_stop = (
+                    max(content_block_stops)
+                    if content_block_stops
+                    else first_message_start
+                )
                 for delta_idx in message_deltas:
-                    self.assertGreater(delta_idx, last_content_stop, "message_delta should come after content blocks")
+                    self.assertGreater(
+                        delta_idx,
+                        last_content_stop,
+                        "message_delta should come after content blocks",
+                    )
 
                 # message_stop should come after message_delta
-                first_message_delta = min(message_deltas) if message_deltas else last_content_stop
+                first_message_delta = (
+                    min(message_deltas) if message_deltas else last_content_stop
+                )
                 for stop_idx in message_stops:
-                    self.assertGreater(stop_idx, first_message_delta, "message_stop should come after message_delta")
+                    self.assertGreater(
+                        stop_idx,
+                        first_message_delta,
+                        "message_stop should come after message_delta",
+                    )
 
                 print("✅ Event order compliance verified")
 
                 # 6. Tool call specific validation (if present)
-                tool_blocks = [e for e in events if e.get("type") == "content_block_start" and
-                             e.get("content_block", {}).get("type") == "tool_use"]
+                tool_blocks = [
+                    e
+                    for e in events
+                    if e.get("type") == "content_block_start"
+                    and e.get("content_block", {}).get("type") == "tool_use"
+                ]
                 if tool_blocks:
                     print(f"\n📌 Step 6: Verifying tool call compliance...")
                     print(f"🔧 Found {len(tool_blocks)} tool_use blocks")
@@ -2244,31 +2456,46 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                         block = tool_block.get("content_block", {})
                         self.assertIn("id", block, "tool_use block should have id")
                         self.assertIn("name", block, "tool_use block should have name")
-                        self.assertIn("input", block, "tool_use block should have input")
+                        self.assertIn(
+                            "input", block, "tool_use block should have input"
+                        )
                         print(f"  ✅ Tool: {block.get('name')} (id: {block.get('id')})")
 
                     # Verify input_json_delta events for tool calls
-                    json_deltas = [e for e in events if e.get("type") == "content_block_delta" and
-                                 e.get("delta", {}).get("type") == "input_json_delta"]
+                    json_deltas = [
+                        e
+                        for e in events
+                        if e.get("type") == "content_block_delta"
+                        and e.get("delta", {}).get("type") == "input_json_delta"
+                    ]
                     if json_deltas:
-                        total_json = "".join(e.get("delta", {}).get("partial_json", "") for e in json_deltas)
-                        print(f"  ✅ Tool JSON accumulated: {len(total_json)} chars from {len(json_deltas)} deltas")
+                        total_json = "".join(
+                            e.get("delta", {}).get("partial_json", "")
+                            for e in json_deltas
+                        )
+                        print(
+                            f"  ✅ Tool JSON accumulated: {len(total_json)} chars from {len(json_deltas)} deltas"
+                        )
 
                         # Should be valid JSON
                         try:
                             import json
+
                             parsed = json.loads(total_json)
                             print(f"  ✅ Valid JSON with keys: {list(parsed.keys())}")
                         except json.JSONDecodeError as e:
                             self.fail(f"Accumulated tool JSON should be valid: {e}")
 
                 print(f"\n🎉 Claude Official Event Flow Compliance: PASSED")
-                print(f"📊 Summary: {len(events)} events, {len(content_block_starts)} content blocks, {len(message_deltas)} deltas")
+                print(
+                    f"📊 Summary: {len(events)} events, {len(content_block_starts)} content blocks, {len(message_deltas)} deltas"
+                )
                 return True
 
             except Exception as e:
                 print(f"❌ Official flow test failed: {e}")
                 import traceback
+
                 print(f"📄 Full traceback:\n{traceback.format_exc()}")
                 return False
 
@@ -2309,11 +2536,17 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "model": "claude-sonnet-4-20250514",
                     "max_tokens": 100,
                     "stream": True,
-                    "messages": [{"role": "user", "content": "Say hello briefly"}]
+                    "messages": [{"role": "user", "content": "Say hello briefly"}],
                 },
-                "expected_events": ["message_start", "content_block_start", "content_block_delta",
-                                  "content_block_stop", "message_delta", "message_stop"],
-                "expected_content_type": "text"
+                "expected_events": [
+                    "message_start",
+                    "content_block_start",
+                    "content_block_delta",
+                    "content_block_stop",
+                    "message_delta",
+                    "message_stop",
+                ],
+                "expected_content_type": "text",
             },
             {
                 "name": "Tool Call Only",
@@ -2321,22 +2554,32 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "model": "claude-sonnet-4-20250514",
                     "max_tokens": 500,
                     "stream": True,
-                    "messages": [{"role": "user", "content": "Use test_function to say hello"}],
-                    "tools": [{
-                        "name": "test_function",
-                        "description": "Test function",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {"message": {"type": "string"}},
-                            "required": ["message"]
+                    "messages": [
+                        {"role": "user", "content": "Use test_function to say hello"}
+                    ],
+                    "tools": [
+                        {
+                            "name": "test_function",
+                            "description": "Test function",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {"message": {"type": "string"}},
+                                "required": ["message"],
+                            },
                         }
-                    }],
-                    "tool_choice": {"type": "tool", "name": "test_function"}
+                    ],
+                    "tool_choice": {"type": "tool", "name": "test_function"},
                 },
-                "expected_events": ["message_start", "content_block_start", "content_block_delta",
-                                  "content_block_stop", "message_delta", "message_stop"],
-                "expected_content_type": "tool_use"
-            }
+                "expected_events": [
+                    "message_start",
+                    "content_block_start",
+                    "content_block_delta",
+                    "content_block_stop",
+                    "message_delta",
+                    "message_stop",
+                ],
+                "expected_content_type": "tool_use",
+            },
         ]
 
         import asyncio
@@ -2355,16 +2598,23 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     unique_event_types = list(set(event_types))
 
                     print(f"📊 Event types found: {sorted(unique_event_types)}")
-                    print(f"📋 Event sequence: {' → '.join(event_types[:15])}{'...' if len(event_types) > 15 else ''}")
+                    print(
+                        f"📋 Event sequence: {' → '.join(event_types[:15])}{'...' if len(event_types) > 15 else ''}"
+                    )
 
                     # Check required events
                     for required_event in scenario["expected_events"]:
-                        self.assertIn(required_event, event_types,
-                                    f"Scenario '{scenario['name']}' should have {required_event}")
+                        self.assertIn(
+                            required_event,
+                            event_types,
+                            f"Scenario '{scenario['name']}' should have {required_event}",
+                        )
                         print(f"  ✅ Found required event: {required_event}")
 
                     # Analyze content blocks
-                    content_block_starts = [e for e in events if e.get("type") == "content_block_start"]
+                    content_block_starts = [
+                        e for e in events if e.get("type") == "content_block_start"
+                    ]
                     if content_block_starts:
                         content_block_types = []
                         for start_event in content_block_starts:
@@ -2375,32 +2625,56 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                             # Validate block structure
                             if block_type == "text":
-                                self.assertIn("text", block, "Text block should have text field")
+                                self.assertIn(
+                                    "text", block, "Text block should have text field"
+                                )
                                 print(f"    ✅ Text block structure valid")
                             elif block_type == "tool_use":
-                                self.assertIn("id", block, "Tool use block should have id")
-                                self.assertIn("name", block, "Tool use block should have name")
-                                self.assertIn("input", block, "Tool use block should have input")
-                                print(f"    ✅ Tool use block structure valid: {block.get('name')}")
+                                self.assertIn(
+                                    "id", block, "Tool use block should have id"
+                                )
+                                self.assertIn(
+                                    "name", block, "Tool use block should have name"
+                                )
+                                self.assertIn(
+                                    "input", block, "Tool use block should have input"
+                                )
+                                print(
+                                    f"    ✅ Tool use block structure valid: {block.get('name')}"
+                                )
                             elif block_type == "thinking":
                                 # Thinking blocks are valid for models with reasoning capability
-                                print(f"    ✅ Thinking block detected (reasoning model)")
+                                print(
+                                    f"    ✅ Thinking block detected (reasoning model)"
+                                )
 
                         # Check if expected content type exists (may be after thinking block)
                         if scenario["expected_content_type"]:
                             expected_type = scenario["expected_content_type"]
                             if expected_type in content_block_types:
-                                print(f"    ✅ Found expected content type: {expected_type}")
+                                print(
+                                    f"    ✅ Found expected content type: {expected_type}"
+                                )
                             else:
                                 # If we only have thinking, that might be sufficient for some tests
-                                if "thinking" in content_block_types and len(content_block_types) == 1:
-                                    print(f"    ℹ️ Only thinking block found, model may have provided reasoning instead of {expected_type}")
+                                if (
+                                    "thinking" in content_block_types
+                                    and len(content_block_types) == 1
+                                ):
+                                    print(
+                                        f"    ℹ️ Only thinking block found, model may have provided reasoning instead of {expected_type}"
+                                    )
                                 else:
-                                    self.assertIn(expected_type, content_block_types, 
-                                                f"Expected content type {expected_type}, found: {content_block_types}")
+                                    self.assertIn(
+                                        expected_type,
+                                        content_block_types,
+                                        f"Expected content type {expected_type}, found: {content_block_types}",
+                                    )
 
                     # Analyze deltas
-                    content_deltas = [e for e in events if e.get("type") == "content_block_delta"]
+                    content_deltas = [
+                        e for e in events if e.get("type") == "content_block_delta"
+                    ]
                     delta_types = set()
                     for delta_event in content_deltas:
                         delta = delta_event.get("delta", {})
@@ -2413,41 +2687,61 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     # Validate delta types (flexible for thinking + expected content)
                     if scenario["expected_content_type"] == "text":
                         # Claude can use either "text" or "text_delta" for text content
-                        has_text_delta = "text" in delta_types or "text_delta" in delta_types
+                        has_text_delta = (
+                            "text" in delta_types or "text_delta" in delta_types
+                        )
                         has_thinking_delta = "thinking" in delta_types
-                        
+
                         if has_text_delta:
                             print(f"    ✅ Found text deltas")
                         elif has_thinking_delta and "text" not in content_block_types:
-                            print(f"    ℹ️ Only thinking deltas found, model provided reasoning")
+                            print(
+                                f"    ℹ️ Only thinking deltas found, model provided reasoning"
+                            )
                         else:
-                            self.assertTrue(has_text_delta or has_thinking_delta, 
-                                          f"Text response should have text or thinking deltas, found: {delta_types}")
+                            self.assertTrue(
+                                has_text_delta or has_thinking_delta,
+                                f"Text response should have text or thinking deltas, found: {delta_types}",
+                            )
                     elif scenario["expected_content_type"] == "tool_use":
                         has_tool_delta = "input_json_delta" in delta_types
                         has_thinking_delta = "thinking" in delta_types
-                        
+
                         if has_tool_delta:
                             print(f"    ✅ Found tool use deltas")
                         elif has_thinking_delta and "tool_use" in content_block_types:
                             print(f"    ✅ Found thinking + tool use blocks")
                         else:
-                            self.assertTrue(has_tool_delta or (has_thinking_delta and "tool_use" in content_block_types),
-                                          f"Tool use should have input_json_delta or thinking+tool_use, found deltas: {delta_types}, blocks: {content_block_types}")
+                            self.assertTrue(
+                                has_tool_delta
+                                or (
+                                    has_thinking_delta
+                                    and "tool_use" in content_block_types
+                                ),
+                                f"Tool use should have input_json_delta or thinking+tool_use, found deltas: {delta_types}, blocks: {content_block_types}",
+                            )
 
                     # Check message_delta content
-                    message_deltas = [e for e in events if e.get("type") == "message_delta"]
+                    message_deltas = [
+                        e for e in events if e.get("type") == "message_delta"
+                    ]
                     for msg_delta in message_deltas:
                         delta_data = msg_delta.get("delta", {})
                         if "usage" in delta_data:
                             usage = delta_data["usage"]
-                            print(f"  📊 Usage: input={usage.get('input_tokens', 0)}, output={usage.get('output_tokens', 0)}")
+                            print(
+                                f"  📊 Usage: input={usage.get('input_tokens', 0)}, output={usage.get('output_tokens', 0)}"
+                            )
                         if "stop_reason" in delta_data:
                             print(f"  🛑 Stop reason: {delta_data['stop_reason']}")
 
                     # Check message_stop
-                    message_stops = [e for e in events if e.get("type") == "message_stop"]
-                    self.assertGreaterEqual(len(message_stops), 1, "Should have message_stop")
+                    message_stops = [
+                        e for e in events if e.get("type") == "message_stop"
+                    ]
+                    self.assertGreaterEqual(
+                        len(message_stops), 1, "Should have message_stop"
+                    )
 
                     # Optional events validation
                     ping_events = [e for e in events if e.get("type") == "ping"]
@@ -2462,7 +2756,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                         "success": True,
                         "event_count": len(events),
                         "event_types": unique_event_types,
-                        "content_blocks": len(content_block_starts)
+                        "content_blocks": len(content_block_starts),
                     }
 
                     print(f"  ✅ Scenario '{scenario['name']}' passed")
@@ -2474,16 +2768,22 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             # Summary
             print(f"\n📊 Event Types Test Summary:")
             successful_scenarios = sum(1 for r in results.values() if r.get("success"))
-            print(f"✅ Successful scenarios: {successful_scenarios}/{len(test_scenarios)}")
+            print(
+                f"✅ Successful scenarios: {successful_scenarios}/{len(test_scenarios)}"
+            )
 
             for name, result in results.items():
                 if result.get("success"):
-                    print(f"  ✅ {name}: {result['event_count']} events, {result['content_blocks']} blocks")
+                    print(
+                        f"  ✅ {name}: {result['event_count']} events, {result['content_blocks']} blocks"
+                    )
                 else:
                     print(f"  ❌ {name}: {result.get('error', 'Unknown error')}")
 
             # At least one scenario should succeed
-            self.assertGreater(successful_scenarios, 0, "At least one scenario should succeed")
+            self.assertGreater(
+                successful_scenarios, 0, "At least one scenario should succeed"
+            )
 
             return successful_scenarios == len(test_scenarios)
 
@@ -2497,7 +2797,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
     def test_no_premature_stream_termination_with_tool_calls(self):
         """
         Test that SSE stream is not prematurely terminated when finish_reason='tool_calls'.
-        
+
         This test verifies the fix for the issue where the proxy server would break
         out of the streaming loop when has_sent_stop_reason was True, even though
         the remote server might still be sending more chunks.
@@ -2511,7 +2811,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "First, say hello, then call the Edit tool to modify a file."
+                    "content": "First, say hello, then call the Edit tool to modify a file.",
                 }
             ],
             "tools": [
@@ -2523,12 +2823,12 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                         "properties": {
                             "file_path": {"type": "string"},
                             "old_string": {"type": "string"},
-                            "new_string": {"type": "string"}
+                            "new_string": {"type": "string"},
                         },
-                        "required": ["file_path", "old_string", "new_string"]
-                    }
+                        "required": ["file_path", "old_string", "new_string"],
+                    },
                 }
-            ]
+            ],
         }
 
         import asyncio
@@ -2537,50 +2837,78 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             try:
                 print("🔍 Running stream termination test...")
                 result = await self._send_streaming_request(request_data)
-                
+
                 events = result["events"]
                 tool_calls = result["tool_calls"]
-                
+
                 # Verify we received the complete stream
                 self.assertGreater(len(events), 0, "Should have received events")
-                
+
                 # Check for proper message lifecycle events
-                message_start_events = [e for e in events if e.get("type") == "message_start"]
-                message_stop_events = [e for e in events if e.get("type") == "message_stop"]
-                message_delta_events = [e for e in events if e.get("type") == "message_delta"]
-                
-                self.assertEqual(len(message_start_events), 1, "Should have exactly one message_start")
-                self.assertEqual(len(message_stop_events), 1, "Should have exactly one message_stop")
-                
+                message_start_events = [
+                    e for e in events if e.get("type") == "message_start"
+                ]
+                message_stop_events = [
+                    e for e in events if e.get("type") == "message_stop"
+                ]
+                message_delta_events = [
+                    e for e in events if e.get("type") == "message_delta"
+                ]
+
+                self.assertEqual(
+                    len(message_start_events),
+                    1,
+                    "Should have exactly one message_start",
+                )
+                self.assertEqual(
+                    len(message_stop_events), 1, "Should have exactly one message_stop"
+                )
+
                 # Check for stop_reason in message_delta
-                stop_reason_events = [e for e in message_delta_events 
-                                    if e.get("delta", {}).get("stop_reason")]
-                
+                stop_reason_events = [
+                    e
+                    for e in message_delta_events
+                    if e.get("delta", {}).get("stop_reason")
+                ]
+
                 if stop_reason_events:
                     stop_reason = stop_reason_events[0]["delta"]["stop_reason"]
                     print(f"✅ Received stop_reason: {stop_reason}")
-                    
+
                     # If we have tool calls, stop_reason should be "tool_use"
                     if tool_calls:
-                        self.assertEqual(stop_reason, "tool_use", 
-                                       "Stop reason should be 'tool_use' when tool calls are present")
-                
+                        self.assertEqual(
+                            stop_reason,
+                            "tool_use",
+                            "Stop reason should be 'tool_use' when tool calls are present",
+                        )
+
                 # Verify complete content blocks
-                content_block_start_events = [e for e in events if e.get("type") == "content_block_start"]
-                content_block_stop_events = [e for e in events if e.get("type") == "content_block_stop"]
-                
-                self.assertEqual(len(content_block_start_events), len(content_block_stop_events),
-                               "Each content_block_start should have a matching content_block_stop")
-                
-                print(f"✅ Stream integrity verified: {len(events)} events, "
-                      f"{len(content_block_start_events)} content blocks, "
-                      f"{len(tool_calls)} tool calls")
-                
+                content_block_start_events = [
+                    e for e in events if e.get("type") == "content_block_start"
+                ]
+                content_block_stop_events = [
+                    e for e in events if e.get("type") == "content_block_stop"
+                ]
+
+                self.assertEqual(
+                    len(content_block_start_events),
+                    len(content_block_stop_events),
+                    "Each content_block_start should have a matching content_block_stop",
+                )
+
+                print(
+                    f"✅ Stream integrity verified: {len(events)} events, "
+                    f"{len(content_block_start_events)} content blocks, "
+                    f"{len(tool_calls)} tool calls"
+                )
+
                 return True
 
             except Exception as e:
                 print(f"❌ Test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -2595,14 +2923,14 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 class TestStreamingMalformedToolJSON(unittest.TestCase):
     """
     Test malformed tool JSON repair and error recovery in streaming responses.
-    
+
     This test class validates the system's ability to:
     - Detect and repair malformed JSON in tool call arguments
     - Handle incomplete JSON objects during streaming
     - Recover from various JSON syntax errors (missing brackets, quotes, etc.)
     - Maintain streaming resilience with error counting and thresholds
     - Finalize tool calls even when JSON is partially corrupted
-    
+
     These tests ensure robust handling of real-world API instabilities
     and network issues that can cause JSON fragmentation.
     """
@@ -2616,9 +2944,9 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
             messages=[
                 ClaudeMessage(
                     role="user",
-                    content=[ClaudeContentBlockText(type="text", text="Test message")]
+                    content=[ClaudeContentBlockText(type="text", text="Test message")],
                 )
-            ]
+            ],
         )
         self.converter = AnthropicStreamingConverter(mock_request)
 
@@ -2631,38 +2959,36 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
             # Valid JSON - should not be detected as malformed
             ('{"file_path": "/test.py", "content": "test"}', False),
             ('{"tool": "Edit", "args": {"old": "a", "new": "b"}}', False),
-
             # Empty/whitespace cases
-            ('', True),
-            ('   ', True),
-            ('null', True),
-
+            ("", True),
+            ("   ", True),
+            ("null", True),
             # Single character cases
-            ('{', True),
-            ('}', True),
-            ('[', True),
-            (']', True),
-            (',', True),
-            (':', True),
+            ("{", True),
+            ("}", True),
+            ("[", True),
+            ("]", True),
+            (",", True),
+            (":", True),
             ('"', True),
-
             # Common malformed patterns
             ('{"', True),
             ('"}', True),
-            ('[{', True),
-            ('}]', True),
-            ('{}', True),
-            ('[]', True),
-            ('{,', True),
-            (',}', True),
-            ('[,', True),
-            (',]', True),
-
+            ("[{", True),
+            ("}]", True),
+            ("{}", True),
+            ("[]", True),
+            ("{,", True),
+            (",}", True),
+            ("[,", True),
+            (",]", True),
             # The specific issue we're fixing - trailing brackets
-            ('{"file_path":"/test.py","old_string":"test","new_string":"fixed"}]', True),
+            (
+                '{"file_path":"/test.py","old_string":"test","new_string":"fixed"}]',
+                True,
+            ),
             ('{"tool":"Edit","args":{"a":"b"}},]', True),
             ('{"valid":"json"}]', True),
-
             # Short incomplete JSON
             ('{"file', True),
             ('[{"test"', True),
@@ -2670,10 +2996,15 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
         ]
 
         for json_str, expected_malformed in test_cases:
-            with self.subTest(json_str=json_str[:50] + ('...' if len(json_str) > 50 else '')):
+            with self.subTest(
+                json_str=json_str[:50] + ("..." if len(json_str) > 50 else "")
+            ):
                 result = self.converter.is_malformed_tool_json(json_str)
-                self.assertEqual(result, expected_malformed,
-                               f"JSON: '{json_str}' - Expected malformed: {expected_malformed}, Got: {result}")
+                self.assertEqual(
+                    result,
+                    expected_malformed,
+                    f"JSON: '{json_str}' - Expected malformed: {expected_malformed}, Got: {result}",
+                )
 
     def test_tool_json_repair_functionality(self):
         """Test repair of malformed tool JSON."""
@@ -2682,34 +3013,61 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
         # Test cases: (malformed_json, expected_repaired_dict, should_be_repaired)
         test_cases = [
             # Valid JSON should pass through unchanged
-            ('{"file_path": "/test.py", "content": "test"}',
-             {"file_path": "/test.py", "content": "test"}, False),
-
+            (
+                '{"file_path": "/test.py", "content": "test"}',
+                {"file_path": "/test.py", "content": "test"},
+                False,
+            ),
             # The main case we're fixing - trailing bracket
-            ('{"file_path":"/test.py","old_string":"old","new_string":"new","replace_all":false}]',
-             {"file_path": "/test.py", "old_string": "old", "new_string": "new", "replace_all": False}, True),
-
+            (
+                '{"file_path":"/test.py","old_string":"old","new_string":"new","replace_all":false}]',
+                {
+                    "file_path": "/test.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                    "replace_all": False,
+                },
+                True,
+            ),
             # Trailing comma cases
-            ('{"tool":"Edit","args":{"a":"b"}},]',
-             {"tool": "Edit", "args": {"a": "b"}}, True),
-
+            (
+                '{"tool":"Edit","args":{"a":"b"}},]',
+                {"tool": "Edit", "args": {"a": "b"}},
+                True,
+            ),
             # Multiple trailing artifacts
-            ('{"file_path":"/test.py","content":"test"},]',
-             {"file_path": "/test.py", "content": "test"}, True),
-
+            (
+                '{"file_path":"/test.py","content":"test"},]',
+                {"file_path": "/test.py", "content": "test"},
+                True,
+            ),
             # Trailing comma only
-            ('{"tool":"Edit","args":{"old":"a","new":"b"}},',
-             {"tool": "Edit", "args": {"old": "a", "new": "b"}}, True),
+            (
+                '{"tool":"Edit","args":{"old":"a","new":"b"}},',
+                {"tool": "Edit", "args": {"old": "a", "new": "b"}},
+                True,
+            ),
         ]
 
         for malformed_json, expected_dict, should_be_repaired in test_cases:
-            with self.subTest(json_str=malformed_json[:50] + ('...' if len(malformed_json) > 50 else '')):
-                repaired_dict, was_repaired = self.converter.try_repair_tool_json(malformed_json)
+            with self.subTest(
+                json_str=malformed_json[:50]
+                + ("..." if len(malformed_json) > 50 else "")
+            ):
+                repaired_dict, was_repaired = self.converter.try_repair_tool_json(
+                    malformed_json
+                )
 
-                self.assertEqual(was_repaired, should_be_repaired,
-                               f"Expected repair: {should_be_repaired}, Got: {was_repaired}")
-                self.assertEqual(repaired_dict, expected_dict,
-                               f"Expected: {expected_dict}, Got: {repaired_dict}")
+                self.assertEqual(
+                    was_repaired,
+                    should_be_repaired,
+                    f"Expected repair: {should_be_repaired}, Got: {was_repaired}",
+                )
+                self.assertEqual(
+                    repaired_dict,
+                    expected_dict,
+                    f"Expected: {expected_dict}, Got: {repaired_dict}",
+                )
 
     def test_tool_json_repair_edge_cases(self):
         """Test edge cases for tool JSON repair."""
@@ -2717,9 +3075,9 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
 
         # Test completely broken JSON that can't be repaired
         broken_cases = [
-            '',
-            '   ',
-            '{broken json',
+            "",
+            "   ",
+            "{broken json",
             '{"unclosed": "string',
             '{"key": value without quotes}',
             '{"nested": {"broken": }',
@@ -2727,7 +3085,9 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
 
         for broken_json in broken_cases:
             with self.subTest(json_str=broken_json):
-                repaired_dict, was_repaired = self.converter.try_repair_tool_json(broken_json)
+                repaired_dict, was_repaired = self.converter.try_repair_tool_json(
+                    broken_json
+                )
                 # Should return empty dict when repair fails
                 self.assertEqual(repaired_dict, {})
 
@@ -2745,12 +3105,7 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
             converter.current_tool_id = "test_tool_id"
             converter.content_block_index = 0
             converter.current_content_blocks = [
-                {
-                    "type": "tool_use",
-                    "id": "test_tool_id",
-                    "name": "Edit",
-                    "input": {}
-                }
+                {"type": "tool_use", "id": "test_tool_id", "name": "Edit", "input": {}}
             ]
 
             # Test with malformed JSON (the specific case from the logs)
@@ -2771,9 +3126,11 @@ class TestStreamingMalformedToolJSON(unittest.TestCase):
                 "file_path": "/Users/test/server.py",
                 "old_string": "test",
                 "new_string": "fixed",
-                "replace_all": False
+                "replace_all": False,
             }
-            self.assertEqual(tool_input, expected_input, "Tool input should be properly repaired")
+            self.assertEqual(
+                tool_input, expected_input, "Tool input should be properly repaired"
+            )
 
         asyncio.run(run_test())
 
