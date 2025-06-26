@@ -310,10 +310,14 @@ async def main(args):
         token_output_diff = proxy_results.output_tokens - direct_results.output_tokens
         tokens_consistent = (token_input_diff == 0 and token_output_diff == 0)
         
+        # Calculate percentage changes for latency
+        ttfc_percent_change = (overhead_ttfc / direct_results.ttfc * 100) if direct_results.ttfc > 0 else 0
+        duration_percent_change = (overhead_duration / direct_results.total_duration * 100) if direct_results.total_duration > 0 else 0
+        
         print(f"🔍 PROXY TRANSLATION OVERHEAD:")
-        print(f"   ⏱️  Latency Added:")
-        print(f"      • Time to First Chunk: +{overhead_ttfc:.2f} ms ({(overhead_ttfc/direct_results.ttfc*100) if direct_results.ttfc > 0 else 0:.1f}%)")
-        print(f"      • Total Request Time: +{overhead_duration:.2f} ms ({(overhead_duration/direct_results.total_duration*100) if direct_results.total_duration > 0 else 0:.1f}%)")
+        print(f"   ⏱️  Latency Added (vs. Direct API):")
+        print(f"      • Time to First Chunk: {overhead_ttfc:+.2f} ms ({ttfc_percent_change:+.1f}%)")
+        print(f"      • Total Request Time: {overhead_duration:+.2f} ms ({duration_percent_change:+.1f}%)")
         
         print(f"\n   🚀 Throughput Impact:")
         print(f"      • Direct API: {direct_tps:.2f} tokens/sec")
@@ -340,19 +344,25 @@ async def main(args):
         # Proxy efficiency assessment
         if overhead_ttfc < 50 and throughput_loss < 5:
             efficiency = "🟢 EXCELLENT"
-            summary = "Proxy adds minimal overhead"
+            summary = "Proxy adds minimal overhead."
+            criteria = "TTFC Overhead < 50ms AND Throughput Loss < 5%"
         elif overhead_ttfc < 100 and throughput_loss < 10:
-            efficiency = "🟡 GOOD" 
-            summary = "Acceptable proxy performance"
+            efficiency = "🟡 GOOD"
+            summary = "Acceptable proxy performance."
+            criteria = "TTFC Overhead < 100ms AND Throughput Loss < 10%"
         elif overhead_ttfc < 200 and throughput_loss < 20:
             efficiency = "🟠 FAIR"
-            summary = "Some optimization opportunities"
+            summary = "Some optimization opportunities."
+            criteria = "TTFC Overhead < 200ms AND Throughput Loss < 20%"
         else:
             efficiency = "🔴 POOR"
-            summary = "Significant proxy overhead detected"
-        
+            summary = "Significant proxy overhead detected."
+            criteria = "TTFC Overhead >= 200ms OR Throughput Loss >= 20%"
+
         print(f"\n🏆 PROXY EFFICIENCY RATING: {efficiency}")
         print(f"   {summary}")
+        print(f"   - Criteria: {criteria}")
+        print(f"   - Actuals: TTFC Overhead = {overhead_ttfc:.2f}ms, Throughput Loss = {throughput_loss:.1f}%")
         
         # Actionable insights
         print(f"\n💡 KEY INSIGHTS:")
