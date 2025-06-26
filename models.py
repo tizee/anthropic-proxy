@@ -2558,6 +2558,12 @@ async def convert_openai_streaming_response_to_anthropic(
     # Create converter instance with all state encapsulated
     converter = AnthropicStreamingConverter(original_request)
 
+    # Enhanced error recovery tracking
+    consecutive_errors = 0
+    max_consecutive_errors = 5  # Max consecutive errors before aborting
+
+
+
     try:
         # Send initial events
         yield converter._send_message_start_event()
@@ -2565,66 +2571,17 @@ async def convert_openai_streaming_response_to_anthropic(
 
         logger.debug(f"🌊 Starting streaming for model: {original_request.model}")
 
-        # Process each chunk using the optimized converter
+        # Process each chunk directly with enhanced error handling
         chunk_count = 0
         async for chunk in response_generator:
             chunk_count += 1
             try:
-                # Debug log raw chunk info (commented out to reduce noise)
-                # logger.debug(f"🌊 RAW_CHUNK #{chunk_count}: id={chunk.id}, choices={len(chunk.choices)}, usage={chunk.usage is not None}")
-
-                # Enhanced chunk debugging for MALFORMED_FUNCTION_CALL investigation
-                if chunk.choices and len(chunk.choices) > 0:
-                    choice = chunk.choices[0]
-                    if hasattr(choice, 'finish_reason') and choice.finish_reason:
-                        logger.debug(f"🌊 CHUNK_FINISH_REASON #{chunk_count}: {choice.finish_reason}")
-
-                    # Log tool calls in chunks to help debug malformed function calls
-                    if hasattr(choice, 'delta') and choice.delta and hasattr(choice.delta, 'tool_calls'):
-                        tool_calls = choice.delta.tool_calls
-                        if tool_calls:
-                            logger.debug(f"🌊 CHUNK_TOOL_CALLS #{chunk_count}: {len(tool_calls)} tool calls")
-                            for i, tool_call in enumerate(tool_calls):
-                                if hasattr(tool_call, 'function') and tool_call.function:
-                                    func_name = getattr(tool_call.function, 'name', 'unknown')
-                                    func_args = getattr(tool_call.function, 'arguments', '')
-                                    logger.debug(f"🌊   Tool Call {i}: {func_name}, args_length={len(func_args)}")
-                                    if func_args and len(func_args) > 0:
-                                        try:
-                                            import json
-                                            json.loads(func_args)
-                                            logger.debug(f"🌊   Tool Call {i} args: valid JSON")
-                                        except json.JSONDecodeError:
-                                            logger.debug(f"🌊   Tool Call {i} args: invalid JSON - might cause MALFORMED_FUNCTION_CALL")
-                                            logger.debug(f"🌊   Raw args: {func_args[:200]}...")
-
                 # Process chunk and yield all events
                 async for event in converter.process_chunk(chunk):
-                    # Enhanced debug logging for events
-                    if "event:" in event:
-                        event_type = event.split("event:")[1].split("\n")[0].strip()
-                        logger.debug(f"🌊 YIELDING_EVENT: {event_type}")
-
-                        # Log event data for debugging
-                        if "data:" in event:
-                            try:
-                                data_line = [line for line in event.split("\n") if line.startswith("data:")][0]
-                                data_content = data_line[5:].strip()  # Remove "data:" prefix
-                                if data_content and data_content != "[DONE]":
-                                    import json
-                                    try:
-                                        parsed_data = json.loads(data_content)
-                                        logger.debug(f"🌊 EVENT_DATA: {json.dumps(parsed_data, indent=2)}")
-                                    except json.JSONDecodeError:
-                                        logger.debug(f"🌊 EVENT_DATA (raw): {data_content}")
-                            except Exception as e:
-                                logger.debug(f"🌊 EVENT_DATA_PARSE_ERROR: {e}")
-                    else:
-                        # Log non-standard events that might not be Claude-compatible
-                        if event.strip() and not event.startswith("data: [DONE]"):
-                            logger.debug(f"🌊 NON_STANDARD_EVENT: {event.strip()}")
-
                     yield event
+
+                # Reset consecutive errors on successful processing
+                consecutive_errors = 0
 
                 # If response is finalized, break out of loop
                 if converter.has_sent_stop_reason:
@@ -2632,18 +2589,12 @@ async def convert_openai_streaming_response_to_anthropic(
                     break
 
             except Exception as e:
+                consecutive_errors += 1
                 logger.error(f"🌊 ERROR_PROCESSING_CHUNK #{chunk_count}: {str(e)}")
-                logger.error(f"🌊 CHUNK_ERROR_TRACEBACK: {e.__class__.__name__}: {str(e)}")
-                # Log chunk data to help debug the error
-                try:
-                    chunk_info = {
-                        'id': getattr(chunk, 'id', 'unknown'),
-                        'choices_count': len(getattr(chunk, 'choices', [])),
-                        'has_usage': getattr(chunk, 'usage', None) is not None
-                    }
-                    logger.error(f"🌊 FAILED_CHUNK_INFO: {chunk_info}")
-                except Exception as debug_error:
-                    logger.error(f"🌊 FAILED_TO_DEBUG_CHUNK: {debug_error}")
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(f"Too many consecutive errors ({consecutive_errors}), aborting stream.")
+                    break
                 continue
 
         # Handle case where no finish_reason was received
@@ -2686,75 +2637,85 @@ async def convert_openai_streaming_response_to_anthropic(
             yield converter._send_done_event()
 
     finally:
-        # Final cleanup and logging
-        try:
-            # Calculate final tokens for tracking
-            final_output_tokens = _calculate_accurate_output_tokens(
-                converter.accumulated_text,
-                converter.accumulated_thinking,
-                converter.output_tokens,
-                "Final streaming cleanup",
-            )
+        # Use the new helper function for cleanup
+        _log_streaming_completion(converter, original_request, routed_model)
 
-            # Track usage statistics and log completion summary (always, even for tool-only responses)
-            input_tokens = count_tokens_in_messages(
-                original_request.messages, original_request.model
-            )
 
-            add_session_stats(
-                model=original_request.model,
-                input_tokens=input_tokens,
-                output_tokens=final_output_tokens,
-                cost=calculate_cost(
-                    original_request.model, input_tokens, final_output_tokens
-                ),
-                routed_model=routed_model,
-            )
+def _log_streaming_completion(
+    converter: AnthropicStreamingConverter,
+    original_request: ClaudeMessagesRequest,
+    routed_model: str | None,
+):
+    """Log a detailed summary of the streaming completion."""
+    try:
+        # Calculate final tokens for tracking
+        final_output_tokens = _calculate_accurate_output_tokens(
+            converter.accumulated_text,
+            converter.accumulated_thinking,
+            converter.output_tokens,
+            "Final streaming cleanup",
+        )
 
-            # Log detailed streaming completion summary (always show content blocks and tool calls)
-            content_blocks_summary = []
-            tool_calls_summary = []
-            
-            for i, block in enumerate(converter.current_content_blocks):
-                if block.get("type") == "text":
-                    content_blocks_summary.append(f"Block {i}: text ({len(block.get('text', ''))} chars)")
-                elif block.get("type") == "tool_use":
-                    tool_name = block.get("name", "unknown")
-                    tool_id = block.get("id", "unknown")
-                    input_data = block.get("input", {})
-                    tool_calls_summary.append({
-                        "name": tool_name,
-                        "id": tool_id,
-                        "input": input_data
-                    })
-                    content_blocks_summary.append(f"Block {i}: tool_use (name={tool_name}, input_keys={list(input_data.keys())})")
-                elif block.get("type") == "thinking":
-                    content_blocks_summary.append(f"Block {i}: thinking ({len(block.get('thinking', ''))} chars)")
-            
+        input_tokens = count_tokens_in_messages(
+            original_request.messages, original_request.model
+        )
+
+        add_session_stats(
+            model=original_request.model,
+            input_tokens=input_tokens,
+            output_tokens=final_output_tokens,
+            cost=calculate_cost(
+                original_request.model, input_tokens, final_output_tokens
+            ),
+            routed_model=routed_model,
+        )
+
+        # Log detailed summary
+        content_blocks_summary = []
+        tool_calls_summary = []
+        for i, block in enumerate(converter.current_content_blocks):
+            if block.get("type") == "text":
+                content_blocks_summary.append(
+                    f"Block {i}: text ({len(block.get('text', ''))} chars)"
+                )
+            elif block.get("type") == "tool_use":
+                tool_name = block.get("name", "unknown")
+                tool_id = block.get("id", "unknown")
+                input_data = block.get("input", {})
+                tool_calls_summary.append(
+                    {"name": tool_name, "id": tool_id, "input": input_data}
+                )
+                content_blocks_summary.append(
+                    f"Block {i}: tool_use (name={tool_name}, input_keys={list(input_data.keys())})"
+                )
+            elif block.get("type") == "thinking":
+                content_blocks_summary.append(
+                    f"Block {i}: thinking ({len(block.get('thinking', ''))} chars)"
+                )
+
+        logger.info(
+            f"STREAMING COMPLETE - Model: {original_request.model}, "
+            f"Chunks: {converter.openai_chunks_received}, "
+            f"Input tokens: {input_tokens}, Output tokens: {final_output_tokens}, "
+            f"Text: {len(converter.accumulated_text)} chars, "
+            f"Thinking: {len(converter.accumulated_thinking)} chars"
+        )
+        if content_blocks_summary:
             logger.info(
-                f"STREAMING COMPLETE - Model: {original_request.model}, "
-                f"Chunks: {converter.openai_chunks_received}, "
-                f"Input tokens: {input_tokens}, Output tokens: {final_output_tokens}, "
-                f"Text: {len(converter.accumulated_text)} chars, "
-                f"Thinking: {len(converter.accumulated_thinking)} chars"
+                f"📋 STREAMING_CONTENT_BLOCKS: {len(converter.current_content_blocks)} blocks"
             )
-            
-            # Log content blocks summary
-            logger.info(f"📋 STREAMING_CONTENT_BLOCKS: {len(converter.current_content_blocks)} blocks")
             for block_summary in content_blocks_summary:
                 logger.info(f"📋   {block_summary}")
-            
-            # Log tool calls summary if any
-            if tool_calls_summary:
-                logger.info(f"🔧 STREAMING_TOOL_CALLS: {len(tool_calls_summary)} tool calls")
-                for tool_call in tool_calls_summary:
-                    logger.info(f"🔧   Tool: {tool_call['name']} (id: {tool_call['id']})")
-                    logger.info(f"🔧   Input: {json.dumps(tool_call['input'], indent=4)}")
-            else:
-                logger.info("🔧 STREAMING_TOOL_CALLS: No tool calls")
+        if tool_calls_summary:
+            logger.info(f"🔧 STREAMING_TOOL_CALLS: {len(tool_calls_summary)} tool calls")
+            for tool_call in tool_calls_summary:
+                logger.info(f"🔧   Tool: {tool_call['name']} (id: {tool_call['id']})")
+                logger.info(f"🔧   Input: {json.dumps(tool_call['input'], indent=2)}")
+        else:
+            logger.info("🔧 STREAMING_TOOL_CALLS: No tool calls")
 
-        except Exception as cleanup_error:
-            logger.error(f"Error in streaming cleanup: {cleanup_error}")
+    except Exception as cleanup_error:
+        logger.error(f"Error in streaming cleanup logging: {cleanup_error}")
 
 
 def _calculate_accurate_output_tokens(
