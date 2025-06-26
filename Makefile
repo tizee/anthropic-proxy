@@ -5,10 +5,10 @@ dev-stable:
 	uv run uvicorn server:app --host 0.0.0.0 --port 8082
 
 run:
-	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
+	uv run python server.py --reload > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
 
 run-stable:
-	uv run uvicorn server:app --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
+	uv run python server.py > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
 
 stop:
 		@if [ -f uvicorn.pid ]; then \
@@ -26,7 +26,7 @@ stop:
 
 restart: stop
 	sleep 1
-	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082 > /dev/null 2>&1 & echo $$! > uvicorn.pid
+	uv run python server.py --reload > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
 
 .PHONY:stop restart run run-stable dev-stable test test-unittest lint format
 
@@ -44,6 +44,9 @@ test-cov:
 
 test-cov-html:
 	uv run pytest --cov=server --cov=models tests/ --cov-report html
+
+test-routing:
+	-uv run pytest tests/test_routing.py -v
 
 # Default test command (pytest)
 test: test-pytest

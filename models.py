@@ -2724,19 +2724,13 @@ def _calculate_accurate_output_tokens(
     reported_tokens: int,
     context: str = "",
 ) -> int:
-    """Calculate accurate output tokens using tiktoken (always use calculated, not reported)."""
-    calculated_tokens = count_tokens_in_response(
-        response_content=accumulated_text,
-        thinking_content=accumulated_thinking,
-        tool_calls=[],  # Tool calls handled separately in streaming
-    )
-
-    # Always use calculated tokens since reported tokens are often unreliable (0)
-    # for third-party models accessed through proxy APIs
-    final_tokens = calculated_tokens
+    """Use server-reported tokens for proxy service (no manual calculation needed)."""
+    # For a proxy service, always use the authoritative usage data from the API
+    # Manual token calculation is unnecessary and can be inaccurate
+    final_tokens = reported_tokens
 
     logger.debug(
-        f"{context} - Token comparison - Reported: {reported_tokens}, Calculated: {calculated_tokens}, Using: {final_tokens} (always using calculated)"
+        f"{context} - Token usage - Reported: {reported_tokens}, Using: {final_tokens} (server-reported)"
     )
     return final_tokens
 

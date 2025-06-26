@@ -10,6 +10,7 @@ from typing import Any
 import uvicorn
 import yaml
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import (
@@ -43,6 +44,54 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+def parse_token_value(value, default_value=None):
+    """Parse token value that can be in 'k' format (16k, 66k) or specific number.
+
+    Args:
+        value: The value to parse (can be string like "16k", "66k" or integer)
+        default_value: Default value to return if parsing fails
+
+    Returns:
+        Integer token count
+
+    Examples:
+        parse_token_value("16k") -> 16384
+        parse_token_value("66k") -> 67584
+        parse_token_value("8k") -> 8192
+        parse_token_value(8192) -> 8192
+        parse_token_value("256k") -> 262144
+    """
+    if value is None:
+        return default_value
+
+    # If it's already an integer, return it
+    if isinstance(value, int):
+        return value
+
+    # If it's a string, try to parse it
+    if isinstance(value, str):
+        value = value.strip().lower()
+
+        # Handle 'k' suffix format
+        if value.endswith('k'):
+            try:
+                num_str = value[:-1]  # Remove 'k'
+                num = float(num_str)
+                return int(num * 1024)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+                return default_value
+
+        # Handle plain number string
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+            return default_value
+
+    logger.warning(f"Unexpected token value type '{type(value)}' for value '{value}', using default {default_value}")
+
+    return default_value
 class Config:
     """Universal proxy server configuration with intelligent routing"""
 
@@ -56,10 +105,11 @@ class Config:
         }
 
         # Token thresholds
-        self.long_context_threshold = int(
+        self.long_context_threshold = parse_token_value(
             os.environ.get(
                 "LONG_CONTEXT_THRESHOLD", str(ModelDefaults.LONG_CONTEXT_THRESHOLD)
-            )
+            ),
+            ModelDefaults.LONG_CONTEXT_THRESHOLD,
         )
 
         # Server configuration
@@ -110,7 +160,18 @@ class Config:
 config = Config()
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan event handler."""
+    # Startup
+    # Note: Logging is not configured at this point
+    # It will be configured only when running the script directly.
+    initialize_custom_models()
+    load_all_plugins()
+    yield
+    # Shutdown (if needed)
+
+app = FastAPI(lifespan=lifespan)
 
 
 # Create a filter to block any log messages containing specific strings
@@ -149,8 +210,14 @@ class ColorizedFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logging():
+def setup_logging(is_reload=False):
     """Setup logging configuration - called on module import"""
+    # When using --reload, uvicorn spawns a subprocess, and logging needs to be re-initialized
+    # in the child process. We should not re-add handlers if they already exist.
+    root_logger = logging.getLogger()
+    if root_logger.hasHandlers() and is_reload:
+        return
+
     try:
         # Ensure log directory exists
         log_dir = os.path.dirname(config.log_file_path)
@@ -158,7 +225,6 @@ def setup_logging():
             os.makedirs(log_dir, exist_ok=True)
 
         # Configure the root logger
-        root_logger = logging.getLogger()
         root_logger.setLevel(getattr(logging, config.log_level.upper()))
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
@@ -201,53 +267,6 @@ setup_logging()
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
-def parse_token_value(value, default_value=None):
-    """Parse token value that can be in 'k' format (16k, 66k) or specific number.
-
-    Args:
-        value: The value to parse (can be string like "16k", "66k" or integer)
-        default_value: Default value to return if parsing fails
-
-    Returns:
-        Integer token count
-
-    Examples:
-        parse_token_value("16k") -> 16384
-        parse_token_value("66k") -> 67584
-        parse_token_value("8k") -> 8192
-        parse_token_value(8192) -> 8192
-        parse_token_value("256k") -> 262144
-    """
-    if value is None:
-        return default_value
-
-    # If it's already an integer, return it
-    if isinstance(value, int):
-        return value
-
-    # If it's a string, try to parse it
-    if isinstance(value, str):
-        value = value.strip().lower()
-
-        # Handle 'k' suffix format
-        if value.endswith('k'):
-            try:
-                num_str = value[:-1]  # Remove 'k'
-                num = float(num_str)
-                return int(num * 1024)
-            except (ValueError, TypeError):
-                logger.warning(f"Could not parse token value '{value}', using default {default_value}")
-                return default_value
-
-        # Handle plain number string
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            logger.warning(f"Could not parse token value '{value}', using default {default_value}")
-            return default_value
-
-    logger.warning(f"Unexpected token value type '{type(value)}' for value '{value}', using default {default_value}")
-    return default_value
 
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
@@ -297,6 +316,8 @@ def load_custom_models(config_file=None):
                 "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
                 "max_tokens": parse_token_value(model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS),
+                "context": parse_token_value(model.get("context"),
+                                             ModelDefaults.LONG_CONTEXT_THRESHOLD),
                 "input_cost_per_token": input_cost,
                 "output_cost_per_token": output_cost,
                 "max_input_tokens": parse_token_value(
@@ -382,13 +403,6 @@ def determine_model_by_router(
         f"🔀 Router input: model={original_model}, tokens={token_count}, thinking={has_thinking}"
     )
 
-    # If token count is greater than threshold, use long context model (highest priority)
-    if token_count > config.long_context_threshold:
-        result = config.router_config["long_context"]
-        logger.info(
-            f"🔀 Router: Using long context model due to token count: {token_count}, result: {result}"
-        )
-        return result
 
     # If has thinking enabled, use think model (second priority)
     if has_thinking:
@@ -428,13 +442,6 @@ def determine_model_by_router(
 
 # --- FASTAPI ENDPOINTS ---
 
-@app.on_event("startup")
-async def startup_event():
-    """Load plugins and custom models on startup."""
-    # Note: Logging is not configured at this point
-    # It will be configured only when running the script directly.
-    initialize_custom_models()
-    load_all_plugins()
 
 
 @app.middleware("http")
@@ -583,6 +590,35 @@ async def create_message(raw_request: Request):
         routed_model = determine_model_by_router(
             original_model, token_count, has_thinking
         )
+
+        # Final routing check: if the token count exceeds the model's max_input_tokens,
+        # switch to the long context model as a fallback.
+        if routed_model in CUSTOM_OPENAI_MODELS:
+            model_config_check = CUSTOM_OPENAI_MODELS[routed_model]
+            max_input_for_model = model_config_check.get("max_input_tokens", 0)
+
+            if token_count > max_input_for_model:
+                long_context_model = config.router_config["long_context"]
+                logger.info(
+                    f" ROUTING: Token count {token_count} exceeds max input {max_input_for_model} for '{routed_model}'. "
+                    f"Switching to long context model: '{long_context_model}'."
+                )
+                routed_model = long_context_model
+            else:
+                logger.info(
+                    f" ROUTING: Token count {token_count} is within max input {max_input_for_model} for '{routed_model}'. "
+                    f"No change needed."
+                )
+        else:
+            # Fallback for models not in custom config (e.g., standard Anthropic models)
+            # using the global threshold.
+            if token_count > config.long_context_threshold:
+                long_context_model = config.router_config["long_context"]
+                logger.info(
+                    f" ROUTING: Token count {token_count} exceeds global threshold {config.long_context_threshold}. "
+                    f"Switching to long context model: '{long_context_model}'."
+                )
+                routed_model = long_context_model
 
         # Most of time it would be default model
         model_config = CUSTOM_OPENAI_MODELS[routed_model]
@@ -978,6 +1014,13 @@ def log_request_beautifully(
 if __name__ == "__main__":
     # This block is only executed when the script is run directly,
     # not when it's imported by another script.
+    import argparse
+    parser = argparse.ArgumentParser(description="Run the Claude Code Proxy Server.")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload on code changes.")
+    args = parser.parse_args()
+
+    # Re-initialize logging for the main process, especially for reload scenario
+    setup_logging(is_reload=args.reload)
 
     # Print initial configuration status
     print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
@@ -986,8 +1029,4 @@ if __name__ == "__main__":
     )
 
     # Run the Server
-    if len(sys.argv) > 1 and sys.argv[1] == "--help":
-        print("Run with: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
-        sys.exit(0)
-
-    uvicorn.run(app, host=config.host, port=config.port, log_config=None)
+    uvicorn.run("server:app", host=config.host, port=config.port, log_config=None, reload=args.reload)
