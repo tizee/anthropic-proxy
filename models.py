@@ -1876,6 +1876,119 @@ class AnthropicStreamingConverter:
         )
         return event_str
 
+    def is_malformed_tool_json(self, json_str: str) -> bool:
+        """Enhanced malformed tool JSON detection."""
+        if not json_str or not isinstance(json_str, str):
+            return True
+            
+        json_stripped = json_str.strip()
+        
+        # Empty or whitespace
+        if not json_stripped:
+            return True
+            
+        # Single characters that indicate malformed JSON
+        malformed_singles = ["{", "}", "[", "]", ",", ":", '"', "'"]
+        if json_stripped in malformed_singles:
+            return True
+            
+        # Common malformed patterns
+        malformed_patterns = [
+            '{"', '"}', "[{", "}]", "{}", "[]", 
+            "null", '""', "''", " ", "",
+            "{,", ",}", "[,", ",]"
+        ]
+        if json_stripped in malformed_patterns:
+            return True
+            
+        # Incomplete JSON structures
+        if json_stripped.startswith('{') and not json_stripped.endswith('}'):
+            if len(json_stripped) < 15:  # Very short incomplete JSON
+                return True
+                
+        if json_stripped.startswith('[') and not json_stripped.endswith(']'):
+            if len(json_stripped) < 10:
+                return True
+        
+        # Check for obviously broken JSON patterns
+        if json_stripped.count('{') != json_stripped.count('}'):
+            if len(json_stripped) < 20:  # Only for short chunks
+                return True
+                
+        if json_stripped.count('[') != json_stripped.count(']'):
+            if len(json_stripped) < 20:
+                return True
+        
+        # Check for trailing malformed characters (like the ']' issue we saw)
+        if json_stripped.endswith('}]') or json_stripped.endswith('},]'):
+            return True
+        
+        # Check for malformed JSON syntax patterns
+        malformed_syntax_patterns = [
+            ':}',  # Missing value before closing brace
+            ':,',  # Missing value before comma
+            ':{',  # Missing value, nested object
+            ':]',  # Missing value before closing bracket
+        ]
+        
+        for pattern in malformed_syntax_patterns:
+            if pattern in json_stripped:
+                return True
+        
+        return False
+
+    def try_repair_tool_json(self, json_str: str) -> tuple[dict, bool]:
+        """Try to repair malformed tool JSON and return (parsed_json, was_repaired)."""
+        if not json_str or not isinstance(json_str, str):
+            return {}, False
+            
+        json_stripped = json_str.strip()
+        
+        # Try parsing as-is first
+        try:
+            return json.loads(json_stripped), False
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to find complete JSON objects in the string
+        brace_count = 0
+        start_pos = -1
+        
+        for i, char in enumerate(json_stripped):
+            if char == '{':
+                if start_pos == -1:
+                    start_pos = i
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and start_pos != -1:
+                    # Found complete JSON object
+                    json_candidate = json_stripped[start_pos:i+1]
+                    try:
+                        parsed = json.loads(json_candidate)
+                        return parsed, True
+                    except json.JSONDecodeError:
+                        continue
+        
+        # Try removing common trailing artifacts
+        repair_attempts = [
+            json_stripped.rstrip(']'),  # Remove trailing ]
+            json_stripped.rstrip('},]'),  # Remove trailing },]
+            json_stripped.rstrip('}]'),   # Remove trailing }]
+            json_stripped.rstrip(','),    # Remove trailing comma
+        ]
+        
+        for attempt in repair_attempts:
+            if attempt != json_stripped:  # Only try if it's different
+                try:
+                    parsed = json.loads(attempt)
+                    return parsed, True
+                except json.JSONDecodeError:
+                    continue
+        
+        # If all repair attempts fail, return empty dict
+        return {}, False
+
     def _send_content_block_delta_event(self, delta_type: str, content: str) -> str:
         """Send content_block_delta event."""
         delta = {"type": delta_type}
@@ -2354,13 +2467,22 @@ class AnthropicStreamingConverter:
             
             # Ensure tool JSON is complete and parsed
             if self.tool_json:
-                try:
-                    final_parsed_json = json.loads(self.tool_json)
+                # Try to repair and parse the tool JSON
+                final_parsed_json, was_repaired = self.try_repair_tool_json(self.tool_json)
+                
+                if final_parsed_json:
                     self.current_content_blocks[self.content_block_index]["input"] = final_parsed_json
-                    logger.debug(f"🔚 PREPARE_FINALIZATION: Final tool input: {json.dumps(final_parsed_json, indent=2)}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"🔚 PREPARE_FINALIZATION: Failed to parse final tool JSON: {e}")
+                    if was_repaired:
+                        logger.warning(f"🔧 PREPARE_FINALIZATION: Successfully repaired malformed tool JSON")
+                        logger.debug(f"🔧 PREPARE_FINALIZATION: Original: {self.tool_json}")
+                        logger.debug(f"🔧 PREPARE_FINALIZATION: Repaired: {json.dumps(final_parsed_json, indent=2)}")
+                    else:
+                        logger.debug(f"🔚 PREPARE_FINALIZATION: Final tool input: {json.dumps(final_parsed_json, indent=2)}")
+                else:
+                    logger.error(f"🔚 PREPARE_FINALIZATION: Failed to parse or repair tool JSON")
                     logger.error(f"🔚 PREPARE_FINALIZATION: Raw tool JSON: {self.tool_json}")
+                    # Set empty input as fallback to avoid breaking the stream
+                    self.current_content_blocks[self.content_block_index]["input"] = {}
             
             # Close the tool use block
             logger.debug("🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool_use")

@@ -52,7 +52,7 @@ class Config:
             "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3-250324"),
             "think": os.environ.get("ROUTER_THINK", "deepseek-r1-250528"),
             "long_context": os.environ.get("ROUTER_LONG_CONTEXT", "gemini-2.5-pro"),
-            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-r1-250324"),
+            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3-250324"),
         }
 
         # Token thresholds
@@ -201,6 +201,54 @@ setup_logging()
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 
+def parse_token_value(value, default_value=None):
+    """Parse token value that can be in 'k' format (16k, 66k) or specific number.
+
+    Args:
+        value: The value to parse (can be string like "16k", "66k" or integer)
+        default_value: Default value to return if parsing fails
+
+    Returns:
+        Integer token count
+
+    Examples:
+        parse_token_value("16k") -> 16384
+        parse_token_value("66k") -> 67584
+        parse_token_value("8k") -> 8192
+        parse_token_value(8192) -> 8192
+        parse_token_value("256k") -> 262144
+    """
+    if value is None:
+        return default_value
+
+    # If it's already an integer, return it
+    if isinstance(value, int):
+        return value
+
+    # If it's a string, try to parse it
+    if isinstance(value, str):
+        value = value.strip().lower()
+
+        # Handle 'k' suffix format
+        if value.endswith('k'):
+            try:
+                num_str = value[:-1]  # Remove 'k'
+                num = float(num_str)
+                return int(num * 1024)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+                return default_value
+
+        # Handle plain number string
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Could not parse token value '{value}', using default {default_value}")
+            return default_value
+
+    logger.warning(f"Unexpected token value type '{type(value)}' for value '{value}', using default {default_value}")
+    return default_value
+
 # Function to load custom model configurations
 def load_custom_models(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file."""
@@ -248,11 +296,11 @@ def load_custom_models(config_file=None):
                 "api_base": model["api_base"],
                 "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
-                "max_tokens": model.get("max_tokens", ModelDefaults.DEFAULT_MAX_TOKENS),
+                "max_tokens": parse_token_value(model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS),
                 "input_cost_per_token": input_cost,
                 "output_cost_per_token": output_cost,
-                "max_input_tokens": model.get(
-                    "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
+                "max_input_tokens": parse_token_value(
+                    model.get("max_input_tokens"), ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
                 ),
                 # openai request extra options
                 "extra_headers": model.get("extra_headers", {}),
