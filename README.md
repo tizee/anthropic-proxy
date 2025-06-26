@@ -1,13 +1,23 @@
 # Anthropic API Proxy for Multiple Model Providers 🔄
 
-**Claude Code Version: 1.0.31**
+## Supported Claude Code Versions
 
-Tested Models:
-    - DeepSeek-v3
-    - DeepSeek-r1
-    - Claude (Yes, OpenAI format Claude from OpenRouter)
-    - Doubao-seed-1.6
-    - Gemini-2.5-pro (OpenAI format from OpenRouter)
+| Version | Status | Notes |
+|---------|--------|-------|
+| 1.0.35  | ✅ Tested | Current supported version |
+| 1.0.x   | ⚠️ Likely Compatible | Earlier versions may work but untested |
+
+## Tested Models
+
+| Provider | Model | Format | Status | Notes |
+|----------|-------|--------|--------|-------|
+| **DeepSeek** | deepseek-v3 | OpenAI | ✅ Fully Tested | Recommended for background tasks |
+| **DeepSeek** | deepseek-r1 | OpenAI | ✅ Fully Tested | Optimized for thinking/reasoning |
+| **OpenRouter** | claude models | OpenAI | ✅ Fully Tested | Claude via OpenAI format |
+| **ByteDance** | doubao-seed-1.6 | OpenAI | ✅ Fully Tested | Doubao model support |
+| **OpenRouter** | Gemini-2.5-pro | OpenAI | ✅ Fully Tested | Google Gemini via OpenRouter |
+| **Google** | gemini-2.5-pro | OpenAI | ✅ Fully Tested | Direct Google API |
+| **Google** | gemini-2.5-flash-lite-preview-06-17 | OpenAI | ✅ Fully Tested | Preview model |
 
 A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. Features intelligent routing based on token count, thinking flag, and model name.
 
