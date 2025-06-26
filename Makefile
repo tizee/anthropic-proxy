@@ -11,17 +11,33 @@ run-stable:
 	uv run python server.py > uvicorn.log 2>&1 & echo $$! > uvicorn.pid
 
 stop:
-		@if [ -f uvicorn.pid ]; then \
+	@stopped=false; \
+	if [ -f uvicorn.pid ]; then \
 	  PID=$$(cat uvicorn.pid); \
 	  if ps -p $$PID > /dev/null; then \
 	    CMDLINE=$$(ps -p $$PID -o args=); \
-	    echo "$$CMDLINE" | grep -q "server:app" && echo "$$CMDLINE" | grep -q "8082" && kill $$PID && rm uvicorn.pid || echo 'pid exists but is not the fastapi API'; \
+	    if echo "$$CMDLINE" | grep -q "python server.py"; then \
+	      echo "Stopping server (from 'run') with PID $$PID..."; \
+	      kill $$PID && rm uvicorn.pid; \
+	      echo "Server stopped."; \
+	      stopped=true; \
+	    fi; \
 	  else \
-	    echo "No running process with PID"; \
+	    echo "Stale PID file found. Removing it."; \
 	    rm uvicorn.pid; \
-	  fi \
-	else \
-	  echo "No PID file found"; \
+	  fi; \
+	fi; \
+	if [ "$$stopped" = "false" ]; then \
+	  PIDS=$$(pgrep -f "uvicorn server:app"); \
+	  if [ -n "$$PIDS" ]; then \
+	    echo "Stopping server (from 'dev') with PID(s) $$PIDS..."; \
+	    kill $$PIDS; \
+	    echo "Server stopped."; \
+	    stopped=true; \
+	  fi; \
+	fi; \
+	if [ "$$stopped" = "false" ]; then \
+	  echo "No running server found."; \
 	fi
 
 restart: stop

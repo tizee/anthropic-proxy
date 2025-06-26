@@ -210,12 +210,13 @@ class ColorizedFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logging(is_reload=False):
-    """Setup logging configuration - called on module import"""
-    # When using --reload, uvicorn spawns a subprocess, and logging needs to be re-initialized
-    # in the child process. We should not re-add handlers if they already exist.
+def setup_logging():
+    """Setup logging configuration to be idempotent."""
+    # This function is designed to be safe to call multiple times.
+    # It ensures that logging handlers are only added once to the root logger,
+    # preventing duplicate log entries in multi-process environments (like uvicorn workers).
     root_logger = logging.getLogger()
-    if root_logger.hasHandlers() and is_reload:
+    if root_logger.hasHandlers():
         return
 
     try:
@@ -1020,7 +1021,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Re-initialize logging for the main process, especially for reload scenario
-    setup_logging(is_reload=args.reload)
+    setup_logging()
 
     # Print initial configuration status
     print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")

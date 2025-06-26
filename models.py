@@ -2583,10 +2583,7 @@ async def convert_openai_streaming_response_to_anthropic(
                 # Reset consecutive errors on successful processing
                 consecutive_errors = 0
 
-                # If response is finalized, break out of loop
-                if converter.has_sent_stop_reason:
-                    logger.debug(f"🌊 STREAM_FINALIZED: Breaking after {chunk_count} chunks")
-                    break
+                # Note: Do not break on has_sent_stop_reason to ensure we receive all chunks from remote server
 
             except Exception as e:
                 consecutive_errors += 1
@@ -2597,9 +2594,9 @@ async def convert_openai_streaming_response_to_anthropic(
                     break
                 continue
 
-        # Handle case where no finish_reason was received
+        # Handle stream completion - ensure proper cleanup regardless of how stream ended
         if not converter.has_sent_stop_reason:
-            logger.debug("No finish_reason received, closing stream manually")
+            logger.debug("Stream ended without finish_reason, performing cleanup")
 
             # Close any open blocks
             if converter.thinking_block_started and not converter.thinking_block_closed:
@@ -2631,7 +2628,13 @@ async def convert_openai_streaming_response_to_anthropic(
                 "No finish reason received",
             )
 
-            stop_reason = "tool_use" if converter.is_tool_use else "end_turn"
+            # Determine appropriate stop_reason based on content and pending finish_reason
+            if hasattr(converter, 'pending_finish_reason') and converter.pending_finish_reason == "tool_calls":
+                stop_reason = "tool_use"
+            elif converter.is_tool_use:
+                stop_reason = "tool_use"
+            else:
+                stop_reason = "end_turn"
             yield converter._send_message_delta_event(stop_reason, final_output_tokens)
             yield converter._send_message_stop_event()
             yield converter._send_done_event()

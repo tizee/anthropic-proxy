@@ -50,14 +50,32 @@ ROUTER_DEFAULT="custom/deepseek-v3-250324"     # Fallback
 ```
 
 ### Running the Server
-```bash
-make run
-```
 
-Or manually:
+There are several ways to run the server, depending on your development needs.
+
+#### Development (Foreground)
+For most development work, run the server in the foreground with auto-reload. This is the recommended way to run the server while you are making changes.
+
+```bash
+make dev
+```
+This command will stream logs directly to your terminal. Press `Ctrl+C` to stop the server.
+
+This is equivalent to running manually:
 ```bash
 uv run uvicorn server:app --host 0.0.0.0 --port 8082 --reload
 ```
+
+#### Production / Background
+To run the server as a background process, use:
+```bash
+make run
+```
+This will start the server and write its logs to `uvicorn.log`. The process ID (PID) will be saved in `uvicorn.pid`.
+
+You can manage the background process with:
+- `make stop`: Stops the background server process.
+- `make restart`: Restarts the background server process.
 
 ### Connecting Claude Code
 ```bash
@@ -66,90 +84,34 @@ ANTHROPIC_BASE_URL=http://localhost:8082 claude
 
 ### Testing
 
-The project includes comprehensive test suites using modern Python testing frameworks:
+The project uses `pytest` as the primary testing framework and includes a comprehensive test suite. You can run tests using the provided `make` commands.
 
-#### pytest Framework (Recommended) ⭐
+#### Running Test Suites
 
-Modern pytest-based testing with automatic discovery:
+- **Run the main test suite (recommended)**:
+  ```bash
+  make test
+  ```
 
-```bash
-make test                   # Run pytest suite (recommended)
-make test-pytest           # Run pytest suite explicitly
-pytest tests/ -v           # Direct pytest execution
-```
+- **Run the `unittest`-based suite**:
+  ```bash
+  make test-unittest
+  ```
 
-#### unittest Framework (`tests/test_unittest.py`) ⭐
+- **Generate a test coverage report**:
+  ```bash
+  make test-cov
+  ```
+  To view the report in HTML format, run `make test-cov-html` and open `htmlcov/index.html`.
 
-A comprehensive unittest-based test suite:
+#### Quick Development Tests
 
-```bash
-make test-unittest          # Run unittest suite
-python tests/test_unittest.py   # Direct execution
-```
+For faster feedback during development, you can run specific sets of tests:
 
-**Features:**
-- 🧪 **13 Test Classes** with 33+ async test methods
-- 🔄 **Anthropic API Comparison**: Proxy vs Official API ground truth validation
-- 🎯 **Custom Model Testing**: Gemini, DeepSeek, and other provider conversions
-- 🛠️ **Tool Use Validation**: 13 different tools (calculator, edit, todo, bash, etc.)
-- 📊 **Behavioral Difference Analysis**: Warns instead of failing for expected differences
-- 🌊 **Advanced Streaming Tests**: Event validation and content aggregation
-- 🧠 **Thinking Features**: Supports reasoning mode testing
-
-**Test Classes:**
-- `TestBasicRequests` - Basic request functionality
-- `TestToolRequests` - Tool usage scenarios
-- `TestClaudeCodeTools` - Claude Code specific tools
-- `TestConversationFlow` - Multi-turn conversations
-- `TestStreamingSpecific` - Streaming response handling
-- `TestThinkingFeatures` - Reasoning mode tests
-- `TestErrorHandling` - Error scenarios validation
-- `TestAnthropicComparison` ⭐ - Proxy vs Official API comparison
-- `TestCustomModels` ⭐ - Custom model conversions (Gemini, DeepSeek)
-- `TestBehavioralDifferences` ⭐ - Expected behavior difference handling
-- `TestClaudeCodeWorkflows` ⭐ - Claude Code tool workflows
-- `TestStreamingAdvanced` ⭐ - Advanced streaming scenarios
-- `TestComplexScenarios` ⭐ - Complex multi-step workflows
-
-**Usage Examples:**
-```bash
-# Run all tests with pytest
-pytest tests/ -v
-pytest tests/test_unittest.py -v    # Specific file
-pytest tests/test_conversions.py -v # Conversion tests
-
-# Run all unittest tests
-python tests/test_unittest.py
-python -m unittest tests.test_unittest -v
-
-# Run specific test classes
-python -m unittest tests.test_unittest.TestCustomModels -v
-python -m unittest tests.test_unittest.TestAnthropicComparison -v
-
-# Run specific test methods
-python -m unittest tests.test_unittest.TestCustomModels.test_gemini_tool_conversion -v
-python -m unittest tests.test_unittest.TestToolRequests.test_calculator_tool -v
-```
-
-#### Ground Truth Validation ⭐
-
-The unittest framework includes unique **Anthropic API comparison testing**:
-- **Proxy Response vs Official Response**: Validates data conversion accuracy
-- **Tool Use Verification**: Ensures tool calling works correctly across providers
-- **Behavioral Difference Handling**: Distinguishes between bugs and expected differences
-- **Custom Model Validation**: Tests specific provider conversions (Gemini schema cleaning, etc.)
-
-#### Test Output Features
-
-Both test suites provide:
-- **Colored output** for better readability
-- **Token counting** and cost estimation
-- **Response time tracking**
-- **Error handling validation**
-- **Streaming chunk validation**
-- **Tool execution verification**
-- **Ground truth comparison** (unittest only)
-- **Behavioral difference analysis** (unittest only)
+- `make test-basic`: Runs basic request validation tests.
+- `make test-tools`: Tests tool usage scenarios.
+- `make test-custom`: Focuses on custom model integrations.
+- `make test-comparison`: Compares proxy output with the official Anthropic API.
 
 ### Linting
 ```bash
@@ -248,7 +210,7 @@ Add custom OpenAI-compatible models in `models.yaml`:
 
 3. **Development Cycle**:
    ```bash
-   make run            # Start development server
+   make dev            # Start development server
    make test           # Run test suite
    make lint           # Check code quality
    make format         # Format code
@@ -402,12 +364,11 @@ Models are defined in `models.yaml`:
 | Custom   | Any OpenAI-compatible API |
 
 ## API Endpoints
-- `/v1/messages`: Main endpoint for message requests
-- `/v1/messages/count_tokens`: Count tokens in messages
-- `/v1/messages/test_conversion`: Direct model testing without routing
-- `/v1/stats`: Get session statistics
-- `/health`: Health check endpoint
-- `/test-connection`: Test API connectivity
+- `/v1/messages`: The main endpoint for handling chat completion requests. It supports streaming and intelligent model routing.
+- `/v1/messages/count_tokens`: Calculates the number of tokens for a given set of messages, which is useful for estimating costs.
+- `/v1/messages/test_conversion`: A testing endpoint to directly convert and proxy a request to a specific model, bypassing the router.
+- `/v1/stats`: Returns token usage statistics for the current session, including costs and tokens for both input and output.
+- `/test-connection`: Checks the connection to the configured API providers.
 
 ## Error Handling
 - Centralized error extraction and formatting
@@ -418,11 +379,30 @@ Models are defined in `models.yaml`:
 - Chunked reading for large files
 - Concurrent processing where possible
 
-## Code Quality
-Follows SOLID principles:
-- Single Responsibility Principle (SRP)
-- Open/Closed Principle (OCP)
-- KISS and DRY principles
+## Code Design Principles
+
+When refactoring or modifying the codebase, follow these established design principles:
+
+### SOLID Principles
+- **Single Responsibility Principle (SRP)**: Each function/class should have one reason to change. Keep functions focused on a single task.
+- **Open/Closed Principle (OCP)**: Code should be open for extension but closed for modification. Use function extraction to make code more extensible.
+
+### Code Quality Guidelines
+- **KISS Principle**: Keep it simple. Break complex logic into smaller, understandable functions.
+- **DRY Principle**: Don't repeat yourself. Extract common logic into reusable functions.
+- **Function Length**: Keep functions short and focused (ideally under 50 lines following Code Complete 2 guidelines).
+
+### Codebase Patterns
+- **Error Handling**: Use centralized error extraction and formatting functions (`_extract_error_details`, `_format_error_message`).
+- **Model Validation**: Use the shared `validate_and_map_model` function for consistent model handling.
+- **API Integration**: Separate concerns with dedicated setup functions (`setup_api_key_for_request`, `process_openai_message_format`).
+- **Streaming**: Use event helper functions for consistent streaming response formatting.
+
+### Refactoring Guidelines
+- **Extract Functions**: When a function exceeds 50 lines or handles multiple concerns, extract subfunctions.
+- **Eliminate Duplication**: Look for repeated code patterns and extract them into shared utilities.
+- **Improve Readability**: Use descriptive function names that clearly indicate their purpose.
+- **Maintain Testability**: Small, focused functions are easier to test and debug.
 
 ## Security
 - Input validation
