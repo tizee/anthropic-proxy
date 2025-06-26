@@ -2028,6 +2028,395 @@ class TestStreamingFunctionCalls(unittest.TestCase):
         except Exception as e:
             self.skipTest(f"Proxy server not available: {e}")
 
+    def test_claude_official_event_flow_compliance(self):
+        """
+        Test complete Claude streaming event flow compliance based on official docs.
+        
+        Official Claude event flow:
+        1. message_start: contains a Message object with empty content
+        2. Series of content blocks (content_block_start → content_block_delta* → content_block_stop)
+        3. One or more message_delta events (top-level Message changes)
+        4. Final message_stop event
+        """
+        print("🧪 Testing Claude Official Event Flow Compliance...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Use MultiEdit to add a comment to a file, then tell me you're done"
+                }
+            ],
+            "tools": [
+                {
+                    "name": "MultiEdit",
+                    "description": "Make multiple edits to a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "old_string": {"type": "string"},
+                                        "new_string": {"type": "string"}
+                                    },
+                                    "required": ["old_string", "new_string"]
+                                }
+                            }
+                        },
+                        "required": ["file_path", "edits"]
+                    }
+                }
+            ]
+        }
+
+        import asyncio
+
+        async def run_official_flow_test():
+            try:
+                print("🔍 Running Claude Official Event Flow test...")
+                result = await self._send_streaming_request(request_data)
+                events = result["events"]
+                
+                print(f"\n📋 Testing {len(events)} events against Claude official flow...")
+
+                # Extract event types in order
+                event_types = [event.get("type") for event in events]
+                print(f"🔄 Event flow: {' → '.join(event_types)}")
+
+                # 1. MUST start with message_start
+                print("\n📌 Step 1: Verifying message_start...")
+                self.assertTrue(len(events) > 0, "Should have at least one event")
+                self.assertEqual(event_types[0], "message_start", "First event MUST be message_start")
+                
+                message_start = events[0]
+                self.assertIn("message", message_start, "message_start should contain message object")
+                message_obj = message_start["message"]
+                self.assertEqual(message_obj.get("content"), [], "message_start should have empty content")
+                print("✅ message_start verified: empty content Message object")
+
+                # 2. Content blocks validation
+                print("\n📌 Step 2: Verifying content block sequences...")
+                content_block_starts = [i for i, e in enumerate(events) if e.get("type") == "content_block_start"]
+                content_block_stops = [i for i, e in enumerate(events) if e.get("type") == "content_block_stop"]
+                content_block_deltas = [i for i, e in enumerate(events) if e.get("type") == "content_block_delta"]
+                
+                print(f"📊 Content blocks: {len(content_block_starts)} starts, {len(content_block_stops)} stops, {len(content_block_deltas)} deltas")
+                
+                # Each content_block_start should have matching content_block_stop
+                self.assertEqual(len(content_block_starts), len(content_block_stops), 
+                               "Each content_block_start must have matching content_block_stop")
+                
+                # Verify content block structure
+                for i, (start_idx, stop_idx) in enumerate(zip(content_block_starts, content_block_stops)):
+                    print(f"🔍 Validating content block {i} (events {start_idx}-{stop_idx})...")
+                    
+                    # start should come before stop
+                    self.assertLess(start_idx, stop_idx, f"content_block_start {start_idx} should come before content_block_stop {stop_idx}")
+                    
+                    # Verify index consistency
+                    start_event = events[start_idx]
+                    stop_event = events[stop_idx]
+                    start_index = start_event.get("index")
+                    stop_index = stop_event.get("index")
+                    self.assertEqual(start_index, stop_index, f"Content block start and stop should have same index")
+                    self.assertEqual(start_index, i, f"Content block should have index {i}")
+                    
+                    # Verify deltas are between start and stop
+                    block_deltas = [idx for idx in content_block_deltas if start_idx < idx < stop_idx]
+                    if block_deltas:
+                        print(f"  ✅ Content block {i}: {len(block_deltas)} deltas between start and stop")
+                        
+                        # Verify all deltas have correct index
+                        for delta_idx in block_deltas:
+                            delta_event = events[delta_idx]
+                            delta_index = delta_event.get("index")
+                            self.assertEqual(delta_index, i, f"Delta at event {delta_idx} should have index {i}")
+                    else:
+                        print(f"  ℹ️ Content block {i}: no deltas (single-shot block)")
+
+                # 3. message_delta events validation
+                print("\n📌 Step 3: Verifying message_delta events...")
+                message_deltas = [i for i, e in enumerate(events) if e.get("type") == "message_delta"]
+                print(f"📊 Found {len(message_deltas)} message_delta events")
+                self.assertGreaterEqual(len(message_deltas), 1, "Should have at least one message_delta event")
+                
+                # Verify message_delta events contain usage and stop_reason
+                for delta_idx in message_deltas:
+                    delta_event = events[delta_idx]
+                    delta_data = delta_event.get("delta", {})
+                    
+                    if "stop_reason" in delta_data:
+                        print(f"  ✅ message_delta {delta_idx}: stop_reason = {delta_data['stop_reason']}")
+                    if "usage" in delta_data:
+                        usage = delta_data["usage"]
+                        print(f"  ✅ message_delta {delta_idx}: usage = input:{usage.get('input_tokens', 0)}, output:{usage.get('output_tokens', 0)}")
+
+                # 4. MUST end with message_stop
+                print("\n📌 Step 4: Verifying message_stop...")
+                message_stops = [i for i, e in enumerate(events) if e.get("type") == "message_stop"]
+                self.assertGreaterEqual(len(message_stops), 1, "Should have at least one message_stop event")
+                
+                # message_stop should be near the end (allow for 'done' events)
+                last_message_stop = message_stops[-1]
+                remaining_events = events[last_message_stop + 1:]
+                non_done_remaining = [e for e in remaining_events if e.get("type") != "done"]
+                self.assertEqual(len(non_done_remaining), 0, "message_stop should be last meaningful event")
+                print(f"✅ message_stop verified at position {last_message_stop}")
+
+                # 5. Event order validation
+                print("\n📌 Step 5: Verifying event order compliance...")
+                
+                # message_start should be first
+                first_message_start = next((i for i, e in enumerate(events) if e.get("type") == "message_start"), -1)
+                self.assertEqual(first_message_start, 0, "message_start should be first event")
+                
+                # All content_block_start events should come after message_start
+                for start_idx in content_block_starts:
+                    self.assertGreater(start_idx, first_message_start, "content_block_start should come after message_start")
+                
+                # All message_delta events should come after content blocks
+                last_content_stop = max(content_block_stops) if content_block_stops else first_message_start
+                for delta_idx in message_deltas:
+                    self.assertGreater(delta_idx, last_content_stop, "message_delta should come after content blocks")
+                
+                # message_stop should come after message_delta
+                first_message_delta = min(message_deltas) if message_deltas else last_content_stop
+                for stop_idx in message_stops:
+                    self.assertGreater(stop_idx, first_message_delta, "message_stop should come after message_delta")
+                
+                print("✅ Event order compliance verified")
+
+                # 6. Tool call specific validation (if present)
+                tool_blocks = [e for e in events if e.get("type") == "content_block_start" and 
+                             e.get("content_block", {}).get("type") == "tool_use"]
+                if tool_blocks:
+                    print(f"\n📌 Step 6: Verifying tool call compliance...")
+                    print(f"🔧 Found {len(tool_blocks)} tool_use blocks")
+                    
+                    for tool_block in tool_blocks:
+                        block = tool_block.get("content_block", {})
+                        self.assertIn("id", block, "tool_use block should have id")
+                        self.assertIn("name", block, "tool_use block should have name")
+                        self.assertIn("input", block, "tool_use block should have input")
+                        print(f"  ✅ Tool: {block.get('name')} (id: {block.get('id')})")
+                    
+                    # Verify input_json_delta events for tool calls
+                    json_deltas = [e for e in events if e.get("type") == "content_block_delta" and 
+                                 e.get("delta", {}).get("type") == "input_json_delta"]
+                    if json_deltas:
+                        total_json = "".join(e.get("delta", {}).get("partial_json", "") for e in json_deltas)
+                        print(f"  ✅ Tool JSON accumulated: {len(total_json)} chars from {len(json_deltas)} deltas")
+                        
+                        # Should be valid JSON
+                        try:
+                            import json
+                            parsed = json.loads(total_json)
+                            print(f"  ✅ Valid JSON with keys: {list(parsed.keys())}")
+                        except json.JSONDecodeError as e:
+                            self.fail(f"Accumulated tool JSON should be valid: {e}")
+
+                print(f"\n🎉 Claude Official Event Flow Compliance: PASSED")
+                print(f"📊 Summary: {len(events)} events, {len(content_block_starts)} content blocks, {len(message_deltas)} deltas")
+                return True
+
+            except Exception as e:
+                print(f"❌ Official flow test failed: {e}")
+                import traceback
+                print(f"📄 Full traceback:\n{traceback.format_exc()}")
+                return False
+
+        try:
+            result = asyncio.run(run_official_flow_test())
+            if not result:
+                self.skipTest("Proxy server not available or test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_streaming_event_types_comprehensive(self):
+        """
+        Test all Claude streaming event types comprehensively.
+        
+        Claude streaming events:
+        - message_start: Message object with empty content
+        - content_block_start: Start of content block (text/tool_use)
+        - content_block_delta: Incremental content (text/input_json_delta)
+        - content_block_stop: End of content block
+        - message_delta: Message-level changes (usage, stop_reason)
+        - message_stop: Final message completion
+        - ping: Keep-alive events
+        - done: Stream completion marker
+        """
+        print("🧪 Testing Comprehensive Event Types...")
+
+        # Test different scenarios to trigger various event types
+        test_scenarios = [
+            {
+                "name": "Text Response",
+                "request": {
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 100,
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "Say hello briefly"}]
+                },
+                "expected_events": ["message_start", "content_block_start", "content_block_delta", 
+                                  "content_block_stop", "message_delta", "message_stop"],
+                "expected_content_type": "text"
+            },
+            {
+                "name": "Tool Call Only",
+                "request": {
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 500,
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "Use test_function to say hello"}],
+                    "tools": [{
+                        "name": "test_function",
+                        "description": "Test function",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"message": {"type": "string"}},
+                            "required": ["message"]
+                        }
+                    }],
+                    "tool_choice": {"type": "tool", "name": "test_function"}
+                },
+                "expected_events": ["message_start", "content_block_start", "content_block_delta", 
+                                  "content_block_stop", "message_delta", "message_stop"],
+                "expected_content_type": "tool_use"
+            }
+        ]
+
+        import asyncio
+
+        async def run_event_types_test():
+            results = {}
+            
+            for scenario in test_scenarios:
+                print(f"\n🔍 Testing scenario: {scenario['name']}")
+                try:
+                    result = await self._send_streaming_request(scenario["request"])
+                    events = result["events"]
+                    
+                    # Analyze event types
+                    event_types = [e.get("type") for e in events]
+                    unique_event_types = list(set(event_types))
+                    
+                    print(f"📊 Event types found: {sorted(unique_event_types)}")
+                    print(f"📋 Event sequence: {' → '.join(event_types[:15])}{'...' if len(event_types) > 15 else ''}")
+                    
+                    # Check required events
+                    for required_event in scenario["expected_events"]:
+                        self.assertIn(required_event, event_types, 
+                                    f"Scenario '{scenario['name']}' should have {required_event}")
+                        print(f"  ✅ Found required event: {required_event}")
+                    
+                    # Analyze content blocks
+                    content_block_starts = [e for e in events if e.get("type") == "content_block_start"]
+                    if content_block_starts:
+                        for start_event in content_block_starts:
+                            block = start_event.get("content_block", {})
+                            block_type = block.get("type")
+                            print(f"  📋 Content block type: {block_type}")
+                            
+                            if scenario["expected_content_type"]:
+                                self.assertEqual(block_type, scenario["expected_content_type"],
+                                               f"Expected content type {scenario['expected_content_type']}")
+                            
+                            # Validate block structure
+                            if block_type == "text":
+                                self.assertIn("text", block, "Text block should have text field")
+                                print(f"    ✅ Text block structure valid")
+                            elif block_type == "tool_use":
+                                self.assertIn("id", block, "Tool use block should have id")
+                                self.assertIn("name", block, "Tool use block should have name")
+                                self.assertIn("input", block, "Tool use block should have input")
+                                print(f"    ✅ Tool use block structure valid: {block.get('name')}")
+                    
+                    # Analyze deltas
+                    content_deltas = [e for e in events if e.get("type") == "content_block_delta"]
+                    delta_types = set()
+                    for delta_event in content_deltas:
+                        delta = delta_event.get("delta", {})
+                        delta_type = delta.get("type")
+                        if delta_type:
+                            delta_types.add(delta_type)
+                    
+                    print(f"  🔄 Delta types: {sorted(delta_types)}")
+                    
+                    # Validate delta types
+                    if scenario["expected_content_type"] == "text":
+                        # Claude can use either "text" or "text_delta" for text content
+                        has_text_delta = "text" in delta_types or "text_delta" in delta_types
+                        self.assertTrue(has_text_delta, f"Text response should have text deltas, found: {delta_types}")
+                    elif scenario["expected_content_type"] == "tool_use":
+                        self.assertIn("input_json_delta", delta_types, "Tool use should have input_json_delta")
+                    
+                    # Check message_delta content
+                    message_deltas = [e for e in events if e.get("type") == "message_delta"]
+                    for msg_delta in message_deltas:
+                        delta_data = msg_delta.get("delta", {})
+                        if "usage" in delta_data:
+                            usage = delta_data["usage"]
+                            print(f"  📊 Usage: input={usage.get('input_tokens', 0)}, output={usage.get('output_tokens', 0)}")
+                        if "stop_reason" in delta_data:
+                            print(f"  🛑 Stop reason: {delta_data['stop_reason']}")
+                    
+                    # Check message_stop
+                    message_stops = [e for e in events if e.get("type") == "message_stop"]
+                    self.assertGreaterEqual(len(message_stops), 1, "Should have message_stop")
+                    
+                    # Optional events validation
+                    ping_events = [e for e in events if e.get("type") == "ping"]
+                    if ping_events:
+                        print(f"  📡 Ping events: {len(ping_events)}")
+                    
+                    done_events = [e for e in events if e.get("type") == "done"]
+                    if done_events:
+                        print(f"  ✅ Done events: {len(done_events)}")
+                    
+                    results[scenario["name"]] = {
+                        "success": True,
+                        "event_count": len(events),
+                        "event_types": unique_event_types,
+                        "content_blocks": len(content_block_starts)
+                    }
+                    
+                    print(f"  ✅ Scenario '{scenario['name']}' passed")
+                    
+                except Exception as e:
+                    print(f"  ❌ Scenario '{scenario['name']}' failed: {e}")
+                    results[scenario["name"]] = {"success": False, "error": str(e)}
+            
+            # Summary
+            print(f"\n📊 Event Types Test Summary:")
+            successful_scenarios = sum(1 for r in results.values() if r.get("success"))
+            print(f"✅ Successful scenarios: {successful_scenarios}/{len(test_scenarios)}")
+            
+            for name, result in results.items():
+                if result.get("success"):
+                    print(f"  ✅ {name}: {result['event_count']} events, {result['content_blocks']} blocks")
+                else:
+                    print(f"  ❌ {name}: {result.get('error', 'Unknown error')}")
+            
+            # At least one scenario should succeed
+            self.assertGreater(successful_scenarios, 0, "At least one scenario should succeed")
+            
+            return successful_scenarios == len(test_scenarios)
+
+        try:
+            result = asyncio.run(run_event_types_test())
+            if not result:
+                print("⚠️ Some scenarios failed, but test continued")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

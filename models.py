@@ -1805,6 +1805,7 @@ class AnthropicStreamingConverter:
         self.thinking_block_started = False
         self.thinking_block_closed = False
         self.is_tool_use = False
+        self.tool_block_closed = False
 
         # Tool call state
         self.tool_json = ""
@@ -2154,6 +2155,21 @@ class AnthropicStreamingConverter:
 
         # If we have arguments, send them as a delta
         if arguments:
+            # Check if this contains new arguments or is a repetition
+            if self.tool_json and arguments.startswith(self.tool_json):
+                # This is cumulative - extract only the new part
+                new_arguments = arguments[len(self.tool_json):]
+                if new_arguments:
+                    logger.debug(f"🔧 TOOL_CALL_DELTA: Extracting {len(new_arguments)} new chars from cumulative {len(arguments)}")
+                    arguments = new_arguments
+                else:
+                    logger.debug(f"🔧 TOOL_CALL_DELTA: No new content in cumulative update, skipping")
+                    return
+            elif self.tool_json and arguments == self.tool_json:
+                # Exact duplicate
+                logger.debug(f"🔧 TOOL_CALL_DELTA: Exact duplicate arguments, skipping")
+                return
+            
             logger.debug(f"🔧 TOOL_CALL_DELTA: Adding {len(arguments)} chars to tool_json")
             self.tool_json += arguments
             logger.debug(f"🔧 TOOL_CALL_DELTA: Total accumulated tool_json: {len(self.tool_json)} chars")
@@ -2349,6 +2365,7 @@ class AnthropicStreamingConverter:
             # Close the tool use block
             logger.debug("🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool_use")
             yield self._send_content_block_stop_event()
+            self.tool_block_closed = True  # Mark tool block as closed
             
         # Handle text block completion
         elif self.text_block_started and not self.text_block_closed:
@@ -2520,7 +2537,11 @@ async def convert_openai_streaming_response_to_anthropic(
                 converter.current_content_blocks.append(text_block)
                 yield converter._send_content_block_start_event("text")
                 yield converter._send_content_block_stop_event()
-            elif converter.text_block_started or converter.is_tool_use:
+            elif converter.text_block_started and not converter.text_block_closed:
+                logger.debug("STREAMING_EVENT: content_block_stop - index: 0")
+                yield converter._send_content_block_stop_event()
+            elif converter.is_tool_use and not getattr(converter, 'tool_block_closed', False):
+                logger.debug("STREAMING_EVENT: content_block_stop - index: 0")
                 yield converter._send_content_block_stop_event()
 
             # Calculate final tokens and send completion events
