@@ -27,7 +27,7 @@ from openai.types.chat import (
     ChatCompletionChunk,
 )
 
-from hook import hook_manager, load_all_plugins
+from .hook import hook_manager, load_all_plugins
 
 from .client import (
     CUSTOM_OPENAI_MODELS,

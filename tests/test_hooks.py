@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from hook import hook_manager, load_all_plugins
+from anthropic_proxy.hook import hook_manager, load_all_plugins
 
 
 class TestHookSystem(unittest.TestCase):

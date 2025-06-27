@@ -555,6 +555,89 @@ class TestContentBlockMethods(unittest.TestCase):
 
         print("✅ Content block methods test passed")
 
+    def test_tool_result_content_variations(self):
+        """Test tool_result with various content structures according to Claude API spec."""
+        print("🧪 Testing tool_result content variations...")
+
+        # Test 1: Simple string content (standard Claude API format)
+        simple_result = ClaudeContentBlockToolResult(
+            type="tool_result", tool_use_id="call_123", content="259.75 USD"
+        )
+        simple_processed = simple_result.process_content()
+        self.assertEqual(simple_processed, "259.75 USD")
+
+        # Test 2: List with text blocks (Claude API standard)
+        text_list_result = ClaudeContentBlockToolResult(
+            type="tool_result", 
+            tool_use_id="call_124", 
+            content=[{"type": "text", "text": "Processing complete"}]
+        )
+        text_list_processed = text_list_result.process_content()
+        self.assertIsInstance(text_list_processed, list)
+        self.assertEqual(len(text_list_processed), 1)
+        self.assertEqual(text_list_processed[0]["type"], "text")
+        self.assertEqual(text_list_processed[0]["text"], "Processing complete")
+
+        # Test 3: List with multiple text blocks
+        multi_text_result = ClaudeContentBlockToolResult(
+            type="tool_result", 
+            tool_use_id="call_125", 
+            content=[
+                {"type": "text", "text": "First part"},
+                {"type": "text", "text": "Second part"}
+            ]
+        )
+        multi_text_processed = multi_text_result.process_content()
+        self.assertIsInstance(multi_text_processed, list)
+        self.assertEqual(len(multi_text_processed), 2)
+        self.assertEqual(multi_text_processed[0]["text"], "First part")
+        self.assertEqual(multi_text_processed[1]["text"], "Second part")
+
+        # Test 4: List with image block (Claude API spec allows this)
+        image_result = ClaudeContentBlockToolResult(
+            type="tool_result", 
+            tool_use_id="call_126", 
+            content=[{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+                }
+            }]
+        )
+        image_processed = image_result.process_content()
+        self.assertIsInstance(image_processed, list)
+        self.assertEqual(len(image_processed), 1)
+        self.assertEqual(image_processed[0]["type"], "image")
+        self.assertIn("source", image_processed[0])
+
+        # Test 5: Edge case - text block without explicit type (should be handled gracefully)
+        no_type_result = ClaudeContentBlockToolResult(
+            type="tool_result", 
+            tool_use_id="call_127", 
+            content=[{"text": "Text without type"}]
+        )
+        no_type_processed = no_type_result.process_content()
+        self.assertIsInstance(no_type_processed, list)
+        self.assertEqual(len(no_type_processed), 1)
+        self.assertEqual(no_type_processed[0]["type"], "text")
+        self.assertEqual(no_type_processed[0]["text"], "Text without type")
+
+        # Test 6: Edge case - malformed content block (fallback to string conversion)
+        malformed_result = ClaudeContentBlockToolResult(
+            type="tool_result", 
+            tool_use_id="call_128", 
+            content=[{"type": "unknown", "data": "some data"}]
+        )
+        malformed_processed = malformed_result.process_content()
+        self.assertIsInstance(malformed_processed, list)
+        self.assertEqual(len(malformed_processed), 1)
+        self.assertEqual(malformed_processed[0]["type"], "text")
+        self.assertEqual(malformed_processed[0]["text"], "{'type': 'unknown', 'data': 'some data'}")
+
+        print("✅ Tool result content variations test passed")
+
 
 class TestAdvancedFeatures(unittest.TestCase):
     """Test advanced features like function call parsing and complex scenarios."""

@@ -7,7 +7,7 @@ To understand the available commands and project dependencies, please refer to t
 
 - **`Makefile`**: Contains a list of common tasks and scripts. Run `make help` to see a full list of available commands for running the server, executing tests, and more.
 - **`pyproject.toml`**: Defines the project's dependencies and tool configurations.
-
+- use `uv` instead of `python` to run python scripts
 
 ## Documentation
 
