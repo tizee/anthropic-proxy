@@ -1,9 +1,9 @@
 # Anthropic API Proxy for Claude Code 🔄
 
-[![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/claude-code-proxy)](https://github.com/tizee/claude-code-proxy)
-[![License](https://img.shields.io/github/license/tizee/claude-code-proxy)](https://github.com/tizee/claude-code-proxy/blob/main/LICENSE)
+[![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy)
+[![License](https://img.shields.io/github/license/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy/blob/main/LICENSE)
 
-A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. This allows you to use Claude Code with a wide range of OpenAI-compatible models.
+A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. This allows you to use Claude Code with a wide range of OpenAI-compatible models. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
 ## Primary Use Case: Claude Code Proxy
 
