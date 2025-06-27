@@ -37,9 +37,13 @@ class ModelDefaults:
     MAX_TOKENS_LIMIT = 16384  # Maximum tokens limit for responses
     LONG_CONTEXT_THRESHOLD = 128000  # Threshold for long-context models
 
-    # Pricing defaults (approximate costs in USD)
-    DEFAULT_INPUT_COST_PER_TOKEN = 0.000001  # Default cost per input token
-    DEFAULT_OUTPUT_COST_PER_TOKEN = 0.000002  # Default cost per output token
+    # Pricing defaults (approximate costs in USD per million tokens)
+    DEFAULT_INPUT_COST_PER_MILLION_TOKENS = 1.0  # Default cost per million input tokens
+    DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS = 2.0  # Default cost per million output tokens
+
+    # Backward compatibility constants (deprecated, will be removed in future versions)
+    DEFAULT_INPUT_COST_PER_TOKEN = DEFAULT_INPUT_COST_PER_MILLION_TOKENS / 1_000_000  # Deprecated: use DEFAULT_INPUT_COST_PER_MILLION_TOKENS
+    DEFAULT_OUTPUT_COST_PER_TOKEN = DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS / 1_000_000  # Deprecated: use DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS
 
     # Thinking configuration
     THINKING_SIGNATURE_LENGTH = 16  # Length of thinking block signature hash

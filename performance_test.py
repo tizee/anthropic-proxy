@@ -183,10 +183,24 @@ async def run_tokenized_test(
         # This ensures fair cost comparison since both tests use the same underlying model
         if result.total_tokens > 0 and model_id in CUSTOM_OPENAI_MODELS:
             model_config = CUSTOM_OPENAI_MODELS[model_id]
-            input_cost_per_token = model_config.get("input_cost_per_token", 0.000001)
-            output_cost_per_token = model_config.get("output_cost_per_token", 0.000002)
-            result.cost = (result.input_tokens * input_cost_per_token) + (
-                result.output_tokens * output_cost_per_token
+            # Use new per-million token pricing with backward compatibility
+            input_cost_per_million = model_config.get("input_cost_per_million_tokens")
+            output_cost_per_million = model_config.get("output_cost_per_million_tokens")
+
+            # Backward compatibility: fall back to old per-token pricing if new format not available
+            if input_cost_per_million is None:
+                input_cost_per_token = model_config.get(
+                    "input_cost_per_token", 0.000001
+                )
+                input_cost_per_million = input_cost_per_token * 1_000_000
+            if output_cost_per_million is None:
+                output_cost_per_token = model_config.get(
+                    "output_cost_per_token", 0.000002
+                )
+                output_cost_per_million = output_cost_per_token * 1_000_000
+
+            result.cost = (result.input_tokens / 1_000_000 * input_cost_per_million) + (
+                result.output_tokens / 1_000_000 * output_cost_per_million
             )
 
     except httpx.RequestError as e:

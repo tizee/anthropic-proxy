@@ -14,7 +14,7 @@ from anthropic_proxy.client import (
 from anthropic_proxy.config import Config
 from anthropic_proxy.server import create_message
 from anthropic_proxy.utils import count_tokens_in_messages
-from legacy.models import ClaudeMessage, ClaudeContentBlockText
+from anthropic_proxy.types import ClaudeMessage, ClaudeContentBlockText
 
 
 class TestRoutingLogic(unittest.TestCase):

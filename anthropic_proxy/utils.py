@@ -57,16 +57,17 @@ def count_tokens_in_messages(messages: list, model: str) -> int:
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost based on model and token usage."""
-    # Simple cost calculation - this should be replaced with actual pricing
-    # For now, return 0 to avoid breaking functionality
+    """Calculate cost based on model and token usage using per-million token pricing."""
     try:
-        # Basic cost estimation (these would be actual prices in production)
-        input_cost_per_1k = 0.001  # $0.001 per 1k input tokens
-        output_cost_per_1k = 0.002  # $0.002 per 1k output tokens
+        from .types import ModelDefaults
 
-        input_cost = (input_tokens / 1000) * input_cost_per_1k
-        output_cost = (output_tokens / 1000) * output_cost_per_1k
+        # Default pricing per million tokens (will be replaced with actual model pricing)
+        input_cost_per_million = ModelDefaults.DEFAULT_INPUT_COST_PER_MILLION_TOKENS  # $1.0 per million input tokens
+        output_cost_per_million = ModelDefaults.DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS  # $2.0 per million output tokens
+
+        # Calculate cost using per-million token pricing
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
 
         return round(input_cost + output_cost, 6)
     except Exception as e:

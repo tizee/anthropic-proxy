@@ -1617,11 +1617,11 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
     def setUp(self):
         """Set up test environment."""
-        self.proxy_url = "http://localhost:8082"
+        self.proxy_url = "http://127.0.0.1:8082"
 
     async def _send_streaming_request(self, request_data):
         """Helper method to send streaming request to proxy server with detailed debugging."""
-        import aiohttp
+        import httpx
 
         print(f"📡 Sending streaming request to {self.proxy_url}...")
         print(f"🎯 Model: {request_data.get('model', 'unknown')}")
@@ -1632,18 +1632,20 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     f"  - {tool.get('name', 'unnamed')}: {tool.get('description', 'no description')}"
                 )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "POST",
                 f"{self.proxy_url}/v1/messages",
                 json=request_data,
                 headers={"Content-Type": "application/json"},
             ) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    print(f"❌ Request failed with status {response.status}")
+                if response.status_code != 200:
+                    text = await response.aread()
+                    text = text.decode("utf-8")
+                    print(f"❌ Request failed with status {response.status_code}")
                     print(f"📄 Response text: {text}")
                     raise Exception(
-                        f"Request failed with status {response.status}: {text}"
+                        f"Request failed with status {response.status_code}: {text}"
                     )
 
                 print("✅ Request started successfully")
@@ -1654,8 +1656,8 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 tool_calls = []
                 chunk_count = 0
 
-                async for line in response.content:
-                    line = line.decode("utf-8").strip()
+                async for line in response.aiter_lines():
+                    line = line.strip()
                     if not line or not line.startswith("data: "):
                         continue
 

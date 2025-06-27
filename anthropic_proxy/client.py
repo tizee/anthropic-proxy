@@ -51,13 +51,27 @@ def load_custom_models(config_file=None):
             model_id = model["model_id"]
             model_name = model.get("model_name", model_id)
 
-            # Set default pricing if not provided
-            input_cost = model.get(
-                "input_cost_per_token", ModelDefaults.DEFAULT_INPUT_COST_PER_TOKEN
-            )
-            output_cost = model.get(
-                "output_cost_per_token", ModelDefaults.DEFAULT_OUTPUT_COST_PER_TOKEN
-            )
+            # Set default pricing if not provided - support both old and new formats
+            # Priority: new format > old format > defaults
+            input_cost_per_million = model.get("input_cost_per_million_tokens")
+            output_cost_per_million = model.get("output_cost_per_million_tokens")
+
+            # Backward compatibility: convert old per-token pricing to per-million
+            if input_cost_per_million is None:
+                input_cost_per_token = model.get("input_cost_per_token")
+                if input_cost_per_token is not None:
+                    input_cost_per_million = input_cost_per_token * 1_000_000
+                    logger.warning(f"Model {model_id}: Using deprecated 'input_cost_per_token' field. Please use 'input_cost_per_million_tokens' instead.")
+                else:
+                    input_cost_per_million = ModelDefaults.DEFAULT_INPUT_COST_PER_MILLION_TOKENS
+
+            if output_cost_per_million is None:
+                output_cost_per_token = model.get("output_cost_per_token")
+                if output_cost_per_token is not None:
+                    output_cost_per_million = output_cost_per_token * 1_000_000
+                    logger.warning(f"Model {model_id}: Using deprecated 'output_cost_per_token' field. Please use 'output_cost_per_million_tokens' instead.")
+                else:
+                    output_cost_per_million = ModelDefaults.DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS
 
             CUSTOM_OPENAI_MODELS[model_id] = {
                 "model_id": model_id,
@@ -71,8 +85,11 @@ def load_custom_models(config_file=None):
                 "context": parse_token_value(
                     model.get("context"), ModelDefaults.LONG_CONTEXT_THRESHOLD
                 ),
-                "input_cost_per_token": input_cost,
-                "output_cost_per_token": output_cost,
+                "input_cost_per_million_tokens": input_cost_per_million,
+                "output_cost_per_million_tokens": output_cost_per_million,
+                # Backward compatibility fields
+                "input_cost_per_token": input_cost_per_million / 1_000_000,  # Deprecated
+                "output_cost_per_token": output_cost_per_million / 1_000_000,  # Deprecated
                 "max_input_tokens": parse_token_value(
                     model.get(
                         "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
@@ -92,8 +109,11 @@ def load_custom_models(config_file=None):
 
             for variation in model_variations:
                 model_pricing[variation] = {
-                    "input_cost_per_token": input_cost,
-                    "output_cost_per_token": output_cost,
+                    "input_cost_per_million_tokens": input_cost_per_million,
+                    "output_cost_per_million_tokens": output_cost_per_million,
+                    # Backward compatibility
+                    "input_cost_per_token": input_cost_per_million / 1_000_000,  # Deprecated
+                    "output_cost_per_token": output_cost_per_million / 1_000_000,  # Deprecated
                 }
 
             logger.info(

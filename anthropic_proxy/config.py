@@ -3,7 +3,6 @@ Configuration management for the anthropic_proxy package.
 This module handles all configuration loading, validation, and management.
 """
 
-import asyncio
 import logging
 import os
 import sys
@@ -18,8 +17,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Global variables for file monitoring
-env_file_watcher_task = None
+
+
 
 
 def parse_token_value(value, default_value=None):
@@ -198,50 +197,8 @@ class ColorizedFormatter(logging.Formatter):
         return super().format(record)
 
 
-async def watch_env_file():
-    """Async function to watch .env file changes"""
-    try:
-        from watchfiles import awatch
-    except ImportError:
-        logger.warning("watchfiles not available, .env file monitoring disabled")
-        return
-
-    # Use the config method to get env file path
-    env_file_path = config.get_env_file_path()
-
-    # Only monitor if .env file exists
-    if not config.check_env_file_exists():
-        logger.debug(f"No .env file found at {env_file_path}, skipping file monitoring")
-        return
-
-    try:
-        logger.info(f"✅ .env file monitoring started for {env_file_path}")
-
-        async for _changes in awatch(env_file_path):
-            logger.info("🔄 .env file changed, restarting server...")
-            # Trigger restart by exiting the process
-            # uvicorn --reload will automatically restart when the process exits
-            os._exit(0)
-
-    except Exception as e:
-        logger.warning(f"Error in .env file monitoring: {e}")
 
 
-def setup_env_file_monitoring():
-    """Setup .env file monitoring to be idempotent."""
-    global env_file_watcher_task
-
-    # If already monitoring, don't start again
-    if env_file_watcher_task is not None and not env_file_watcher_task.done():
-        return
-
-    try:
-        # Create the monitoring task
-        env_file_watcher_task = asyncio.create_task(watch_env_file())
-
-    except Exception as e:
-        logger.warning(f"Could not start .env file monitoring: {e}")
-        env_file_watcher_task = None
 
 
 def setup_logging():

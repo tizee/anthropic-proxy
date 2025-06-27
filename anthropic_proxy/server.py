@@ -3,12 +3,11 @@ FastAPI server for the anthropic proxy.
 This module contains the FastAPI application and API endpoints.
 """
 
-import asyncio
 import json
 import logging
 import sys
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 import uvicorn
@@ -28,7 +27,7 @@ from .client import (
     determine_model_by_router,
     initialize_custom_models,
 )
-from .config import config, setup_env_file_monitoring, setup_logging
+from .config import config, setup_logging
 from .converter import (
     convert_openai_response_to_anthropic,
 )
@@ -48,8 +47,8 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-# Global variables for file monitoring
-env_file_watcher_task = None
+
+
 
 
 @asynccontextmanager
@@ -60,14 +59,9 @@ async def lifespan(app: FastAPI):
     # It will be configured only when running the script directly.
     initialize_custom_models()
     load_all_plugins()
-    setup_env_file_monitoring()
+
     yield
     # Shutdown (if needed)
-    global env_file_watcher_task
-    if env_file_watcher_task and not env_file_watcher_task.done():
-        env_file_watcher_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await env_file_watcher_task
 
 
 app = FastAPI(lifespan=lifespan)
