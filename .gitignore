@@ -1,6 +1,7 @@
 # Environment variables
 .env
 models.yaml
+.claude
 
 # Python
 __pycache__/
@@ -44,5 +45,3 @@ ENV/
 # test
 .coverage
 
-# config
-models.yaml

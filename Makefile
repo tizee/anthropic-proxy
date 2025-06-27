@@ -80,7 +80,7 @@ lint: format
 	uv run ruff check . --fix
 
 format:
-	uv run ruff format . tests/*.py performance_test.py
+	uv run ruff format anthropic_proxy/**/*.py tests/*.py performance_test.py
 
 # Help command
 help:
