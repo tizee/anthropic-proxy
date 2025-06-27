@@ -6,12 +6,12 @@ import sys
 # Add the parent directory to the sys.path to allow imports from the server module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server import (
+from anthropic_proxy.client import (
     determine_model_by_router,
-    Config,
     CUSTOM_OPENAI_MODELS,
-    create_message,
 )
+from anthropic_proxy.config import Config
+from anthropic_proxy.server import create_message
 
 
 class TestRoutingLogic(unittest.TestCase):
@@ -27,7 +27,7 @@ class TestRoutingLogic(unittest.TestCase):
 
         # This is a bit of a hack, but it's the easiest way to inject the config
         # for the functions we are testing.
-        patcher = patch("server.config", self.config)
+        patcher = patch("anthropic_proxy.config.config", self.config)
         self.addCleanup(patcher.stop)
         patcher.start()
 
@@ -40,9 +40,9 @@ class TestRoutingLogic(unittest.TestCase):
             "model-with-low-limit": {"max_input_tokens": 500},
         }
 
-        # We also need to patch the global dictionary in the server module
+        # We also need to patch the global dictionary in the client module
         patcher_models = patch.dict(
-            "server.CUSTOM_OPENAI_MODELS", self.mock_models, clear=True
+            "anthropic_proxy.client.CUSTOM_OPENAI_MODELS", self.mock_models, clear=True
         )
         self.addCleanup(patcher_models.stop)
         patcher_models.start()

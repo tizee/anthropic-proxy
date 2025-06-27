@@ -32,8 +32,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import Pydantic models from models.py
-from models import (
+# Import Pydantic models from anthropic_proxy package
+from anthropic_proxy.types import (
     ClaudeContentBlockText,
     ClaudeContentBlockThinking,
     ClaudeContentBlockToolResult,
@@ -1866,7 +1866,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_gemini_tool_conversion(self):
         """Test Gemini model tool conversion."""
         request = ClaudeMessagesRequest(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash-lite-preview-06-17",
             stream=False,
             max_tokens=1000,
             system="You are gemini",
@@ -1888,7 +1888,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_gemini_tool_conversion_stream(self):
         """Test Gemini model tool conversion."""
         request = ClaudeMessagesRequest(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash-lite-preview-06-17",
             stream=True,
             max_tokens=1000,
             tools=[calculator_tool],
@@ -1909,7 +1909,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_gemini_incompatible_schema(self):
         """Test Gemini with incompatible schema features."""
         request = ClaudeMessagesRequest(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash-lite-preview-06-17",
             stream=False,
             max_tokens=1000,
             tools=[gemini_incompatible_tool],
@@ -1933,7 +1933,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_gemini_incompatible_schema_stream(self):
         """Test Gemini with incompatible schema features."""
         request = ClaudeMessagesRequest(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash-lite-preview-06-17",
             stream=True,
             max_tokens=1000,
             tools=[gemini_incompatible_tool],
@@ -1958,7 +1958,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_deepseek_thinking_tools(self):
         """Test DeepSeek model with thinking and tools."""
         request = ClaudeMessagesRequest(
-            model="deepseek-r1-250528",
+            model="deepseek-r1",
             max_tokens=1024,
             thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
             tools=[calculator_tool],
@@ -1983,7 +1983,7 @@ class TestCustomModels(ProxyTestBase):
     async def test_deepseek_thinking_tools_stream(self):
         """Test DeepSeek model with thinking and tools."""
         request = ClaudeMessagesRequest(
-            model="deepseek-r1-250528",
+            model="deepseek-r1",
             max_tokens=1024,
             stream=True,
             thinking=ClaudeThinkingConfigEnabled(type="enabled", budget_tokens=1024),
@@ -2702,7 +2702,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_read_tool(self):
         """Test Claude Code Read tool."""
         request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             tools=[read_tool],
@@ -2725,7 +2725,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_bash_tool(self):
         """Test Claude Code Bash tool."""
         request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             tools=[bash_tool],
@@ -2749,7 +2749,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_ls_tool(self):
         """Test Claude Code ls tool."""
         request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             messages=[
@@ -2773,7 +2773,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_grep_tool(self):
         """Test Claude Code ls tool."""
         request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             messages=[
@@ -2797,7 +2797,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
     async def test_claude_code_glob_tool(self):
         """Test Claude Code ls tool."""
         request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             messages=[
@@ -2821,7 +2821,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
         """Test Claude Code TodoWrite and TodoRead workflow."""
         # First test TodoWrite
         todo_write_request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             tools=[todo_write_tool],
@@ -2844,7 +2844,7 @@ class TestClaudeCodeWorkflows(ProxyTestBase):
 
         # Then test TodoRead
         todo_read_request = ClaudeMessagesRequest(
-            model="deepseek-v3-250324",
+            model="deepseek-v3",
             max_tokens=1024,
             stream=True,
             tools=[todo_read_tool],

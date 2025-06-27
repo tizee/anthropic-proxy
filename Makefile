@@ -1,16 +1,20 @@
 dev:
-	uv run uvicorn server:app --reload --host 0.0.0.0 --port 8082
+	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
+	uv run anthropic-proxy --reload --host 0.0.0.0 --port 8082
 
 dev-stable:
-	uv run uvicorn server:app --host 0.0.0.0 --port 8082
+	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
+	uv run anthropic-proxy --host 0.0.0.0 --port 8082
 
 run:
+	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	@echo "Starting server with auto-reload..."
-	@uv run python server.py --reload > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "python server.py" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
+	@uv run anthropic-proxy --reload > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "anthropic-proxy" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
 run-stable:
+	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	@echo "Starting server..."
-	@uv run python server.py > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "python server.py" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
+	@uv run anthropic-proxy > uvicorn.log 2>&1 & (sleep 2 && pgrep -f "anthropic-proxy" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
 stop:
 	@./scripts/stop.sh
@@ -32,10 +36,10 @@ test-unittest:
 
 # Test Coverage
 test-cov:
-	uv run pytest --cov=server --cov=models tests/ -v
+	uv run pytest --cov=anthropic_proxy tests/ -v
 
 test-cov-html:
-	uv run pytest --cov=server --cov=models tests/ --cov-report html
+	uv run pytest --cov=anthropic_proxy tests/ --cov-report html
 
 test-routing:
 	-uv run pytest tests/test_routing.py -v
@@ -81,6 +85,8 @@ format:
 # Help command
 help:
 	@echo "Available commands:"
+	@echo "IMPORTANT: Make sure you have a .env file (copy from .env.example) before running server commands!"
+	@echo ""
 	@echo "  make run              - Start development server with auto-reload"
 	@echo "  make run-stable       - Start server without auto-reload (for editing server code)"
 	@echo "  make dev-stable       - Start foreground server without auto-reload"

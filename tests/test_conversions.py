@@ -38,8 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import our conversion functions and models
-from models import (
-    AnthropicStreamingConverter,
+from anthropic_proxy.types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockText,
     ClaudeContentBlockThinking,
@@ -50,8 +49,11 @@ from models import (
     ClaudeThinkingConfigDisabled,
     ClaudeThinkingConfigEnabled,
     ClaudeTool,
-    convert_openai_response_to_anthropic,
     generate_unique_id,
+)
+from anthropic_proxy.streaming import AnthropicStreamingConverter
+from anthropic_proxy.converter import (
+    convert_openai_response_to_anthropic,
     parse_function_calls_from_thinking,
 )
 
@@ -2045,7 +2047,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Use MultiEdit to make a complex edit with multiple parameters",
+                    "content": "Use MultiEdit to make a complex edit with multiple parameters to edit file foo.bar content all foo to bar",
                 }
             ],
             "tools": [

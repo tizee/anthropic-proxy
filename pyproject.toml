@@ -18,7 +18,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tiktoken>=0.9.0",
     "watchfiles>=1.0.4",
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+anthropic-proxy = "anthropic_proxy.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -59,19 +63,21 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["models", "server"]
+known-first-party = ["anthropic_proxy"]
 
 [lint.per-file-ignores]
 "tests/**/*.py" = ["E501", "F401"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["anthropic_proxy"]
 exclude = [
     "tests/",
     "*.log",
     "debug/",
     ".env*",
     "uv.lock",
+    "models.py",
+    "server.py",
 ]
 
 [dependency-groups]

@@ -11,13 +11,14 @@ from typing import Dict, Any, AsyncGenerator, Optional
 # Add the parent directory to the path so we can import from server
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-# Import necessary components from your server.py
-from server import (
+# Import necessary components from the new package structure
+from anthropic_proxy.client import (
     initialize_custom_models,
     CUSTOM_OPENAI_MODELS,
-    config as server_config,  # rename to avoid conflict
 )
-from models import ClaudeMessagesRequest, calculate_cost
+from anthropic_proxy.config import config as server_config  # rename to avoid conflict
+from anthropic_proxy.types import ClaudeMessagesRequest
+from anthropic_proxy.utils import calculate_cost
 
 
 # --- Test Configuration ---
