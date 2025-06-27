@@ -186,6 +186,14 @@ def determine_model_by_router(
         )
         return result
 
+    # Check if token count exceeds long context threshold
+    if token_count > ModelDefaults.LONG_CONTEXT_THRESHOLD:
+        if "long_context" in config.router_config:
+            result = config.router_config["long_context"]
+            logger.info(f"🔀 Router: Using long context model for large input ({token_count} tokens), result: {result}")
+            return result
+        logger.warning(f"🔀 Router: Long context needed ({token_count} tokens) but no long_context router configured")
+
     # Default model
     result = config.router_config["default"]
     logger.debug(f"🔀 Router: Using default model for {original_model}")

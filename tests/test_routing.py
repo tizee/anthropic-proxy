@@ -1,4 +1,5 @@
 import unittest
+import pytest
 from unittest.mock import patch, MagicMock
 import os
 import sys
@@ -12,6 +13,8 @@ from anthropic_proxy.client import (
 )
 from anthropic_proxy.config import Config
 from anthropic_proxy.server import create_message
+from anthropic_proxy.utils import count_tokens_in_messages
+from legacy.models import ClaudeMessage, ClaudeContentBlockText
 
 
 class TestRoutingLogic(unittest.TestCase):
@@ -27,7 +30,7 @@ class TestRoutingLogic(unittest.TestCase):
 
         # This is a bit of a hack, but it's the easiest way to inject the config
         # for the functions we are testing.
-        patcher = patch("anthropic_proxy.config.config", self.config)
+        patcher = patch("anthropic_proxy.client.config", self.config)
         self.addCleanup(patcher.stop)
         patcher.start()
 
@@ -79,7 +82,7 @@ class TestRoutingLogic(unittest.TestCase):
         )
         self.assertEqual(routed_model, "model-default")
 
-    @patch("server.create_message")
+    @patch("anthropic_proxy.server.create_message")
     def test_long_context_fallback_when_tokens_exceed_limit(self, mock_create_message):
         """
         Test that the routing switches to the long_context model if the token count
@@ -103,7 +106,7 @@ class TestRoutingLogic(unittest.TestCase):
 
         self.assertEqual(final_model, "model-long-context")
 
-    @patch("server.create_message")
+    @patch("anthropic_proxy.server.create_message")
     def test_long_context_fallback_when_tokens_are_within_limit(
         self, mock_create_message
     ):
@@ -125,7 +128,7 @@ class TestRoutingLogic(unittest.TestCase):
 
         self.assertEqual(final_model, "model-default")
 
-    @patch("server.create_message")
+    @patch("anthropic_proxy.server.create_message")
     def test_long_context_fallback_for_unknown_model(self, mock_create_message):
         """
         Test that the routing uses the global long_context_threshold for a model
@@ -153,6 +156,55 @@ class TestRoutingLogic(unittest.TestCase):
                 final_model_within = self.config.router_config["long_context"]
 
         self.assertEqual(final_model_within, "claude-3-opus-20240229")
+
+
+def test_basic_message_token_count():
+    messages = [
+        ClaudeMessage(
+            role="user",
+            content=[ClaudeContentBlockText(type="text", text="Hello world")]
+        ),
+        ClaudeMessage(
+            role="assistant",
+            content=[ClaudeContentBlockText(type="text", text="Hi there!")]
+        )
+    ]
+    model = "claude-3-sonnet-20240229"
+    tokens = count_tokens_in_messages(messages, model)
+    assert tokens > 0
+
+
+def test_complex_message_structure():
+    messages = [
+        ClaudeMessage(
+            role="user",
+            content=[
+                ClaudeContentBlockText(type="text", text="Calculate token count for this complex message with multiple content blocks")
+            ]
+        )
+    ]
+    model = "claude-3-opus-20240229"
+    tokens = count_tokens_in_messages(messages, model)
+    assert tokens > 0
+
+
+def test_empty_messages():
+    messages = []
+    model = "claude-3-haiku-20240307"
+    tokens = count_tokens_in_messages(messages, model)
+    assert tokens == 0
+
+
+def test_different_model_types():
+    messages = [
+        ClaudeMessage(
+            role="user",
+            content=[ClaudeContentBlockText(type="text", text="Model type should affect token counting")]
+        )
+    ]
+    models = ["claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3-haiku-20240307"]
+    token_counts = [count_tokens_in_messages(messages, model) for model in models]
+    assert all(tokens > 0 for tokens in token_counts)
 
 
 if __name__ == "__main__":

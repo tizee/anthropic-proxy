@@ -4,7 +4,9 @@ This module contains token counting, validation, debugging and other utility fun
 """
 
 import logging
+import json
 from typing import Any
+import tiktoken
 
 from .types import ClaudeUsage, global_usage_stats
 
@@ -19,16 +21,38 @@ def count_tokens_in_response(
     if tool_calls is None:
         tool_calls = []
     """Count tokens in response content using tiktoken"""
-    # Token counting removed - rely on API usage data only
-    # Input token counting is disabled, only use output tokens from actual API responses
-    return 0
+    try:
+        # Get encoding (using cl100k_base as default)
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        logger.warning(f"Failed to get encoding, using fallback: {e}")
+        encoding = tiktoken.get_encoding("p50k_base")
+
+    # Combine all content for token counting
+    content = response_content + thinking_content
+    if tool_calls:
+        content += json.dumps(tool_calls)
+
+    # Count tokens
+    return len(encoding.encode(content))
 
 
 def count_tokens_in_messages(messages: list, model: str) -> int:
-    """Token counting removed - only output tokens from API responses are used."""
-    # Input token counting removed to eliminate tiktoken dependency
-    # Only output tokens from actual API responses are counted
-    return 0
+    """Count tokens in messages using tiktoken"""
+    try:
+        # Get encoding (using cl100k_base as default)
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        logger.warning(f"Failed to get encoding, using fallback: {e}")
+        encoding = tiktoken.get_encoding("p50k_base")
+
+    total_tokens = 0
+    for message in messages:
+        # Convert message to string representation
+        message_str = json.dumps(message.model_dump())
+        total_tokens += len(encoding.encode(message_str))
+
+    return total_tokens
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
