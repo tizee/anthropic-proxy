@@ -1,5 +1,8 @@
 # Anthropic API Proxy for Claude Code 🔄
 
+[![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/claude-code-proxy)](https://github.com/tizee/claude-code-proxy)
+[![License](https://img.shields.io/github/license/tizee/claude-code-proxy)](https://github.com/tizee/claude-code-proxy/blob/main/LICENSE)
+
 A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. This allows you to use Claude Code with a wide range of OpenAI-compatible models.
 
 ## Primary Use Case: Claude Code Proxy
