@@ -38,8 +38,7 @@ Use this proxy in the following scenarios:
 | **OpenRouter** | claude models | OpenAI | ✅ Fully Tested | Claude via OpenAI format |
 | **ByteDance** | doubao-seed-1.6 | OpenAI | ✅ Fully Tested | Doubao model support |
 | **OpenRouter** | Gemini-2.5-pro | OpenAI | ✅ Fully Tested | Google Gemini via OpenRouter |
-| **Google** | gemini-2.5-pro | OpenAI | ✅ Fully Tested | Direct Google API |
-| **Google** | gemini-2.5-flash-lite-preview-06-17 | OpenAI | ✅ Fully Tested | Preview model |
+| **OpenRouter** | gemini-2.5-flash-lite-preview-06-17 | OpenAI | ✅ Fully Tested | Gemini preview via OpenRouter |
 
 ## Quick Start
 

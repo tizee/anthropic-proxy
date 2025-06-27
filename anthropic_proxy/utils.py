@@ -3,9 +3,10 @@ Utility functions for the anthropic_proxy package.
 This module contains token counting, validation, debugging and other utility functions.
 """
 
-import logging
 import json
+import logging
 from typing import Any
+
 import tiktoken
 
 from .types import ClaudeUsage, global_usage_stats

@@ -162,12 +162,12 @@ def test_basic_message_token_count():
     messages = [
         ClaudeMessage(
             role="user",
-            content=[ClaudeContentBlockText(type="text", text="Hello world")]
+            content=[ClaudeContentBlockText(type="text", text="Hello world")],
         ),
         ClaudeMessage(
             role="assistant",
-            content=[ClaudeContentBlockText(type="text", text="Hi there!")]
-        )
+            content=[ClaudeContentBlockText(type="text", text="Hi there!")],
+        ),
     ]
     model = "claude-3-sonnet-20240229"
     tokens = count_tokens_in_messages(messages, model)
@@ -179,8 +179,11 @@ def test_complex_message_structure():
         ClaudeMessage(
             role="user",
             content=[
-                ClaudeContentBlockText(type="text", text="Calculate token count for this complex message with multiple content blocks")
-            ]
+                ClaudeContentBlockText(
+                    type="text",
+                    text="Calculate token count for this complex message with multiple content blocks",
+                )
+            ],
         )
     ]
     model = "claude-3-opus-20240229"
@@ -199,10 +202,18 @@ def test_different_model_types():
     messages = [
         ClaudeMessage(
             role="user",
-            content=[ClaudeContentBlockText(type="text", text="Model type should affect token counting")]
+            content=[
+                ClaudeContentBlockText(
+                    type="text", text="Model type should affect token counting"
+                )
+            ],
         )
     ]
-    models = ["claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3-haiku-20240307"]
+    models = [
+        "claude-3-sonnet-20240229",
+        "claude-3-opus-20240229",
+        "claude-3-haiku-20240307",
+    ]
     token_counts = [count_tokens_in_messages(messages, model) for model in models]
     assert all(tokens > 0 for tokens in token_counts)
 
