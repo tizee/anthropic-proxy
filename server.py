@@ -6,6 +6,7 @@ import sys
 import time
 from datetime import datetime
 from typing import Any
+import asyncio
 
 import uvicorn
 import yaml
@@ -43,6 +44,9 @@ from models import (
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Global variables for file monitoring
+env_file_watcher_task = None
 
 
 def parse_token_value(value, default_value=None):
@@ -178,8 +182,16 @@ async def lifespan(app: FastAPI):
     # It will be configured only when running the script directly.
     initialize_custom_models()
     load_all_plugins()
+    setup_env_file_monitoring()
     yield
     # Shutdown (if needed)
+    global env_file_watcher_task
+    if env_file_watcher_task and not env_file_watcher_task.done():
+        env_file_watcher_task.cancel()
+        try:
+            await env_file_watcher_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -190,7 +202,6 @@ class MessageFilter(logging.Filter):
     def filter(self, record):
         # Block messages containing these strings
         blocked_phrases = [
-            "LiteLLM completion()",
             "HTTP Request:",
             "selected model name for cost calculation",
             "utils.py",
@@ -220,6 +231,53 @@ class ColorizedFormatter(logging.Formatter):
             # Apply colors and formatting to model mapping logs
             return f"{self.BOLD}{self.GREEN}{record.msg}{self.RESET}"
         return super().format(record)
+
+
+async def watch_env_file():
+    """Async function to watch .env file changes"""
+    try:
+        from watchfiles import awatch
+    except ImportError:
+        logger.warning("watchfiles not available, .env file monitoring disabled")
+        return
+
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    env_file_path = os.path.join(script_dir, ".env")
+
+    # Only monitor if .env file exists
+    if not os.path.exists(env_file_path):
+        logger.debug(f"No .env file found at {env_file_path}, skipping file monitoring")
+        return
+
+    try:
+        logger.info(f"✅ .env file monitoring started for {env_file_path}")
+
+        async for changes in awatch(env_file_path):
+            logger.info("🔄 .env file changed, restarting server...")
+            # Trigger restart by exiting the process
+            # uvicorn --reload will automatically restart when the process exits
+            os._exit(0)
+
+    except Exception as e:
+        logger.warning(f"Error in .env file monitoring: {e}")
+
+
+def setup_env_file_monitoring():
+    """Setup .env file monitoring to be idempotent."""
+    global env_file_watcher_task
+
+    # If already monitoring, don't start again
+    if env_file_watcher_task is not None and not env_file_watcher_task.done():
+        return
+
+    try:
+        # Create the monitoring task
+        env_file_watcher_task = asyncio.create_task(watch_env_file())
+
+    except Exception as e:
+        logger.warning(f"Could not start .env file monitoring: {e}")
+        env_file_watcher_task = None
 
 
 def setup_logging():

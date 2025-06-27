@@ -27,6 +27,7 @@ A proxy server that translates Anthropic API requests to multiple model provider
 - 🛠️ Full tool use (function calling) support
 - 📊 Token counting and cost tracking
 - 🌉 Seamless Claude API compatibility
+- 🔄 Automatic server restart on .env file changes
 
 ## Quick Start
 
@@ -49,6 +50,8 @@ uv install
    - `OPENAI_API_KEY` for OpenAI models
    - `GEMINI_API_KEY` for Gemini models
    - `ANTHROPIC_API_KEY` (optional for proxying to Anthropic)
+
+**Note**: The server automatically monitors the `.env` file for changes and restarts itself when modifications are detected, ensuring new configuration takes effect immediately.
 
 ### Router Configuration
 Configure model routing in `.env`:
@@ -91,6 +94,46 @@ You can manage the background process with:
 ```bash
 ANTHROPIC_BASE_URL=http://localhost:8082 claude
 ```
+
+## Recommended Usage Strategy
+
+### When to Use Claude Official Models vs Proxy
+
+**Primary Recommendation: Use Claude Official Models First**
+
+If you have access to Claude API or a Claude Pro subscription, we recommend using Claude's official models as your primary choice for the best experience:
+
+- ✅ **Use Claude Official**: Full feature compatibility, latest model updates, optimal performance
+- 🔄 **Use This Proxy**: When Claude API quota is exhausted or as a cost-effective alternative
+
+### Setup Strategy
+
+1. **Default Setup** (Official Claude):
+   ```bash
+   # Use Claude normally
+   claude
+   ```
+
+2. **Fallback Setup** (This Proxy):
+   ```bash
+   # Switch to proxy when official API limit reached
+   ANTHROPIC_BASE_URL=http://localhost:8082 claude
+   ```
+
+### Benefits of This Approach
+
+- **Best of Both Worlds**: Official Claude for primary work, proxy for extended usage
+- **Cost Management**: Use official Claude for critical tasks, proxy for background/testing work
+- **Quota Extension**: Continue working seamlessly when daily limits are reached
+- **Development Flexibility**: Test with different models while maintaining Claude compatibility
+
+### When the Proxy Excels
+
+This proxy is particularly valuable for:
+- 🧠 **Reasoning Tasks**: Third-party models optimized for complex problem-solving
+- 💰 **Cost-Sensitive Workflows**: Significant cost savings with alternative providers
+- 📊 **High-Volume Usage**: Extended usage beyond API quotas
+- 🔬 **Model Experimentation**: Testing different providers with consistent interface
 
 ### Testing
 
@@ -331,6 +374,7 @@ The server generates several log files for debugging:
 - **Session statistics** tracking for cost monitoring
 - **Streaming support** for real-time responses
 - **Enhanced logging** with ANSI color formatting via Colors class for better visibility
+- **Automatic configuration reload** with .env file monitoring and restart capability
 
 #### 2. **models.py** - Data Models & Conversion
 - **Pydantic models** for type-safe API contracts

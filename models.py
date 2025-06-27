@@ -2205,11 +2205,13 @@ class AnthropicStreamingConverter:
             tool_index = tool_call.get("index")
         elif hasattr(tool_call, "index"):
             tool_index = getattr(tool_call, "index")
-        
+
         if tool_index is None:
-            logger.warning("🔧 TOOL_CALL_DELTA: Missing tool call index, defaulting to 0")
+            logger.warning(
+                "🔧 TOOL_CALL_DELTA: Missing tool call index, defaulting to 0"
+            )
             tool_index = 0
-            
+
         logger.debug(
             f"🔧 TOOL_CALL_DELTA: Processing tool call index {tool_index}, active_tools={list(self.active_tool_indices)}"
         )
@@ -2223,7 +2225,7 @@ class AnthropicStreamingConverter:
         if tool_index not in self.tool_calls:
             async for event in self._initialize_new_tool_call(tool_call, tool_index):
                 yield event
-        
+
         # Handle arguments for this specific tool call
         async for event in self._process_tool_call_arguments(tool_call, tool_index):
             yield event
@@ -2269,15 +2271,15 @@ class AnthropicStreamingConverter:
             tool_name = getattr(function, "name", "") if function else ""
 
         tool_id = generate_unique_id("toolu")
-        
+
         # Create tool call entry
         self.tool_calls[tool_index] = {
             "id": tool_id,
             "name": tool_name,
             "json_accumulator": "",
-            "content_block_index": self.content_block_index
+            "content_block_index": self.content_block_index,
         }
-        
+
         self.active_tool_indices.add(tool_index)
         self.is_tool_use = True
 
@@ -2297,7 +2299,7 @@ class AnthropicStreamingConverter:
         yield self._send_content_block_start_event(
             "tool_use", id=tool_id, name=tool_name
         )
-        
+
         # Move to next content block index for next tool
         self.content_block_index += 1
 
@@ -2307,7 +2309,9 @@ class AnthropicStreamingConverter:
         arguments = None
         if isinstance(tool_call, dict) and "function" in tool_call:
             function = tool_call.get("function", {})
-            arguments = function.get("arguments", "") if isinstance(function, dict) else ""
+            arguments = (
+                function.get("arguments", "") if isinstance(function, dict) else ""
+            )
         elif hasattr(tool_call, "function"):
             function = getattr(tool_call, "function", None)
             arguments = getattr(function, "arguments", "") if function else ""
@@ -2323,7 +2327,7 @@ class AnthropicStreamingConverter:
         # Check if this contains new arguments or is a repetition
         if accumulated_json and arguments.startswith(accumulated_json):
             # This is cumulative - extract only the new part
-            new_arguments = arguments[len(accumulated_json):]
+            new_arguments = arguments[len(accumulated_json) :]
             if new_arguments:
                 logger.debug(
                     f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - extracting {len(new_arguments)} new chars from cumulative {len(arguments)}"
@@ -2335,12 +2339,14 @@ class AnthropicStreamingConverter:
                 )
                 return
         elif accumulated_json and arguments == accumulated_json:
-            logger.debug(f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - exact duplicate arguments, skipping")
+            logger.debug(
+                f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - exact duplicate arguments, skipping"
+            )
             return
 
         # Update accumulator
         tool_info["json_accumulator"] += arguments
-        
+
         logger.debug(
             f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - added {len(arguments)} chars, total: {len(tool_info['json_accumulator'])}"
         )
@@ -2361,7 +2367,7 @@ class AnthropicStreamingConverter:
         logger.debug(
             f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - sending input_json_delta with {len(arguments)} chars for block {content_block_idx}"
         )
-        
+
         # Temporarily set content_block_index to the tool's index for the delta event
         original_index = self.content_block_index
         self.content_block_index = content_block_idx
@@ -2566,7 +2572,7 @@ class AnthropicStreamingConverter:
                 tool_name = tool_info["name"]
                 tool_json = tool_info["json_accumulator"]
                 content_block_idx = tool_info["content_block_index"]
-                
+
                 logger.debug(
                     f"🔚 PREPARE_FINALIZATION: Finalizing tool {tool_index} - name={tool_name}, json_length={len(tool_json)}"
                 )
@@ -2574,10 +2580,14 @@ class AnthropicStreamingConverter:
                 # Ensure tool JSON is complete and parsed
                 if tool_json:
                     # Try to repair and parse the tool JSON
-                    final_parsed_json, was_repaired = self.try_repair_tool_json(tool_json)
+                    final_parsed_json, was_repaired = self.try_repair_tool_json(
+                        tool_json
+                    )
 
                     if final_parsed_json:
-                        self.current_content_blocks[content_block_idx]["input"] = final_parsed_json
+                        self.current_content_blocks[content_block_idx]["input"] = (
+                            final_parsed_json
+                        )
                         if was_repaired:
                             logger.warning(
                                 f"🔧 PREPARE_FINALIZATION: Tool {tool_index} - Successfully repaired malformed tool JSON"
@@ -2606,13 +2616,13 @@ class AnthropicStreamingConverter:
                 logger.debug(
                     f"🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool {tool_index} at block {content_block_idx}"
                 )
-                
+
                 # Temporarily set content_block_index to the tool's index for the stop event
                 original_index = self.content_block_index
                 self.content_block_index = content_block_idx
                 yield self._send_content_block_stop_event()
                 self.content_block_index = original_index
-                
+
             self.tool_block_closed = True  # Mark all tool blocks as closed
 
         # Handle text block completion
@@ -2647,6 +2657,16 @@ class AnthropicStreamingConverter:
         finish_reason = self.pending_finish_reason
         logger.debug(f"Sending final events for finish_reason: {finish_reason}")
 
+        # Compare streaming conversion results with what non-streaming would look like
+        _compare_streaming_with_non_streaming(
+            self.original_request,
+            self.accumulated_text,
+            self.accumulated_thinking,
+            self.current_content_blocks,
+            self.output_tokens,
+            self.openai_chunks_received,
+        )
+
         # Determine stop reason
         stop_reason = _map_finish_reason_to_stop_reason(finish_reason)
         logger.debug(f"Mapped stop_reason: {stop_reason}")
@@ -2676,7 +2696,7 @@ class AnthropicStreamingConverter:
 async def convert_openai_streaming_response_to_anthropic(
     response_generator: AsyncStream[ChatCompletionChunk],
     original_request: ClaudeMessagesRequest,
-    routed_model: str | None = None,
+    routed_model: str = "",
 ):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format.
 
@@ -2740,11 +2760,11 @@ async def convert_openai_streaming_response_to_anthropic(
                 converter.current_content_blocks.append(text_block)
                 yield converter._send_content_block_start_event("text")
                 yield converter._send_content_block_stop_event()
-            elif converter.text_block_started and not converter.text_block_closed:
-                logger.debug("STREAMING_EVENT: content_block_stop - index: 0")
-                yield converter._send_content_block_stop_event()
-            elif converter.is_tool_use and not getattr(
-                converter, "tool_block_closed", False
+            elif (
+                converter.text_block_started
+                and not converter.text_block_closed
+                or converter.is_tool_use
+                and not getattr(converter, "tool_block_closed", False)
             ):
                 logger.debug("STREAMING_EVENT: content_block_stop - index: 0")
                 yield converter._send_content_block_stop_event()
@@ -2761,9 +2781,7 @@ async def convert_openai_streaming_response_to_anthropic(
             if (
                 hasattr(converter, "pending_finish_reason")
                 and converter.pending_finish_reason == "tool_calls"
-            ):
-                stop_reason = "tool_use"
-            elif converter.is_tool_use:
+            ) or converter.is_tool_use:
                 stop_reason = "tool_use"
             else:
                 stop_reason = "end_turn"
@@ -2779,7 +2797,7 @@ async def convert_openai_streaming_response_to_anthropic(
 def _log_streaming_completion(
     converter: AnthropicStreamingConverter,
     original_request: ClaudeMessagesRequest,
-    routed_model: str | None,
+    routed_model: str = "",
 ):
     """Log a detailed summary of the streaming completion."""
     try:
@@ -2911,7 +2929,7 @@ def add_session_stats(
     input_tokens: int,
     output_tokens: int,
     cost: float,
-    routed_model: str = None,
+    routed_model: str = "",
 ):
     """Add usage statistics to session tracking."""
     try:

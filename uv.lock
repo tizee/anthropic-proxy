@@ -23,6 +23,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "tiktoken" },
     { name = "uvicorn" },
+    { name = "watchfiles" },
 ]
 
 [package.dev-dependencies]
@@ -42,6 +43,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
+    { name = "watchfiles", specifier = ">=1.0.4" },
 ]
 
 [package.metadata.requires-dev]
