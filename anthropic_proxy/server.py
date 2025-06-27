@@ -8,26 +8,19 @@ import json
 import logging
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import (
-    APIConnectionError,
-    APIError,
-    APITimeoutError,
     AsyncStream,
-    AuthenticationError,
-    RateLimitError,
 )
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionChunk,
 )
-
-from .hook import hook_manager, load_all_plugins
 
 from .client import (
     CUSTOM_OPENAI_MODELS,
@@ -37,9 +30,9 @@ from .client import (
 )
 from .config import config, setup_env_file_monitoring, setup_logging
 from .converter import (
-    clean_gemini_schema,
     convert_openai_response_to_anthropic,
 )
+from .hook import hook_manager, load_all_plugins
 from .streaming import convert_openai_streaming_response_to_anthropic
 from .types import (
     ClaudeMessagesRequest,
@@ -73,10 +66,8 @@ async def lifespan(app: FastAPI):
     global env_file_watcher_task
     if env_file_watcher_task and not env_file_watcher_task.done():
         env_file_watcher_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await env_file_watcher_task
-        except asyncio.CancelledError:
-            pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -342,7 +333,7 @@ async def create_message(raw_request: Request):
 
         error_message = _format_error_message(e, error_details)
         status_code = error_details.get("status_code", 500)
-        raise HTTPException(status_code=status_code, detail=error_message)
+        raise HTTPException(status_code=status_code, detail=error_message) from e
 
 
 @app.post("/v1/messages/count_tokens")
@@ -388,7 +379,9 @@ async def count_tokens(raw_request: Request):
 
         error_traceback = traceback.format_exc()
         logger.error(f"Error counting tokens: {str(e)}\n{error_traceback}")
-        raise HTTPException(status_code=500, detail=f"Error counting tokens: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error counting tokens: {str(e)}"
+        ) from e
 
 
 @app.get("/v1/stats")
@@ -476,7 +469,7 @@ async def test_message_conversion(raw_request: Request):
 
         error_message = _format_error_message(e, error_details)
         status_code = error_details.get("status_code", 500)
-        raise HTTPException(status_code=status_code, detail=error_message)
+        raise HTTPException(status_code=status_code, detail=error_message) from e
 
 
 @app.get("/test-connection")

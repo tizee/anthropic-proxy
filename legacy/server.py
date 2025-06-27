@@ -1,19 +1,30 @@
+import asyncio
 import json
 import logging
 import os
 import os.path
 import sys
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
-import asyncio
 
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from hook import hook_manager, load_all_plugins
+from models import (
+    ClaudeMessagesRequest,
+    ClaudeTokenCountRequest,
+    ClaudeTokenCountResponse,
+    ModelDefaults,
+    convert_openai_response_to_anthropic,
+    convert_openai_streaming_response_to_anthropic,
+    global_usage_stats,
+    update_global_usage_stats,
+)
 from openai import (
     APIConnectionError,
     APIError,
@@ -26,18 +37,6 @@ from openai import (
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionChunk,
-)
-
-from hook import hook_manager, load_all_plugins
-from models import (
-    ClaudeMessagesRequest,
-    ClaudeTokenCountRequest,
-    ClaudeTokenCountResponse,
-    ModelDefaults,
-    convert_openai_response_to_anthropic,
-    convert_openai_streaming_response_to_anthropic,
-    global_usage_stats,
-    update_global_usage_stats,
 )
 
 # Load environment variables from .env file

@@ -2204,7 +2204,7 @@ class AnthropicStreamingConverter:
         if isinstance(tool_call, dict):
             tool_index = tool_call.get("index")
         elif hasattr(tool_call, "index"):
-            tool_index = getattr(tool_call, "index")
+            tool_index = tool_call.index
 
         if tool_index is None:
             logger.warning(
@@ -2425,7 +2425,7 @@ class AnthropicStreamingConverter:
                     logger.debug(
                         f"🔍 RAW_CHUNK_COMPLETE: {json.dumps(raw_chunk_data, indent=2)}"
                     )
-                except Exception as e:
+                except Exception:
                     logger.debug(f"🔍 RAW_CHUNK_COMPLETE (fallback): {str(chunk)}")
             else:
                 logger.debug(f"🔍 RAW_CHUNK_COMPLETE (str): {str(chunk)}")
@@ -2435,7 +2435,7 @@ class AnthropicStreamingConverter:
             if delta_content:
                 logger.debug(f"🔍 DELTA_CONTENT_DETAIL: {repr(delta_content)}")
             else:
-                logger.debug(f"🔍 DELTA_CONTENT_DETAIL: None or empty")
+                logger.debug("🔍 DELTA_CONTENT_DETAIL: None or empty")
 
             # Enhanced logging for non-Claude supported event types and errors
             if chunk_data.get("finish_reason"):
@@ -2459,13 +2459,13 @@ class AnthropicStreamingConverter:
                         f"🚨 NON_CLAUDE_FINISH_REASON detected: {finish_reason} in chunk #{self.openai_chunks_received}"
                     )
                     logger.error(
-                        f"🚨 This finish_reason is not supported by Claude API and may cause conversion issues"
+                        "🚨 This finish_reason is not supported by Claude API and may cause conversion issues"
                     )
 
                 # Special handling for MALFORMED_FUNCTION_CALL
                 if "MALFORMED" in finish_reason.upper():
                     logger.error(
-                        f"🚨 MALFORMED_FUNCTION_CALL detected - this indicates tool call format issues"
+                        "🚨 MALFORMED_FUNCTION_CALL detected - this indicates tool call format issues"
                     )
                     logger.error(
                         f"🚨 Raw chunk data: {chunk.model_dump() if hasattr(chunk, 'model_dump') else str(chunk)}"

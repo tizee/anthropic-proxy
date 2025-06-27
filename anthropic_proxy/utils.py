@@ -3,7 +3,6 @@ Utility functions for the anthropic_proxy package.
 This module contains token counting, validation, debugging and other utility functions.
 """
 
-import json
 import logging
 from typing import Any
 
@@ -13,8 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 def count_tokens_in_response(
-    response_content: str = "", thinking_content: str = "", tool_calls: list = []
+    response_content: str = "",
+    thinking_content: str = "",
+    tool_calls: list | None = None,
 ) -> int:
+    if tool_calls is None:
+        tool_calls = []
     """Count tokens in response content using tiktoken"""
     # Token counting removed - rely on API usage data only
     # Input token counting is disabled, only use output tokens from actual API responses
@@ -353,7 +356,7 @@ def _extract_error_details(e: Exception) -> dict[str, Any]:
     attrs_to_check.extend(
         ["message", "status_code", "response", "code", "param", "type"]
     )
-    attrs_to_check = sorted(list(set(attrs_to_check)))  # Get unique attributes
+    attrs_to_check = sorted(set(attrs_to_check))  # Get unique attributes
 
     for attr in attrs_to_check:
         if (
@@ -370,7 +373,7 @@ def _extract_error_details(e: Exception) -> dict[str, Any]:
                     error_details[attr] = value.text
                 else:
                     error_details[attr] = str(value)
-            elif isinstance(value, (str, int, float, bool, list, dict, type(None))):
+            elif isinstance(value, str | int | float | bool | list | dict | type(None)):
                 # This value is already JSON serializable
                 error_details[attr] = value
             else:

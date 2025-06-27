@@ -6,9 +6,10 @@ This allows the package to be run as: uv run anthropic-proxy
 
 import argparse
 import sys
+
 import uvicorn
+
 from .config import config, setup_logging
-from .server import app
 
 
 def main():

@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -104,7 +104,7 @@ class Config:
         self.log_level = os.environ.get("LOG_LEVEL", ModelDefaults.DEFAULT_LOG_LEVEL)
         self.log_file_path = os.environ.get(
             "LOG_FILE_PATH",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"),
+            Path(__file__).resolve().parent / "server.log",
         )
 
         # Request limits and timeouts
@@ -127,17 +127,17 @@ class Config:
 
     def _get_project_root(self) -> str:
         """Get the project root directory (parent of the package directory)"""
-        package_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.dirname(package_dir)
+        package_dir = Path(__file__).resolve().parent
+        return str(Path(package_dir).parent)
 
     def check_env_file_exists(self) -> bool:
         """Check if .env file exists in the project root"""
-        env_file_path = os.path.join(self.project_root, ".env")
-        return os.path.exists(env_file_path)
+        env_file_path = Path(self.project_root) / ".env"
+        return Path(env_file_path).exists()
 
     def get_env_file_path(self) -> str:
         """Get the full path to the .env file"""
-        return os.path.join(self.project_root, ".env")
+        return str(Path(self.project_root) / ".env")
 
     def validate_api_keys(self):
         """Validate that at least one provider API key is configured"""
@@ -217,7 +217,7 @@ async def watch_env_file():
     try:
         logger.info(f"✅ .env file monitoring started for {env_file_path}")
 
-        async for changes in awatch(env_file_path):
+        async for _changes in awatch(env_file_path):
             logger.info("🔄 .env file changed, restarting server...")
             # Trigger restart by exiting the process
             # uvicorn --reload will automatically restart when the process exits
@@ -255,9 +255,9 @@ def setup_logging():
 
     try:
         # Ensure log directory exists
-        log_dir = os.path.dirname(config.log_file_path)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
+        log_dir = Path(config.log_file_path).parent
+        if not log_dir.exists():
+            log_dir.mkdir(parents=True, exist_ok=True)
 
         # Configure the root logger
         root_logger.setLevel(getattr(logging, config.log_level.upper()))

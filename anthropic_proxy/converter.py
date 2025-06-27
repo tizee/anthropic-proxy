@@ -484,13 +484,13 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
                 for key, value in obj.items():
                     if key in problematic_fields:
                         return False, f"Unsupported field '{key}' found at {path}.{key}"
-                    if isinstance(value, (dict, list)):
+                    if isinstance(value, dict | list):
                         is_valid, error = check_nested_object(value, f"{path}.{key}")
                         if not is_valid:
                             return is_valid, error
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
-                    if isinstance(item, (dict, list)):
+                    if isinstance(item, dict | list):
                         is_valid, error = check_nested_object(item, f"{path}[{i}]")
                         if not is_valid:
                             return is_valid, error

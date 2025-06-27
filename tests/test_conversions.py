@@ -568,9 +568,9 @@ class TestContentBlockMethods(unittest.TestCase):
 
         # Test 2: List with text blocks (Claude API standard)
         text_list_result = ClaudeContentBlockToolResult(
-            type="tool_result", 
-            tool_use_id="call_124", 
-            content=[{"type": "text", "text": "Processing complete"}]
+            type="tool_result",
+            tool_use_id="call_124",
+            content=[{"type": "text", "text": "Processing complete"}],
         )
         text_list_processed = text_list_result.process_content()
         self.assertIsInstance(text_list_processed, list)
@@ -580,12 +580,12 @@ class TestContentBlockMethods(unittest.TestCase):
 
         # Test 3: List with multiple text blocks
         multi_text_result = ClaudeContentBlockToolResult(
-            type="tool_result", 
-            tool_use_id="call_125", 
+            type="tool_result",
+            tool_use_id="call_125",
             content=[
                 {"type": "text", "text": "First part"},
-                {"type": "text", "text": "Second part"}
-            ]
+                {"type": "text", "text": "Second part"},
+            ],
         )
         multi_text_processed = multi_text_result.process_content()
         self.assertIsInstance(multi_text_processed, list)
@@ -595,16 +595,18 @@ class TestContentBlockMethods(unittest.TestCase):
 
         # Test 4: List with image block (Claude API spec allows this)
         image_result = ClaudeContentBlockToolResult(
-            type="tool_result", 
-            tool_use_id="call_126", 
-            content=[{
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+            type="tool_result",
+            tool_use_id="call_126",
+            content=[
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                    },
                 }
-            }]
+            ],
         )
         image_processed = image_result.process_content()
         self.assertIsInstance(image_processed, list)
@@ -614,9 +616,9 @@ class TestContentBlockMethods(unittest.TestCase):
 
         # Test 5: Edge case - text block without explicit type (should be handled gracefully)
         no_type_result = ClaudeContentBlockToolResult(
-            type="tool_result", 
-            tool_use_id="call_127", 
-            content=[{"text": "Text without type"}]
+            type="tool_result",
+            tool_use_id="call_127",
+            content=[{"text": "Text without type"}],
         )
         no_type_processed = no_type_result.process_content()
         self.assertIsInstance(no_type_processed, list)
@@ -626,15 +628,17 @@ class TestContentBlockMethods(unittest.TestCase):
 
         # Test 6: Edge case - malformed content block (fallback to string conversion)
         malformed_result = ClaudeContentBlockToolResult(
-            type="tool_result", 
-            tool_use_id="call_128", 
-            content=[{"type": "unknown", "data": "some data"}]
+            type="tool_result",
+            tool_use_id="call_128",
+            content=[{"type": "unknown", "data": "some data"}],
         )
         malformed_processed = malformed_result.process_content()
         self.assertIsInstance(malformed_processed, list)
         self.assertEqual(len(malformed_processed), 1)
         self.assertEqual(malformed_processed[0]["type"], "text")
-        self.assertEqual(malformed_processed[0]["text"], "{'type': 'unknown', 'data': 'some data'}")
+        self.assertEqual(
+            malformed_processed[0]["text"], "{'type': 'unknown', 'data': 'some data'}"
+        )
 
         print("✅ Tool result content variations test passed")
 

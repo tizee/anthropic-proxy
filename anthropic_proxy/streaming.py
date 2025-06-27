@@ -5,9 +5,7 @@ This module contains the AnthropicStreamingConverter class and related streaming
 
 import json
 import logging
-import re
 import uuid
-from typing import Any
 
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
@@ -15,9 +13,7 @@ from openai.types.chat import ChatCompletionChunk
 from .converter import parse_function_calls_from_thinking
 from .types import (
     ClaudeMessagesRequest,
-    Constants,
     generate_unique_id,
-    global_usage_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,22 +215,32 @@ class AnthropicStreamingConverter:
             return True
 
         # Incomplete JSON structures
-        if json_stripped.startswith("{") and not json_stripped.endswith("}"):
-            if len(json_stripped) < 15:  # Very short incomplete JSON
-                return True
+        if (
+            json_stripped.startswith("{")
+            and not json_stripped.endswith("}")
+            and len(json_stripped) < 15
+        ):
+            return True
 
-        if json_stripped.startswith("[") and not json_stripped.endswith("]"):
-            if len(json_stripped) < 10:
-                return True
+        if (
+            json_stripped.startswith("[")
+            and not json_stripped.endswith("]")
+            and len(json_stripped) < 10
+        ):
+            return True
 
         # Check for obviously broken JSON patterns
-        if json_stripped.count("{") != json_stripped.count("}"):
-            if len(json_stripped) < 20:  # Only for short chunks
-                return True
+        if (
+            json_stripped.count("{") != json_stripped.count("}")
+            and len(json_stripped) < 20
+        ):
+            return True
 
-        if json_stripped.count("[") != json_stripped.count("]"):
-            if len(json_stripped) < 20:
-                return True
+        if (
+            json_stripped.count("[") != json_stripped.count("]")
+            and len(json_stripped) < 20
+        ):
+            return True
 
         # Check for trailing malformed characters
         if json_stripped.endswith("}]") or json_stripped.endswith("},]"):
@@ -248,11 +254,7 @@ class AnthropicStreamingConverter:
             ":]",  # Missing value before closing bracket
         ]
 
-        for pattern in malformed_syntax_patterns:
-            if pattern in json_stripped:
-                return True
-
-        return False
+        return any(pattern in json_stripped for pattern in malformed_syntax_patterns)
 
     def try_repair_tool_json(self, json_str: str) -> tuple[dict, bool]:
         """Try to repair malformed tool JSON and return (parsed_json, was_repaired)."""
@@ -428,7 +430,7 @@ class AnthropicStreamingConverter:
         if isinstance(tool_call, dict):
             tool_index = tool_call.get("index")
         elif hasattr(tool_call, "index"):
-            tool_index = getattr(tool_call, "index")
+            tool_index = tool_call.index
 
         if tool_index is None:
             logger.warning(

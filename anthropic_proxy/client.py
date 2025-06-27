@@ -5,6 +5,8 @@ This module manages OpenAI client creation and custom model configurations.
 
 import logging
 import os
+from pathlib import Path
+
 import yaml
 from openai import AsyncOpenAI
 
@@ -24,12 +26,12 @@ def load_custom_models(config_file=None):
     if config_file is None:
         config_file = config.custom_models_file
 
-    if not os.path.exists(config_file):
+    if not Path(config_file).exists():
         logger.warning(f"Custom models config file not found: {config_file}")
         return
 
     try:
-        with open(config_file) as file:
+        with Path(config_file).open() as file:
             models = yaml.safe_load(file)
 
         if not models:

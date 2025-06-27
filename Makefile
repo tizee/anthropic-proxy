@@ -32,7 +32,7 @@ test-pytest:
 
 # Modern unittest framework
 test-unittest:
-	-uv run python tests/test_unittest.py
+	-uv run pytest tests/test_unittest.py -v
 
 # Test Coverage
 test-cov:
@@ -49,29 +49,29 @@ test: test-pytest
 
 # Quick test commands for development
 test-basic:
-	-uv run python -m unittest tests.test_unittest.TestBasicRequests -v
+	-uv run pytest tests/test_unittest.py::TestBasicRequests -v
 
 test-tools:
-	-uv run python -m unittest tests.test_unittest.TestToolRequests -v
+	-uv run pytest tests/test_unittest.py::TestToolRequests -v
 
 test-custom:
-	-uv run python -m unittest tests.test_unittest.TestCustomModels -v
+	-uv run pytest tests/test_unittest.py::TestCustomModels -v
 
 test-comparison:
-	-uv run python -m unittest tests.test_unittest.TestAnthropicComparison -v
+	-uv run pytest tests/test_unittest.py::TestAnthropicComparison -v
 
 # Specific tool tests
 test-gemini:
-	-uv run python -m unittest tests.test_unittest.TestCustomModels.test_gemini_tool_conversion -v
+	-uv run pytest tests/test_unittest.py::TestCustomModels::test_gemini_tool_conversion -v
 
 test-calculator:
-	-uv run python -m unittest tests.test_unittest.TestToolRequests.test_calculator_tool -v
+	-uv run pytest tests/test_unittest.py::TestToolRequests::test_calculator_tool -v
 
 test-complex:
-	-uv run python -m unittest tests.test_unittest.TestComplexScenarios -v
+	-uv run pytest tests/test_unittest.py::TestComplexScenarios -v
 
 test-conversion:
-	-uv run python tests/test_conversions.py
+	-uv run pytest tests/test_conversions.py -v
 
 test-hooks:
 	-uv run pytest tests/test_hooks.py -v

@@ -51,6 +51,6 @@ hook_manager = HookManager()
 
 def load_all_plugins():
     """Discover and load all plugins from the 'plugins' directory."""
-    import plugins
+    from anthropic_proxy import plugins
 
     hook_manager.load_plugins(plugins)

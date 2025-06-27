@@ -1,25 +1,23 @@
-import asyncio
-import time
-import json
-import httpx
 import argparse
-import sys
-import os
+import asyncio
 import re
-from typing import Dict, Any, AsyncGenerator, Optional
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+import httpx
 
 # Add the parent directory to the path so we can import from server
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Import necessary components from the new package structure
 from anthropic_proxy.client import (
-    initialize_custom_models,
     CUSTOM_OPENAI_MODELS,
+    initialize_custom_models,
 )
 from anthropic_proxy.config import config as server_config  # rename to avoid conflict
 from anthropic_proxy.types import ClaudeMessagesRequest
-from anthropic_proxy.utils import calculate_cost
-
 
 # --- Test Configuration ---
 PROXY_URL = "http://127.0.0.1:8082/v1/messages"
@@ -27,7 +25,7 @@ PROXY_URL = "http://127.0.0.1:8082/v1/messages"
 
 def parse_streaming_response_tokens(
     response_text: str, is_anthropic_format: bool = False
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Parse streaming response to extract token usage information."""
     input_tokens = 0
     output_tokens = 0
@@ -110,7 +108,7 @@ class TokenizedTestResult:
             if generation_time > 0 and self.output_tokens > 0:
                 self.tokens_per_second = self.output_tokens / generation_time
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for easy display."""
         return {
             "Time to First Chunk (ms)": self.ttfc,
@@ -135,8 +133,8 @@ async def run_tokenized_test(
     name: str,
     client: httpx.AsyncClient,
     url: str,
-    payload: Dict[str, Any],
-    headers: Dict[str, str],
+    payload: dict[str, Any],
+    headers: dict[str, str],
     model_id: str,
 ) -> TokenizedTestResult:
     """Runs a performance test with token analysis."""
@@ -210,7 +208,7 @@ async def run_tokenized_test(
         result_dict = result.to_dict()
         for key, value in result_dict.items():
             if key != "error":
-                if isinstance(value, (int, float)):
+                if isinstance(value, int | float):
                     if key == "Estimated Cost ($)":
                         print(f"  {key}: ${value:.6f}")
                     elif "Token" in key or key == "Total Chunks":
@@ -279,16 +277,16 @@ async def main(args):
     print(f"   • Third-party Model: {model_config['model_name']}")
     print(f"   • Direct API Endpoint: {model_config['api_base']}")
     print(f"   • Proxy Server: {PROXY_URL}")
-    print(f"   • Request Content: Same for both tests")
-    print(f"   • Streaming Mode: Enabled")
+    print("   • Request Content: Same for both tests")
+    print("   • Streaming Mode: Enabled")
 
     # Debug: Show actual payloads for comparison
-    print(f"\n🔍 PAYLOAD COMPARISON:")
-    print(f"   Direct (OpenAI format):")
+    print("\n🔍 PAYLOAD COMPARISON:")
+    print("   Direct (OpenAI format):")
     print(f"     • model: {direct_payload['model']}")
     print(f"     • messages: {len(direct_payload['messages'])} messages")
     print(f"     • max_tokens: {direct_payload['max_tokens']}")
-    print(f"   Proxy (Anthropic format):")
+    print("   Proxy (Anthropic format):")
     print(f"     • model: {proxy_payload['model']}")
     print(f"     • messages: {len(proxy_payload['messages'])} messages")
     print(f"     • max_tokens: {proxy_payload['max_tokens']}")
@@ -310,7 +308,7 @@ async def main(args):
     }
     direct_api_url = f"{model_config['api_base']}/chat/completions"
 
-    print(f"\n🎯 Test 1: Direct API Call (Baseline Performance)")
+    print("\n🎯 Test 1: Direct API Call (Baseline Performance)")
     async with httpx.AsyncClient() as direct_client:
         direct_results = await run_tokenized_test(
             "DIRECT API",
@@ -327,8 +325,8 @@ async def main(args):
     # Test 2: Via proxy server (measures translation overhead)
     # Use test_conversion endpoint to bypass routing and test the specified model directly
     test_conversion_url = "http://127.0.0.1:8082/v1/messages/test_conversion"
-    print(f"\n🎯 Test 2: Via Proxy Server (Measures Translation Overhead)")
-    print(f"   Using test_conversion endpoint to bypass model routing")
+    print("\n🎯 Test 2: Via Proxy Server (Measures Translation Overhead)")
+    print("   Using test_conversion endpoint to bypass model routing")
     async with httpx.AsyncClient() as proxy_client:
         proxy_results = await run_tokenized_test(
             "PROXY SERVER",
@@ -383,8 +381,8 @@ async def main(args):
             else 0
         )
 
-        print(f"🔍 PROXY TRANSLATION OVERHEAD:")
-        print(f"   ⏱️  Latency Added (vs. Direct API):")
+        print("🔍 PROXY TRANSLATION OVERHEAD:")
+        print("   ⏱️  Latency Added (vs. Direct API):")
         print(
             f"      • Time to First Chunk: {overhead_ttfc:+.2f} ms ({ttfc_percent_change:+.1f}%)"
         )
@@ -392,12 +390,12 @@ async def main(args):
             f"      • Total Request Time: {overhead_duration:+.2f} ms ({duration_percent_change:+.1f}%)"
         )
 
-        print(f"\n   🚀 Throughput Impact:")
+        print("\n   🚀 Throughput Impact:")
         print(f"      • Direct API: {direct_tps:.2f} tokens/sec")
         print(f"      • Via Proxy: {proxy_tps:.2f} tokens/sec")
         print(f"      • Performance Loss: {throughput_loss:.1f}%")
 
-        print(f"\n   📦 Response Format Overhead:")
+        print("\n   📦 Response Format Overhead:")
         print(f"      • Direct (OpenAI): {direct_results.total_content_length:,} bytes")
         print(
             f"      • Proxy (Anthropic): {proxy_results.total_content_length:,} bytes"
@@ -406,7 +404,7 @@ async def main(args):
             f"      • Format Overhead: {response_size_overhead:+,} bytes ({translation_overhead_percent:+.1f}%)"
         )
 
-        print(f"\n   🎯 Token Accuracy:")
+        print("\n   🎯 Token Accuracy:")
         print(
             f"      • Input Tokens: {direct_results.input_tokens} (direct) vs {proxy_results.input_tokens} (proxy) [{token_input_diff:+d}]"
         )
@@ -417,9 +415,9 @@ async def main(args):
             f"      • Consistency: {'✅ Perfect Match' if tokens_consistent else '⚠️  Tokens Differ'}"
         )
 
-        print(f"\n   💰 Cost Impact:")
+        print("\n   💰 Cost Impact:")
         print(f"      • Same Model Used: Both tests use {model_config['model_name']}")
-        print(f"      • Cost Difference: Proportional to token differences only")
+        print("      • Cost Difference: Proportional to token differences only")
         if not tokens_consistent:
             cost_diff = proxy_results.cost - direct_results.cost
             print(f"      • Additional Cost: ${cost_diff:+.6f}")
@@ -450,7 +448,7 @@ async def main(args):
         )
 
         # Actionable insights
-        print(f"\n💡 KEY INSIGHTS:")
+        print("\n💡 KEY INSIGHTS:")
         if overhead_ttfc > 100:
             print(
                 f"   • High TTFC overhead ({overhead_ttfc:.0f}ms) - Check network latency or processing delays"
@@ -464,11 +462,9 @@ async def main(args):
                 f"   • Large format overhead ({translation_overhead_percent:.1f}%) - Anthropic format is verbose"
             )
         if not tokens_consistent:
-            print(
-                f"   • Token inconsistency detected - May indicate translation issues"
-            )
+            print("   • Token inconsistency detected - May indicate translation issues")
         if overhead_ttfc < 50 and throughput_loss < 10:
-            print(f"   • Excellent proxy performance - Translation overhead is minimal")
+            print("   • Excellent proxy performance - Translation overhead is minimal")
 
     else:
         print("❌ Could not complete analysis due to test errors:")
