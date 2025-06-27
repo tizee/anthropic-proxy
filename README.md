@@ -122,6 +122,32 @@ For faster feedback during development, you can run specific sets of tests:
 - `make test-tools`: Tests tool usage scenarios.
 - `make test-custom`: Focuses on custom model integrations.
 - `make test-comparison`: Compares proxy output with the official Anthropic API.
+- `make test-performance`: Runs performance tests (requires running server)
+
+### Performance Testing
+
+The `performance_test.py` script measures proxy overhead when routing requests to third-party models (DeepSeek, Gemini, etc.) vs direct API calls.
+
+#### Key Metrics Measured:
+- Time to First Chunk (TTFC)
+- Total request duration
+- Token throughput (tokens/sec)
+- Response format overhead
+- Token consistency between direct and proxy calls
+- Cost impact analysis
+
+#### Usage:
+```bash
+python performance_test.py --model_id <model_id_from_models.yaml>
+```
+
+Example output analysis:
+```
+PROXY EFFICIENCY RATING: 🟢 EXCELLENT
+  Proxy adds minimal overhead.
+  - Criteria: TTFC Overhead < 50ms AND Throughput Loss < 5%
+  - Actuals: TTFC Overhead = 32.14ms, Throughput Loss = 2.1%
+```
 
 ### Linting
 ```bash
@@ -139,6 +165,7 @@ make format
 claude-code-proxy/
 ├── server.py                 # Main FastAPI proxy server
 ├── models.py                 # Pydantic models and format conversion
+├── performance_test.py        # Proxy performance analysis tool
 ├── tests/                    # Test directory
 │   ├── test_unittest.py      # Modern unittest framework with API comparison ⭐
 │   └── test_conversions.py   # Format conversion unit tests
@@ -270,6 +297,11 @@ Add custom OpenAI-compatible models in `models.yaml`:
 
 ### Debugging
 Set `LOG_LEVEL=DEBUG` in `.env` for detailed logs.
+
+Performance metrics from `performance_test.py` can help identify:
+- Network latency issues (high TTFC overhead)
+- Processing bottlenecks (throughput loss)
+- Format conversion inefficiencies (response size overhead)
 
 ### Log Files
 The default log file path can be configured using the `LOG_FILE_PATH` environment variable in your `.env` file, defaulting to the directory containing `server.py` if not specified.

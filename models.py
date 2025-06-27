@@ -1806,10 +1806,9 @@ class AnthropicStreamingConverter:
         self.is_tool_use = False
         self.tool_block_closed = False
 
-        # Tool call state
-        self.tool_json = ""
-        self.current_tool_id = None
-        self.current_tool_name = None
+        # Tool call state - support multiple simultaneous tool calls by index
+        self.tool_calls = {}  # index -> {id, name, json_accumulator, content_block_index}
+        self.active_tool_indices = set()  # Track which tool indices are active
 
         # Response state
         self.has_sent_stop_reason = False
@@ -2199,155 +2198,175 @@ class AnthropicStreamingConverter:
             )
 
     async def _handle_tool_call_delta(self, tool_call):
-        """Handle tool call delta with enhanced debugging."""
+        """Handle tool call delta with support for multiple simultaneous tool calls."""
+        # Extract tool call index - this is crucial for multiple tool calls
+        tool_index = None
+        if isinstance(tool_call, dict):
+            tool_index = tool_call.get("index")
+        elif hasattr(tool_call, "index"):
+            tool_index = getattr(tool_call, "index")
+        
+        if tool_index is None:
+            logger.warning("🔧 TOOL_CALL_DELTA: Missing tool call index, defaulting to 0")
+            tool_index = 0
+            
         logger.debug(
-            f"🔧 TOOL_CALL_DELTA: Processing tool call, is_tool_use={self.is_tool_use}"
+            f"🔧 TOOL_CALL_DELTA: Processing tool call index {tool_index}, active_tools={list(self.active_tool_indices)}"
         )
 
-        # If we haven't started a tool yet, we need to handle any accumulated text first
-        if not self.is_tool_use:
-            # If we have accumulated text, send it first
-            if self.accumulated_text and not self.text_block_started:
-                logger.debug(
-                    f"🔧 TOOL_CALL_DELTA: Handling accumulated text first ({len(self.accumulated_text)} chars)"
-                )
-                text_block = {"type": "text", "text": ""}
-                self.current_content_blocks.append(text_block)
-                yield self._send_content_block_start_event("text")
-                self.text_block_started = True
+        # Handle text content before first tool call if needed
+        if not self.is_tool_use and not self.active_tool_indices:
+            async for event in self._handle_text_before_tools():
+                yield event
 
-                # Send the accumulated text
-                yield self._send_content_block_delta_event(
-                    "text_delta", self.accumulated_text
-                )
+        # Check if this is a new tool call (first time seeing this index)
+        if tool_index not in self.tool_calls:
+            async for event in self._initialize_new_tool_call(tool_call, tool_index):
+                yield event
+        
+        # Handle arguments for this specific tool call
+        async for event in self._process_tool_call_arguments(tool_call, tool_index):
+            yield event
 
-                # Update the content block
-                self.current_content_blocks[self.content_block_index]["text"] = (
-                    self.accumulated_text
-                )
-
-                # Close the text block
-                yield self._send_content_block_stop_event()
-                self.text_block_closed = True
-                self.content_block_index += 1
-            elif self.text_block_started and not self.text_block_closed:
-                # Close any open text block
-                logger.debug(
-                    "🔧 TOOL_CALL_DELTA: Closing open text block before starting tool"
-                )
-                yield self._send_content_block_stop_event()
-                self.text_block_closed = True
-                self.content_block_index += 1
-
-            # Now start the tool use block
-            self.is_tool_use = True
-
-            # Extract tool info
-            if isinstance(tool_call, dict):
-                function = tool_call.get("function", {})
-                self.current_tool_name = (
-                    function.get("name", "") if isinstance(function, dict) else ""
-                )
-                self.current_tool_id = generate_unique_id("toolu")
-                logger.debug(
-                    f"🔧 TOOL_CALL_DELTA: Extracted tool from dict - name: {self.current_tool_name}, id: {self.current_tool_id}"
-                )
-            else:
-                function = getattr(tool_call, "function", None)
-                self.current_tool_name = (
-                    getattr(function, "name", "") if function else ""
-                )
-                self.current_tool_id = generate_unique_id("toolu")
-                logger.debug(
-                    f"🔧 TOOL_CALL_DELTA: Extracted tool from object - name: {self.current_tool_name}, id: {self.current_tool_id}"
-                )
-
-            # Create tool use block
-            tool_block = {
-                "type": "tool_use",
-                "id": self.current_tool_id,
-                "name": self.current_tool_name,
-                "input": {},
-            }
-            self.current_content_blocks.append(tool_block)
+    async def _handle_text_before_tools(self):
+        """Handle accumulated text before starting tool calls."""
+        if self.accumulated_text and not self.text_block_started:
             logger.debug(
-                f"🔧 TOOL_CALL_DELTA: Created tool_use block at index {self.content_block_index}"
+                f"🔧 TOOL_CALL_DELTA: Handling accumulated text first ({len(self.accumulated_text)} chars)"
+            )
+            text_block = {"type": "text", "text": ""}
+            self.current_content_blocks.append(text_block)
+            yield self._send_content_block_start_event("text")
+            self.text_block_started = True
+
+            yield self._send_content_block_delta_event(
+                "text_delta", self.accumulated_text
             )
 
-            yield self._send_content_block_start_event(
-                "tool_use", id=self.current_tool_id, name=self.current_tool_name
+            self.current_content_blocks[self.content_block_index]["text"] = (
+                self.accumulated_text
             )
-            self.tool_json = ""
 
+            yield self._send_content_block_stop_event()
+            self.text_block_closed = True
+            self.content_block_index += 1
+        elif self.text_block_started and not self.text_block_closed:
+            logger.debug(
+                "🔧 TOOL_CALL_DELTA: Closing open text block before starting tool"
+            )
+            yield self._send_content_block_stop_event()
+            self.text_block_closed = True
+            self.content_block_index += 1
+
+    async def _initialize_new_tool_call(self, tool_call, tool_index):
+        """Initialize a new tool call at the given index."""
+        # Extract tool info
+        if isinstance(tool_call, dict):
+            function = tool_call.get("function", {})
+            tool_name = function.get("name", "") if isinstance(function, dict) else ""
+        else:
+            function = getattr(tool_call, "function", None)
+            tool_name = getattr(function, "name", "") if function else ""
+
+        tool_id = generate_unique_id("toolu")
+        
+        # Create tool call entry
+        self.tool_calls[tool_index] = {
+            "id": tool_id,
+            "name": tool_name,
+            "json_accumulator": "",
+            "content_block_index": self.content_block_index
+        }
+        
+        self.active_tool_indices.add(tool_index)
+        self.is_tool_use = True
+
+        logger.debug(
+            f"🔧 TOOL_CALL_DELTA: Initialized new tool call - index: {tool_index}, name: {tool_name}, id: {tool_id}, block_index: {self.content_block_index}"
+        )
+
+        # Create tool use block
+        tool_block = {
+            "type": "tool_use",
+            "id": tool_id,
+            "name": tool_name,
+            "input": {},
+        }
+        self.current_content_blocks.append(tool_block)
+
+        yield self._send_content_block_start_event(
+            "tool_use", id=tool_id, name=tool_name
+        )
+        
+        # Move to next content block index for next tool
+        self.content_block_index += 1
+
+    async def _process_tool_call_arguments(self, tool_call, tool_index):
+        """Process arguments for a specific tool call."""
         # Extract function arguments
         arguments = None
         if isinstance(tool_call, dict) and "function" in tool_call:
             function = tool_call.get("function", {})
-            arguments = (
-                function.get("arguments", "") if isinstance(function, dict) else ""
-            )
+            arguments = function.get("arguments", "") if isinstance(function, dict) else ""
         elif hasattr(tool_call, "function"):
             function = getattr(tool_call, "function", None)
             arguments = getattr(function, "arguments", "") if function else ""
 
-        # If we have arguments, send them as a delta
-        if arguments:
-            # Check if this contains new arguments or is a repetition
-            if self.tool_json and arguments.startswith(self.tool_json):
-                # This is cumulative - extract only the new part
-                new_arguments = arguments[len(self.tool_json) :]
-                if new_arguments:
-                    logger.debug(
-                        f"🔧 TOOL_CALL_DELTA: Extracting {len(new_arguments)} new chars from cumulative {len(arguments)}"
-                    )
-                    arguments = new_arguments
-                else:
-                    logger.debug(
-                        f"🔧 TOOL_CALL_DELTA: No new content in cumulative update, skipping"
-                    )
-                    return
-            elif self.tool_json and arguments == self.tool_json:
-                # Exact duplicate
-                logger.debug(f"🔧 TOOL_CALL_DELTA: Exact duplicate arguments, skipping")
+        if not arguments:
+            logger.debug(f"🔧 TOOL_CALL_DELTA: No arguments for tool {tool_index}")
+            return
+
+        tool_info = self.tool_calls[tool_index]
+        accumulated_json = tool_info["json_accumulator"]
+        content_block_idx = tool_info["content_block_index"]
+
+        # Check if this contains new arguments or is a repetition
+        if accumulated_json and arguments.startswith(accumulated_json):
+            # This is cumulative - extract only the new part
+            new_arguments = arguments[len(accumulated_json):]
+            if new_arguments:
+                logger.debug(
+                    f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - extracting {len(new_arguments)} new chars from cumulative {len(arguments)}"
+                )
+                arguments = new_arguments
+            else:
+                logger.debug(
+                    f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - no new content in cumulative update, skipping"
+                )
                 return
+        elif accumulated_json and arguments == accumulated_json:
+            logger.debug(f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - exact duplicate arguments, skipping")
+            return
 
+        # Update accumulator
+        tool_info["json_accumulator"] += arguments
+        
+        logger.debug(
+            f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - added {len(arguments)} chars, total: {len(tool_info['json_accumulator'])}"
+        )
+
+        # Try to parse JSON to update the content block
+        try:
+            parsed_json = json.loads(tool_info["json_accumulator"])
+            self.current_content_blocks[content_block_idx]["input"] = parsed_json
             logger.debug(
-                f"🔧 TOOL_CALL_DELTA: Adding {len(arguments)} chars to tool_json"
+                f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - successfully parsed complete JSON"
             )
-            self.tool_json += arguments
+        except json.JSONDecodeError as e:
             logger.debug(
-                f"🔧 TOOL_CALL_DELTA: Total accumulated tool_json: {len(self.tool_json)} chars"
+                f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - JSON not complete yet (pos {e.pos}), continuing to accumulate"
             )
 
-            # Try to parse JSON to update the content block
-            parse_success = False
-            try:
-                parsed_json = json.loads(self.tool_json)
-                self.current_content_blocks[self.content_block_index]["input"] = (
-                    parsed_json
-                )
-                parse_success = True
-                logger.debug(
-                    f"🔧 TOOL_CALL_DELTA: Successfully parsed complete JSON: {json.dumps(parsed_json, indent=2)}"
-                )
-            except json.JSONDecodeError as e:
-                # JSON not yet complete, continue accumulating
-                logger.debug(
-                    f"🔧 TOOL_CALL_DELTA: JSON not complete yet (pos {e.pos}), continuing to accumulate"
-                )
-
-            # Send the delta
-            logger.debug(
-                f"🔧 TOOL_CALL_DELTA: Sending input_json_delta with {len(arguments)} chars"
-            )
-            yield self._send_content_block_delta_event("input_json_delta", arguments)
-
-            # Log current state for debugging
-            logger.debug(
-                f"🔧 TOOL_CALL_DELTA: Current state - parse_success={parse_success}, total_json_length={len(self.tool_json)}"
-            )
-        else:
-            logger.debug("🔧 TOOL_CALL_DELTA: No arguments in this delta")
+        # Send the delta - need to use the correct content block index
+        logger.debug(
+            f"🔧 TOOL_CALL_DELTA: Tool {tool_index} - sending input_json_delta with {len(arguments)} chars for block {content_block_idx}"
+        )
+        
+        # Temporarily set content_block_index to the tool's index for the delta event
+        original_index = self.content_block_index
+        self.content_block_index = content_block_idx
+        yield self._send_content_block_delta_event("input_json_delta", arguments)
+        self.content_block_index = original_index
 
     async def process_chunk(self, chunk: ChatCompletionChunk):
         """Process a single chunk from the OpenAI streaming response."""
@@ -2535,54 +2554,66 @@ class AnthropicStreamingConverter:
             async for event in self._close_thinking_block():
                 yield event
 
-        # Handle tool use completion
-        if self.is_tool_use:
+        # Handle tool use completion - finalize all active tool calls
+        if self.is_tool_use and self.active_tool_indices:
             logger.debug(
-                f"🔚 PREPARE_FINALIZATION: Finalizing tool call - name={self.current_tool_name}, json_length={len(self.tool_json)}"
+                f"🔚 PREPARE_FINALIZATION: Finalizing {len(self.active_tool_indices)} tool calls"
             )
 
-            # Ensure tool JSON is complete and parsed
-            if self.tool_json:
-                # Try to repair and parse the tool JSON
-                final_parsed_json, was_repaired = self.try_repair_tool_json(
-                    self.tool_json
+            # Process each active tool call
+            for tool_index in sorted(self.active_tool_indices):
+                tool_info = self.tool_calls[tool_index]
+                tool_name = tool_info["name"]
+                tool_json = tool_info["json_accumulator"]
+                content_block_idx = tool_info["content_block_index"]
+                
+                logger.debug(
+                    f"🔚 PREPARE_FINALIZATION: Finalizing tool {tool_index} - name={tool_name}, json_length={len(tool_json)}"
                 )
 
-                if final_parsed_json:
-                    self.current_content_blocks[self.content_block_index]["input"] = (
-                        final_parsed_json
-                    )
-                    if was_repaired:
-                        logger.warning(
-                            f"🔧 PREPARE_FINALIZATION: Successfully repaired malformed tool JSON"
-                        )
-                        logger.debug(
-                            f"🔧 PREPARE_FINALIZATION: Original: {self.tool_json}"
-                        )
-                        logger.debug(
-                            f"🔧 PREPARE_FINALIZATION: Repaired: {json.dumps(final_parsed_json, indent=2)}"
-                        )
-                    else:
-                        logger.debug(
-                            f"🔚 PREPARE_FINALIZATION: Final tool input: {json.dumps(final_parsed_json, indent=2)}"
-                        )
-                else:
-                    logger.error(
-                        f"🔚 PREPARE_FINALIZATION: Failed to parse or repair tool JSON"
-                    )
-                    logger.error(
-                        f"🔚 PREPARE_FINALIZATION: Raw tool JSON: {self.tool_json}"
-                    )
-                    # Set empty input as fallback to avoid breaking the stream
-                    self.current_content_blocks[self.content_block_index]["input"] = {}
+                # Ensure tool JSON is complete and parsed
+                if tool_json:
+                    # Try to repair and parse the tool JSON
+                    final_parsed_json, was_repaired = self.try_repair_tool_json(tool_json)
 
-            # Close the tool use block
-            logger.debug(
-                "🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool_use"
-            )
-            yield self._send_content_block_stop_event()
-            self.tool_block_closed = True  # Mark tool block as closed
-            self.content_block_index += 1  # Increment for next block
+                    if final_parsed_json:
+                        self.current_content_blocks[content_block_idx]["input"] = final_parsed_json
+                        if was_repaired:
+                            logger.warning(
+                                f"🔧 PREPARE_FINALIZATION: Tool {tool_index} - Successfully repaired malformed tool JSON"
+                            )
+                            logger.debug(
+                                f"🔧 PREPARE_FINALIZATION: Tool {tool_index} - Original: {tool_json}"
+                            )
+                            logger.debug(
+                                f"🔧 PREPARE_FINALIZATION: Tool {tool_index} - Repaired: {json.dumps(final_parsed_json, indent=2)}"
+                            )
+                        else:
+                            logger.debug(
+                                f"🔚 PREPARE_FINALIZATION: Tool {tool_index} - Final input: {json.dumps(final_parsed_json, indent=2)}"
+                            )
+                    else:
+                        logger.error(
+                            f"🔚 PREPARE_FINALIZATION: Tool {tool_index} - Failed to parse or repair tool JSON"
+                        )
+                        logger.error(
+                            f"🔚 PREPARE_FINALIZATION: Tool {tool_index} - Raw JSON: {tool_json}"
+                        )
+                        # Set empty input as fallback to avoid breaking the stream
+                        self.current_content_blocks[content_block_idx]["input"] = {}
+
+                # Close the tool use block
+                logger.debug(
+                    f"🔚 PREPARE_FINALIZATION: Sending content_block_stop for tool {tool_index} at block {content_block_idx}"
+                )
+                
+                # Temporarily set content_block_index to the tool's index for the stop event
+                original_index = self.content_block_index
+                self.content_block_index = content_block_idx
+                yield self._send_content_block_stop_event()
+                self.content_block_index = original_index
+                
+            self.tool_block_closed = True  # Mark all tool blocks as closed
 
         # Handle text block completion
         elif self.text_block_started and not self.text_block_closed:
