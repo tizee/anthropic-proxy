@@ -191,6 +191,7 @@ async def create_message(raw_request: Request):
 
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
+        openai_request['store'] = False
 
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
@@ -409,6 +410,7 @@ async def test_message_conversion(raw_request: Request):
 
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
+        openai_request['store'] = False
 
         # Create OpenAI client for the model
         client = create_openai_client(original_model)
