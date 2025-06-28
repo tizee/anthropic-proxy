@@ -169,13 +169,17 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     if not api_key:
         raise ValueError(f"No API key available for model: {model_id}")
 
-    # Create client
-    client_kwargs = {"api_key": api_key}
+    # Create client with retry-enabled HTTP client
+    # Configure retry transport for better reliability
+    transport = httpx.AsyncHTTPTransport(retries=ModelDefaults.DEFAULT_MAX_RETRIES)
+    http_client = httpx.AsyncClient(transport=transport)
+    
+    client_kwargs = {"api_key": api_key, "http_client": http_client}
     if base_url:
         client_kwargs["base_url"] = base_url
 
     client = AsyncOpenAI(**client_kwargs)
-    logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}")
+    logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}")
     return client
 
 
@@ -194,10 +198,7 @@ def create_claude_client(model_id: str) -> httpx.AsyncClient:
 
     # Ensure base_url ends with /v1 for Claude API
     if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):
-        if base_url.endswith("/"):
-            base_url = base_url + "v1"
-        else:
-            base_url = base_url + "/v1"
+        base_url = base_url + "v1" if base_url.endswith("/") else base_url + "/v1"
 
     headers = {
         "x-api-key": api_key,
@@ -209,13 +210,17 @@ def create_claude_client(model_id: str) -> httpx.AsyncClient:
     if model_config.get("extra_headers"):
         headers.update(model_config["extra_headers"])
 
+    # Configure retry transport for better reliability
+    transport = httpx.AsyncHTTPTransport(retries=ModelDefaults.DEFAULT_MAX_RETRIES)
+    
     client = httpx.AsyncClient(
         base_url=base_url,
         headers=headers,
-        timeout=httpx.Timeout(60.0)
+        timeout=httpx.Timeout(60.0),
+        transport=transport
     )
 
-    logger.debug(f"Create Claude Client: model={model_id}, base_url={base_url}")
+    logger.debug(f"Create Claude Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}")
     return client
 
 

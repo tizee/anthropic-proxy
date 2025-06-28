@@ -49,7 +49,7 @@ class ModelDefaults:
     THINKING_SIGNATURE_LENGTH = 16  # Length of thinking block signature hash
 
     # Default server settings for proxy
-    DEFAULT_HOST = "0.0.0.0"  # Default server host
+    DEFAULT_HOST = "0.0.0.0"  # Default server host IPv4 (127.0.0.1)
     DEFAULT_PORT = 8082  # Default server port
     DEFAULT_LOG_LEVEL = "WARNING"  # Default logging level
     DEFAULT_MAX_RETRIES = 2  # Default maximum retry attempts

@@ -123,21 +123,21 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
     try:
         # Try to parse the JSON response
         error_data = response.json()
-        
+
         # Extract Claude API error structure
         if isinstance(error_data, dict) and "error" in error_data:
             claude_error = error_data["error"]
             if isinstance(claude_error, dict):
                 error_type = claude_error.get("type", "unknown_error")
                 error_message = claude_error.get("message", "Unknown error occurred")
-                
+
                 return {
                     "status_code": response.status_code,
                     "error_type": error_type,
                     "error_message": error_message,
                     "full_response": error_data
                 }
-        
+
         # Fallback for non-standard error format
         return {
             "status_code": response.status_code,
@@ -145,14 +145,14 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
             "error_message": f"HTTP {response.status_code}: {response.reason_phrase}",
             "full_response": error_data if isinstance(error_data, dict) else {"raw_response": str(error_data)}
         }
-        
+
     except (json.JSONDecodeError, ValueError):
         # Handle non-JSON responses
         try:
             response_text = response.text
         except Exception:
             response_text = "Unable to read response"
-            
+
         return {
             "status_code": response.status_code,
             "error_type": "http_error",
@@ -207,12 +207,12 @@ async def handle_direct_claude_request(
                         async for chunk in response.aiter_text():
                             if chunk:
                                 yield chunk
-                                
+
                 except httpx.HTTPStatusError as http_err:
                     # Parse Claude API error response for streaming
                     error_details = parse_claude_api_error(http_err.response)
                     logger.error(f"Claude API streaming error: {json.dumps(error_details, indent=2)}")
-                    
+
                     # Send structured error event
                     error_event = {
                         "type": "error",
@@ -222,7 +222,7 @@ async def handle_direct_claude_request(
                         }
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-                    
+
                 except httpx.ConnectError as conn_err:
                     logger.error(f"Connection error in streaming: {conn_err}")
                     error_event = {
@@ -233,7 +233,7 @@ async def handle_direct_claude_request(
                         }
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-                    
+
                 except httpx.TimeoutException as timeout_err:
                     logger.error(f"Timeout error in streaming: {timeout_err}")
                     error_event = {
@@ -244,7 +244,7 @@ async def handle_direct_claude_request(
                         }
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-                    
+
                 except Exception as e:
                     logger.error(f"Unexpected streaming error: {e}")
                     error_event = {
@@ -306,7 +306,7 @@ async def handle_direct_claude_request(
             except httpx.HTTPStatusError as http_err:
                 # Parse Claude API error response
                 error_details = parse_claude_api_error(http_err.response)
-                
+
                 # Log detailed error information for debugging
                 debug_info = {
                     "original_model": original_model,
@@ -317,7 +317,7 @@ async def handle_direct_claude_request(
                     "error_message": error_details["error_message"]
                 }
                 logger.error(f"Claude API error: {json.dumps(debug_info, indent=2)}")
-                
+
                 # Create user-friendly error message
                 if error_details["error_type"] == "rate_limit_error":
                     error_message = f"Rate limit exceeded: {error_details['error_message']}"
@@ -329,30 +329,30 @@ async def handle_direct_claude_request(
                     error_message = f"Invalid request: {error_details['error_message']}"
                 else:
                     error_message = f"Claude API error: {error_details['error_message']}"
-                
+
                 raise HTTPException(
                     status_code=error_details["status_code"],
                     detail=error_message
                 ) from http_err
-                
+
             except httpx.ConnectError as conn_err:
                 logger.error(f"Connection error to Claude API: {conn_err}")
                 raise HTTPException(
                     status_code=502,
                     detail="Unable to connect to Claude API. Please check your network connection and try again."
                 ) from conn_err
-                
+
             except httpx.TimeoutException as timeout_err:
                 logger.error(f"Timeout error to Claude API: {timeout_err}")
                 raise HTTPException(
                     status_code=504,
                     detail="Request to Claude API timed out. Please try again."
                 ) from timeout_err
-                
+
             except HTTPException:
                 # Re-raise HTTPExceptions (from JSON parsing error above)
                 raise
-                
+
             except Exception as e:
                 # Generic error fallback
                 logger.error(f"Unexpected error in direct Claude request: {e}")
@@ -576,7 +576,7 @@ async def create_message(raw_request: Request):
                     "routed_model": routed_model,
                     "display_model": display_model,
                     "request_model": openai_request.get("model"),
-                    "api_base": getattr(client, "base_url", "unknown"),
+                    "api_base": str(getattr(client, "base_url", "unknown")),
                     "error_type": type(e).__name__,
                 }
                 logger.error(f"API call failed with context: {json.dumps(error_context, indent=2)}")

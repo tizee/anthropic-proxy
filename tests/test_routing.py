@@ -42,9 +42,21 @@ class TestRoutingLogic(unittest.TestCase):
             "model-think": {"max_input_tokens": 30000, "direct": False},
             "model-long-context": {"max_input_tokens": 100000, "direct": False},
             "model-with-low-limit": {"max_input_tokens": 500, "direct": False},
-            "model-direct-claude": {"max_input_tokens": 50000, "direct": True, "api_base": "https://api.anthropic.com"},
-            "model-direct-anthropic": {"max_input_tokens": 200000, "direct": True, "api_base": "https://api.anthropic.com/v1"},
-            "model-openai-compatible": {"max_input_tokens": 30000, "direct": False, "api_base": "https://api.openai.com/v1"},
+            "model-direct-claude": {
+                "max_input_tokens": 50000,
+                "direct": True,
+                "api_base": "https://api.anthropic.com",
+            },
+            "model-direct-anthropic": {
+                "max_input_tokens": 200000,
+                "direct": True,
+                "api_base": "https://api.anthropic.com/v1",
+            },
+            "model-openai-compatible": {
+                "max_input_tokens": 30000,
+                "direct": False,
+                "api_base": "https://api.openai.com/v1",
+            },
         }
 
         # We also need to patch the global dictionary in the client module
@@ -191,7 +203,7 @@ class TestRoutingLogic(unittest.TestCase):
         # Set up router config to use direct mode models
         self.config.router_config = {
             "background": "model-direct-claude",
-            "think": "model-direct-anthropic", 
+            "think": "model-direct-anthropic",
             "long_context": "model-direct-anthropic",
             "default": "model-direct-claude",
         }
@@ -219,9 +231,9 @@ class TestRoutingLogic(unittest.TestCase):
         # Mixed router config
         self.config.router_config = {
             "background": "model-openai-compatible",  # OpenAI-compatible
-            "think": "model-direct-claude",          # Direct mode
-            "long_context": "model-direct-anthropic", # Direct mode
-            "default": "model-default",              # OpenAI-compatible
+            "think": "model-direct-claude",  # Direct mode
+            "long_context": "model-direct-anthropic",  # Direct mode
+            "default": "model-default",  # OpenAI-compatible
         }
 
         # Test background routing (OpenAI-compatible)
@@ -255,7 +267,7 @@ class TestRoutingLogic(unittest.TestCase):
         """Test that long context fallback works with direct mode models."""
         self.config.router_config = {
             "background": "model-background",
-            "think": "model-think", 
+            "think": "model-think",
             "long_context": "model-direct-anthropic",  # Direct mode for long context
             "default": "model-default",
         }
@@ -280,7 +292,7 @@ class TestRoutingLogic(unittest.TestCase):
         self.config.router_config = {
             "background": "model-direct-claude",
             "think": "model-direct-anthropic",
-            "long_context": "model-direct-anthropic", 
+            "long_context": "model-direct-anthropic",
             "default": "model-direct-claude",
         }
 
