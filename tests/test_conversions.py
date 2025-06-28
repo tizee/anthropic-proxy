@@ -755,6 +755,47 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
         print("✅ Function call parsing test passed")
 
+    def test_function_call_parsing_with_whitespace(self):
+        """Test function call parsing with realistic whitespace/newlines from logs."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+        
+        # Test realistic format with newlines and whitespace (like from actual logs)
+        thinking_with_whitespace = """I need to update the README to include the MAX_RETRIES environment variable configuration.
+
+<|FunctionCallBegin|>[
+{"name": "Edit", "parameters": {"file_path": "/Users/test/README.md", "old_string": "- Enhanced client reliability", "new_string": "- Enhanced client reliability with MAX_RETRIES configuration"}}
+]<|FunctionCallEnd|>
+
+Let me proceed with this edit."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            thinking_with_whitespace
+        )
+
+        # Verify function call was parsed correctly
+        self.assertEqual(len(function_calls), 1)
+
+        tool_call = function_calls[0]
+        self.assertIn("id", tool_call)
+        self.assertEqual(tool_call["type"], "function")
+        self.assertEqual(tool_call["function"]["name"], "Edit")
+
+        # Verify arguments contain expected data
+        import json
+        arguments = json.loads(tool_call["function"]["arguments"])
+        self.assertIn("file_path", arguments)
+        self.assertIn("old_string", arguments)
+        self.assertIn("new_string", arguments)
+        self.assertEqual(arguments["file_path"], "/Users/test/README.md")
+
+        # Verify thinking content was cleaned
+        self.assertNotIn("<|FunctionCallBegin|>", cleaned_thinking)
+        self.assertNotIn("<|FunctionCallEnd|>", cleaned_thinking)
+        self.assertIn("I need to update the README", cleaned_thinking)
+        self.assertIn("Let me proceed with this edit.", cleaned_thinking)
+
+        print("✅ Function call parsing with whitespace test passed")
+
     def test_complex_conversation_flow(self):
         """Test a complex multi-turn conversation with tools."""
         print("🧪 Testing complex conversation flow...")

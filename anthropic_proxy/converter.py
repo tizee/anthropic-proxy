@@ -31,18 +31,22 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
     Returns:
         tuple: (cleaned_thinking_content, list_of_tool_calls)
     """
-    # Pattern to match function call blocks
-    pattern = r"<\|FunctionCallBegin\|>\[(.*?)\]<\|FunctionCallEnd\|>"
+    # Pattern to match function call blocks (handles whitespace/newlines)
+    pattern = r"<\|FunctionCallBegin\|>\s*\[(.*?)\]\s*<\|FunctionCallEnd\|>"
 
     tool_calls = []
     cleaned_content = thinking_content
 
     matches = re.findall(pattern, thinking_content, re.DOTALL)
+    
+    logger.debug(f"Found {len(matches)} function call matches in thinking content")
 
     for match in matches:
         try:
-            # Parse the JSON array of function calls
-            function_call_data = json.loads(f"[{match}]")
+            # Parse the JSON array of function calls (brackets already captured)
+            match_content = match.strip()
+            logger.debug(f"Attempting to parse function call JSON: {match_content[:100]}...")
+            function_call_data = json.loads(f"[{match_content}]")
 
             for call_data in function_call_data:
                 if (
@@ -64,6 +68,7 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
 
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"Failed to parse function call from thinking content: {e}")
+            logger.debug(f"Problematic content: {match[:200]}...")
             continue
 
     # Remove the function call markers from thinking content

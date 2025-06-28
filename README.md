@@ -68,6 +68,7 @@ Use this proxy in the following scenarios:
 - Structured error parsing for both OpenAI and Claude API responses
 - Detailed logging and debugging information for API failures
 - Graceful handling of connection timeouts and rate limits
+- Enhanced client reliability with automatic retry mechanisms. Configure via `MAX_RETRIES` environment variable (default: 2 retries)
 
 ### 📊 Advanced Features
 - Streaming support for both modes with proper error handling

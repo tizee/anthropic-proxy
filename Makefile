@@ -1,3 +1,6 @@
+start:
+	./claude.sh
+
 dev:
 	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	uv run anthropic-proxy --reload --host 0.0.0.0 --port 8082
@@ -24,7 +27,7 @@ restart: stop
 	@echo "Restarting server..."
 	@$(MAKE) -s run-stable
 
-.PHONY:stop restart run run-stable dev-stable test test-unittest lint format
+.PHONY:start stop restart run run-stable dev-stable test test-unittest lint format
 
 # Modern pytest framework (recommended)
 test-pytest:
