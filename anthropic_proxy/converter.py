@@ -32,7 +32,7 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
         tuple: (cleaned_thinking_content, list_of_tool_calls)
     """
     # Pattern to match function call blocks (handles whitespace/newlines)
-    pattern = r"<\|FunctionCallBegin\|>\s*\[(.*?)\]\s*<\|FunctionCallEnd\|>"
+    pattern = r"<\|FunctionCallBegin\|>\s*(.*?)\s*<\|FunctionCallEnd\|>"
 
     tool_calls = []
     cleaned_content = thinking_content
@@ -42,39 +42,135 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
     logger.debug(f"Found {len(matches)} function call matches in thinking content")
 
     for match in matches:
-        try:
-            # Parse the JSON array of function calls (brackets already captured)
-            match_content = match.strip()
-            logger.debug(f"Attempting to parse function call JSON: {match_content[:100]}...")
-            function_call_data = json.loads(f"[{match_content}]")
-
-            for call_data in function_call_data:
-                if (
-                    isinstance(call_data, dict)
-                    and "name" in call_data
-                    and "parameters" in call_data
-                ):
-                    # Create a tool call in OpenAI format
-                    tool_call = {
-                        "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {
-                            "name": call_data["name"],
-                            "arguments": json.dumps(call_data["parameters"]),
-                        },
-                    }
-                    logger.debug(f"Added tool call: {tool_call}")
-                    tool_calls.append(tool_call)
-
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Failed to parse function call from thinking content: {e}")
-            logger.debug(f"Problematic content: {match[:200]}...")
-            continue
+        match_content = match.strip()
+        logger.debug(f"Raw function call content: {match_content[:200]}...")
+        
+        # Try multiple parsing approaches
+        parsed_calls = _parse_function_call_content(match_content)
+        
+        for call_data in parsed_calls:
+            if (
+                isinstance(call_data, dict)
+                and "name" in call_data
+                and "parameters" in call_data
+            ):
+                # Create a tool call in OpenAI format
+                tool_call = {
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": call_data["name"],
+                        "arguments": json.dumps(call_data["parameters"]),
+                    },
+                }
+                logger.debug(f"Successfully created tool call: {tool_call['function']['name']}")
+                tool_calls.append(tool_call)
 
     # Remove the function call markers from thinking content
     cleaned_content = re.sub(pattern, "", thinking_content, flags=re.DOTALL).strip()
 
     return cleaned_content, tool_calls
+
+
+def _parse_function_call_content(content: str) -> list:
+    """Parse function call content with multiple fallback approaches."""
+    parsed_calls = []
+    
+    # Approach 1: Try direct JSON parsing (content should be a JSON array)
+    try:
+        logger.debug(f"Attempting direct JSON parse: {content[:100]}...")
+        if content.strip().startswith('[') and content.strip().endswith(']'):
+            function_call_data = json.loads(content)
+            if isinstance(function_call_data, list):
+                parsed_calls.extend(function_call_data)
+                logger.debug(f"Direct parse successful, found {len(parsed_calls)} calls")
+                return parsed_calls
+    except json.JSONDecodeError as e:
+        logger.debug(f"Direct JSON parse failed: {e}")
+
+    # Approach 2: Try wrapping in brackets if not already wrapped
+    try:
+        logger.debug("Attempting parse with bracket wrapping...")
+        if not content.strip().startswith('['):
+            wrapped_content = f"[{content}]"
+            function_call_data = json.loads(wrapped_content)
+            if isinstance(function_call_data, list):
+                parsed_calls.extend(function_call_data)
+                logger.debug(f"Bracket-wrapped parse successful, found {len(parsed_calls)} calls")
+                return parsed_calls
+    except json.JSONDecodeError as e:
+        logger.debug(f"Bracket-wrapped parse failed: {e}")
+
+    # Approach 3: Try to fix common JSON formatting issues
+    try:
+        logger.debug("Attempting parse with JSON repair...")
+        repaired_content = _repair_json_formatting(content)
+        function_call_data = json.loads(repaired_content)
+        if isinstance(function_call_data, list):
+            parsed_calls.extend(function_call_data)
+            logger.debug(f"Repaired JSON parse successful, found {len(parsed_calls)} calls")
+            return parsed_calls
+        elif isinstance(function_call_data, dict):
+            parsed_calls.append(function_call_data)
+            logger.debug("Repaired JSON parse successful, found 1 call (dict)")
+            return parsed_calls
+    except json.JSONDecodeError as e:
+        logger.debug(f"Repaired JSON parse failed: {e}")
+
+    # Approach 4: Extract individual function calls using regex
+    try:
+        logger.debug("Attempting regex-based extraction...")
+        regex_calls = _extract_calls_with_regex(content)
+        if regex_calls:
+            parsed_calls.extend(regex_calls)
+            logger.debug(f"Regex extraction successful, found {len(parsed_calls)} calls")
+            return parsed_calls
+    except Exception as e:
+        logger.debug(f"Regex extraction failed: {e}")
+
+    logger.warning(f"All parsing approaches failed for content: {content[:200]}...")
+    return parsed_calls
+
+
+def _repair_json_formatting(content: str) -> str:
+    """Attempt to repair common JSON formatting issues."""
+    repaired = content.strip()
+    
+    # Remove trailing commas before closing brackets/braces
+    repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
+    
+    # Ensure proper array wrapping
+    if not repaired.startswith('[') and not repaired.startswith('{'):
+        repaired = f"[{repaired}]"
+    elif repaired.startswith('{') and not repaired.startswith('['):
+        repaired = f"[{repaired}]"
+        
+    return repaired
+
+
+def _extract_calls_with_regex(content: str) -> list:
+    """Extract function calls using regex patterns as a last resort."""
+    calls = []
+    
+    # Pattern to match individual function call objects
+    call_pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\})\s*\}'
+    
+    matches = re.findall(call_pattern, content, re.DOTALL)
+    
+    for name, params_str in matches:
+        try:
+            parameters = json.loads(params_str)
+            call_data = {
+                "name": name,
+                "parameters": parameters
+            }
+            calls.append(call_data)
+            logger.debug(f"Regex extracted call: {name}")
+        except json.JSONDecodeError as e:
+            logger.debug(f"Failed to parse parameters for {name}: {e}")
+            continue
+    
+    return calls
 
 
 def _parse_tool_arguments(arguments_str: str) -> dict:

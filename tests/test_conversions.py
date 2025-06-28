@@ -758,7 +758,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
     def test_function_call_parsing_with_whitespace(self):
         """Test function call parsing with realistic whitespace/newlines from logs."""
         from anthropic_proxy.converter import parse_function_calls_from_thinking
-        
+
         # Test realistic format with newlines and whitespace (like from actual logs)
         thinking_with_whitespace = """I need to update the README to include the MAX_RETRIES environment variable configuration.
 
@@ -782,6 +782,7 @@ Let me proceed with this edit."""
 
         # Verify arguments contain expected data
         import json
+
         arguments = json.loads(tool_call["function"]["arguments"])
         self.assertIn("file_path", arguments)
         self.assertIn("old_string", arguments)
@@ -795,6 +796,331 @@ Let me proceed with this edit."""
         self.assertIn("Let me proceed with this edit.", cleaned_thinking)
 
         print("✅ Function call parsing with whitespace test passed")
+
+    def test_function_call_parsing_edge_cases(self):
+        """Test function call parsing with various edge cases and malformed JSON."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+
+        # Test case 1: Multi-line parameters (the main issue from the bug report)
+        multiline_content = """I need to ensure the indentation matches. Looking at the surrounding code, the line is indented with 8 spaces (2 levels
+   deep inside the function). The new lines should maintain this indentation.
+
+  Now, I'll use the Edit tool to make this change.<|FunctionCallBegin|>[
+  {"name": "Edit", "parameters": {"file_path":
+  "/Users/tizee/projects/project-tampermonkey-scripts/tizee-scripts/tampermonkey-chatgpt-model-usage-monitor/monitor.js",
+   "old_string": "        draggable = new Draggable(container);", "new_string": "        if (draggable &&\\n  draggable.destroy) {\\n            draggable.destroy();\\n        }\\n        draggable = new Draggable(container);"}}
+  ]<|FunctionCallEnd|>
+
+This should fix the issue."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            multiline_content
+        )
+
+        self.assertEqual(len(function_calls), 1)
+        tool_call = function_calls[0]
+        self.assertEqual(tool_call["function"]["name"], "Edit")
+
+        arguments = json.loads(tool_call["function"]["arguments"])
+        self.assertIn("file_path", arguments)
+        self.assertIn("old_string", arguments)
+        self.assertIn("new_string", arguments)
+        self.assertTrue(len(arguments["file_path"]) > 0)
+        self.assertTrue(len(arguments["old_string"]) > 0)
+        self.assertTrue(len(arguments["new_string"]) > 0)
+
+        # Test case 2: Single object without array brackets
+        single_object_content = """Let me create a file.<|FunctionCallBegin|>{"name": "Write", "parameters": {"file_path": "/tmp/test.txt", "content": "Hello World"}}<|FunctionCallEnd|>Done."""
+
+        cleaned_thinking2, function_calls2 = parse_function_calls_from_thinking(
+            single_object_content
+        )
+
+        self.assertEqual(len(function_calls2), 1)
+        tool_call2 = function_calls2[0]
+        self.assertEqual(tool_call2["function"]["name"], "Write")
+
+        arguments2 = json.loads(tool_call2["function"]["arguments"])
+        self.assertEqual(arguments2["file_path"], "/tmp/test.txt")
+        self.assertEqual(arguments2["content"], "Hello World")
+
+        # Test case 3: Multiple function calls in one block
+        multiple_calls_content = """I need to do multiple things.<|FunctionCallBegin|>[
+  {"name": "Read", "parameters": {"file_path": "/tmp/file1.txt"}},
+  {"name": "Write", "parameters": {"file_path": "/tmp/file2.txt", "content": "data"}}
+]<|FunctionCallEnd|>All done."""
+
+        cleaned_thinking3, function_calls3 = parse_function_calls_from_thinking(
+            multiple_calls_content
+        )
+
+        self.assertEqual(len(function_calls3), 2)
+        self.assertEqual(function_calls3[0]["function"]["name"], "Read")
+        self.assertEqual(function_calls3[1]["function"]["name"], "Write")
+
+        # Test case 4: Malformed JSON with trailing comma
+        malformed_content = """Let me fix this.<|FunctionCallBegin|>[
+  {"name": "Edit", "parameters": {"file_path": "/tmp/test.py", "old_string": "old", "new_string": "new",}}
+]<|FunctionCallEnd|>Fixed."""
+
+        cleaned_thinking4, function_calls4 = parse_function_calls_from_thinking(
+            malformed_content
+        )
+
+        self.assertEqual(len(function_calls4), 1)
+        tool_call4 = function_calls4[0]
+        self.assertEqual(tool_call4["function"]["name"], "Edit")
+
+        # Test case 5: Empty function call block
+        empty_content = (
+            """Some thinking.<|FunctionCallBegin|>[]<|FunctionCallEnd|>More thinking."""
+        )
+
+        cleaned_thinking5, function_calls5 = parse_function_calls_from_thinking(
+            empty_content
+        )
+
+        self.assertEqual(len(function_calls5), 0)
+        self.assertNotIn("<|FunctionCallBegin|>", cleaned_thinking5)
+
+        print("✅ Function call parsing edge cases test passed")
+
+    def test_function_call_parsing_malformed_recovery(self):
+        """Test function call parsing with severe malformations that require regex fallback."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+
+        # Test case 1: Severely malformed JSON that needs regex extraction
+        severely_malformed = """I'll use the tool now.<|FunctionCallBegin|>
+        {"name": "Bash", "parameters": {"command": "ls -la", "description": "List files"
+        This is broken JSON but the regex should still extract it
+        ]<|FunctionCallEnd|>Hope it works."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            severely_malformed
+        )
+
+        # Should extract at least the tool name even if parameters fail
+        self.assertGreaterEqual(
+            len(function_calls), 0
+        )  # May or may not succeed depending on fallback
+
+        # Test case 2: Mixed content with both valid and invalid calls
+        mixed_content = """First I'll do this:<|FunctionCallBegin|>[
+  {"name": "Read", "parameters": {"file_path": "/valid/path.txt"}}
+]<|FunctionCallEnd|>
+
+Then this broken one:<|FunctionCallBegin|>
+  {"name": "Write", "parameters": {"broken": "json"
+<|FunctionCallEnd|>
+
+Finally this valid one:<|FunctionCallBegin|>[
+  {"name": "Edit", "parameters": {"file_path": "/another/valid.py", "old_string": "old", "new_string": "new"}}
+]<|FunctionCallEnd|>Done."""
+
+        cleaned_thinking2, function_calls2 = parse_function_calls_from_thinking(
+            mixed_content
+        )
+
+        # Should extract at least the valid calls
+        self.assertGreaterEqual(len(function_calls2), 2)
+
+        # Verify the valid calls were extracted correctly
+        valid_names = [call["function"]["name"] for call in function_calls2]
+        self.assertIn("Read", valid_names)
+        self.assertIn("Edit", valid_names)
+
+        print("✅ Function call parsing malformed recovery test passed")
+
+    def test_function_call_parsing_real_world_scenarios(self):
+        """Test function call parsing with real-world scenarios that caused issues."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+
+        # Test case 1: Complex file path and multi-line strings (based on actual bug report)
+        real_world_1 = """Looking at the code, I need to add proper cleanup for the draggable instance.
+
+<|FunctionCallBegin|>[
+  {"name": "Edit", "parameters": {"file_path": "/Users/tizee/projects/project-tampermonkey-scripts/tizee-scripts/tampermonkey-chatgpt-model-usage-monitor/monitor.js", "old_string": "        draggable = new Draggable(container);", "new_string": "        if (draggable && draggable.destroy) {\\n            draggable.destroy();\\n        }\\n        draggable = new Draggable(container);"}}
+]<|FunctionCallEnd|>
+
+This will ensure proper cleanup before creating a new draggable instance."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            real_world_1
+        )
+
+        self.assertEqual(len(function_calls), 1)
+        tool_call = function_calls[0]
+        self.assertEqual(tool_call["function"]["name"], "Edit")
+
+        arguments = json.loads(tool_call["function"]["arguments"])
+        self.assertIn("file_path", arguments)
+        self.assertTrue(arguments["file_path"].endswith("monitor.js"))
+        self.assertIn("old_string", arguments)
+        self.assertIn("new_string", arguments)
+        self.assertIn("draggable.destroy()", arguments["new_string"])
+
+        # Test case 2: MultiEdit with complex structure
+        real_world_2 = """I need to make multiple edits to fix all the issues.
+
+<|FunctionCallBegin|>[
+  {"name": "MultiEdit", "parameters": {"file_path": "/path/to/complex/file.py", "edits": [
+    {"old_string": "def old_function():", "new_string": "def new_function():"},
+    {"old_string": "    return False", "new_string": "    return True"},
+    {"old_string": "# TODO: fix this", "new_string": "# FIXED: updated implementation"}
+  ]}}
+]<|FunctionCallEnd|>
+
+These changes should resolve all the issues."""
+
+        cleaned_thinking2, function_calls2 = parse_function_calls_from_thinking(
+            real_world_2
+        )
+
+        self.assertEqual(len(function_calls2), 1)
+        tool_call2 = function_calls2[0]
+        self.assertEqual(tool_call2["function"]["name"], "MultiEdit")
+
+        arguments2 = json.loads(tool_call2["function"]["arguments"])
+        self.assertIn("file_path", arguments2)
+        self.assertIn("edits", arguments2)
+        self.assertIsInstance(arguments2["edits"], list)
+        self.assertEqual(len(arguments2["edits"]), 3)
+
+        # Verify each edit has the required fields
+        for edit in arguments2["edits"]:
+            self.assertIn("old_string", edit)
+            self.assertIn("new_string", edit)
+
+        print("✅ Function call parsing real-world scenarios test passed")
+
+    def test_function_call_parsing_multiple_blocks(self):
+        """Test function call parsing with multiple separate tool call blocks in thinking."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+
+        # Test the exact scenario from the user's example
+        multiple_blocks_content = """I need to start implementing the fixes for the drag-and-drop issue in monitor.js. Let me work through the todo list
+  systematically.
+
+  First, I'll tackle the highest priority items. The first todo is to increase the drag handle size to 20x20px in CSS.
+  Looking at the code, the drag handle CSS is defined around line 123:
+
+  #chatUsageMonitor .drag-handle {
+      width: 12px;
+      height: 12px;
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-radius: 50%;
+      background: ${COLORS.secondaryText};
+      cursor: move;
+      transition: background-color 0.2s ease;
+  }
+
+  I need to change width and height from 12px to 20px. This should make the drag handle easier to click. I'll use the
+  Edit tool for this change.
+
+  Next, I'll mark this todo as in_progress before making the change.
+
+  <|FunctionCallBegin|>[{"name":"TodoWrite","parameters":{"todos":[{"content":"Increase drag handle size to 20x20px in CSS","status":"in_progress","priority":"high","id":"6"},{"content":"Add error handling for drag handle selection","status":"pending","priority":"high","id":"7"},{"content":"Disable pointer events during text animations","status":"pending","priority":"medium","id":"8"},{"content":"Implement Draggable class destroy method","status":"pending","priority":"high","id":"9"},{"content":"Add visual feedback for active drag state","status":"pending","priority":"medium","id":"10"}]}}]<|FunctionCallEnd|>
+
+  Now I'll make the CSS change using the Edit tool:
+
+  <|FunctionCallBegin|>[{"name":"Edit","parameters":{"file_path":"/Users/tizee/projects/project-tampermonkey-scripts/tizee-scripts/tampermonkey-chatgpt-model-usage-monitor/monitor.js","old_string":"   124→    width: 12px;\\n   125→    height: 12px;","new_string":"   124→    width: 20px;\\n   125→    height: 20px;"}}]<|FunctionCallEnd|>
+
+  This completes the first fix."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            multiple_blocks_content
+        )
+
+        # Should find exactly 2 function calls from 2 separate blocks
+        self.assertEqual(len(function_calls), 2)
+
+        # Verify first tool call (TodoWrite)
+        todo_call = function_calls[0]
+        self.assertEqual(todo_call["function"]["name"], "TodoWrite")
+
+        todo_args = json.loads(todo_call["function"]["arguments"])
+        self.assertIn("todos", todo_args)
+        self.assertIsInstance(todo_args["todos"], list)
+        self.assertEqual(len(todo_args["todos"]), 5)  # Should have 5 todos
+
+        # Verify second tool call (Edit)
+        edit_call = function_calls[1]
+        self.assertEqual(edit_call["function"]["name"], "Edit")
+
+        edit_args = json.loads(edit_call["function"]["arguments"])
+        self.assertIn("file_path", edit_args)
+        self.assertIn("old_string", edit_args)
+        self.assertIn("new_string", edit_args)
+        self.assertTrue(edit_args["file_path"].endswith("monitor.js"))
+        self.assertIn("12px", edit_args["old_string"])
+        self.assertIn("20px", edit_args["new_string"])
+
+        # Verify thinking content was cleaned (both function call blocks removed)
+        self.assertNotIn("<|FunctionCallBegin|>", cleaned_thinking)
+        self.assertNotIn("<|FunctionCallEnd|>", cleaned_thinking)
+        self.assertIn("I need to start implementing", cleaned_thinking)
+        self.assertIn("This completes the first fix.", cleaned_thinking)
+
+        # Verify the content between the blocks is preserved
+        self.assertIn(
+            "Now I'll make the CSS change using the Edit tool:", cleaned_thinking
+        )
+
+        print("✅ Function call parsing multiple blocks test passed")
+
+    def test_function_call_parsing_mixed_single_and_multiple(self):
+        """Test parsing with mix of single-call blocks and multi-call blocks."""
+        from anthropic_proxy.converter import parse_function_calls_from_thinking
+
+        mixed_content = """First, a single call block:
+
+<|FunctionCallBegin|>[{"name": "Read", "parameters": {"file_path": "/tmp/file1.txt"}}]<|FunctionCallEnd|>
+
+Then, a multi-call block:
+
+<|FunctionCallBegin|>[
+  {"name": "Write", "parameters": {"file_path": "/tmp/file2.txt", "content": "data1"}},
+  {"name": "Edit", "parameters": {"file_path": "/tmp/file3.txt", "old_string": "old", "new_string": "new"}}
+]<|FunctionCallEnd|>
+
+Finally, another single call:
+
+<|FunctionCallBegin|>[{"name": "Bash", "parameters": {"command": "ls -la", "description": "List files"}}]<|FunctionCallEnd|>
+
+All done."""
+
+        cleaned_thinking, function_calls = parse_function_calls_from_thinking(
+            mixed_content
+        )
+
+        # Should find exactly 4 function calls total
+        self.assertEqual(len(function_calls), 4)
+
+        # Verify tool names in order
+        expected_tools = ["Read", "Write", "Edit", "Bash"]
+        actual_tools = [call["function"]["name"] for call in function_calls]
+        self.assertEqual(actual_tools, expected_tools)
+
+        # Verify specific parameters
+        read_args = json.loads(function_calls[0]["function"]["arguments"])
+        self.assertEqual(read_args["file_path"], "/tmp/file1.txt")
+
+        write_args = json.loads(function_calls[1]["function"]["arguments"])
+        self.assertEqual(write_args["content"], "data1")
+
+        bash_args = json.loads(function_calls[3]["function"]["arguments"])
+        self.assertEqual(bash_args["command"], "ls -la")
+
+        # Verify thinking content cleanup
+        self.assertNotIn("<|FunctionCallBegin|>", cleaned_thinking)
+        self.assertNotIn("<|FunctionCallEnd|>", cleaned_thinking)
+        self.assertIn("First, a single call block:", cleaned_thinking)
+        self.assertIn("All done.", cleaned_thinking)
+
+        print("✅ Function call parsing mixed single and multiple test passed")
 
     def test_complex_conversation_flow(self):
         """Test a complex multi-turn conversation with tools."""
