@@ -10,6 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -23,9 +24,11 @@ from openai.types.chat import (
 
 from .client import (
     CUSTOM_OPENAI_MODELS,
+    create_claude_client,
     create_openai_client,
     determine_model_by_router,
     initialize_custom_models,
+    is_direct_mode_model,
 )
 from .config import config, setup_logging
 from .converter import (
@@ -115,6 +118,263 @@ async def hook_streaming_response(response_generator, request, routed_model):
             yield event_str
 
 
+def parse_claude_api_error(response: httpx.Response) -> dict:
+    """Parse Claude API error response and extract structured error details."""
+    try:
+        # Try to parse the JSON response
+        error_data = response.json()
+        
+        # Extract Claude API error structure
+        if isinstance(error_data, dict) and "error" in error_data:
+            claude_error = error_data["error"]
+            if isinstance(claude_error, dict):
+                error_type = claude_error.get("type", "unknown_error")
+                error_message = claude_error.get("message", "Unknown error occurred")
+                
+                return {
+                    "status_code": response.status_code,
+                    "error_type": error_type,
+                    "error_message": error_message,
+                    "full_response": error_data
+                }
+        
+        # Fallback for non-standard error format
+        return {
+            "status_code": response.status_code,
+            "error_type": "http_error",
+            "error_message": f"HTTP {response.status_code}: {response.reason_phrase}",
+            "full_response": error_data if isinstance(error_data, dict) else {"raw_response": str(error_data)}
+        }
+        
+    except (json.JSONDecodeError, ValueError):
+        # Handle non-JSON responses
+        try:
+            response_text = response.text
+        except Exception:
+            response_text = "Unable to read response"
+            
+        return {
+            "status_code": response.status_code,
+            "error_type": "http_error",
+            "error_message": f"HTTP {response.status_code}: {response.reason_phrase}",
+            "full_response": {"raw_response": response_text}
+        }
+
+
+async def handle_direct_claude_request(
+    request: ClaudeMessagesRequest,
+    routed_model: str,
+    model_config: dict,
+    original_model: str,
+    display_model: str,
+    raw_request: Request
+):
+    """Handle direct Claude API requests without OpenAI conversion."""
+    try:
+        # Create Claude client
+        claude_client = create_claude_client(routed_model)
+
+        # Prepare request payload - use original Claude format
+        claude_request_data = request.model_dump(exclude_none=True)
+
+        # Update model name to the actual model name for the API call
+        claude_request_data["model"] = model_config.get("model_name", routed_model)
+
+        # Handle max_tokens limits
+        max_tokens = min(model_config.get("max_tokens", 8192), request.max_tokens)
+        claude_request_data["max_tokens"] = max_tokens
+
+        # Log the request
+        num_tools = len(request.tools) if request.tools else 0
+        log_request_beautifully(
+            "POST",
+            raw_request.url.path,
+            f"{original_model} → {display_model} (DIRECT)",
+            claude_request_data.get("model"),
+            len(claude_request_data["messages"]),
+            num_tools,
+            200,
+        )
+
+        # Handle streaming mode
+        if request.stream:
+            logger.info(f"🔗 DIRECT STREAMING: Starting for {routed_model}")
+
+            async def direct_streaming_generator():
+                try:
+                    async with claude_client.stream("POST", "/messages", json=claude_request_data) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_text():
+                            if chunk:
+                                yield chunk
+                                
+                except httpx.HTTPStatusError as http_err:
+                    # Parse Claude API error response for streaming
+                    error_details = parse_claude_api_error(http_err.response)
+                    logger.error(f"Claude API streaming error: {json.dumps(error_details, indent=2)}")
+                    
+                    # Send structured error event
+                    error_event = {
+                        "type": "error",
+                        "error": {
+                            "type": error_details["error_type"],
+                            "message": error_details["error_message"]
+                        }
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                    
+                except httpx.ConnectError as conn_err:
+                    logger.error(f"Connection error in streaming: {conn_err}")
+                    error_event = {
+                        "type": "error",
+                        "error": {
+                            "type": "connection_error",
+                            "message": "Unable to connect to Claude API"
+                        }
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                    
+                except httpx.TimeoutException as timeout_err:
+                    logger.error(f"Timeout error in streaming: {timeout_err}")
+                    error_event = {
+                        "type": "error",
+                        "error": {
+                            "type": "timeout_error",
+                            "message": "Request to Claude API timed out"
+                        }
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                    
+                except Exception as e:
+                    logger.error(f"Unexpected streaming error: {e}")
+                    error_event = {
+                        "type": "error",
+                        "error": {
+                            "type": "unexpected_error",
+                            "message": f"Unexpected error: {str(e)}"
+                        }
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                finally:
+                    await claude_client.aclose()
+
+            return StreamingResponse(
+                direct_streaming_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+        else:
+            # Non-streaming mode
+            logger.info(f"🔗 DIRECT REQUEST: Starting for {routed_model}")
+            start_time = time.time()
+
+            try:
+                response = await claude_client.post("/messages", json=claude_request_data)
+                response.raise_for_status()
+
+                logger.debug(
+                    f"✅ DIRECT RESPONSE RECEIVED: Model={claude_request_data.get('model')}, Time={time.time() - start_time:.2f}s"
+                )
+
+                # Safely parse response JSON
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError as json_err:
+                    logger.error(f"Failed to parse Claude API response JSON: {json_err}")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Invalid JSON response from Claude API"
+                    ) from json_err
+
+                # Apply response hooks if needed
+                hooked_response_data = hook_manager.trigger_response_hooks(response_data)
+
+                # Update global usage statistics if usage data is present
+                if "usage" in hooked_response_data:
+                    from .types import ClaudeUsage
+                    usage = ClaudeUsage(**hooked_response_data["usage"])
+                    update_global_usage_stats(usage, routed_model, "Direct Mode")
+
+                return JSONResponse(content=hooked_response_data)
+
+            except httpx.HTTPStatusError as http_err:
+                # Parse Claude API error response
+                error_details = parse_claude_api_error(http_err.response)
+                
+                # Log detailed error information for debugging
+                debug_info = {
+                    "original_model": original_model,
+                    "routed_model": routed_model,
+                    "api_base": model_config.get("api_base", "unknown"),
+                    "status_code": error_details["status_code"],
+                    "error_type": error_details["error_type"],
+                    "error_message": error_details["error_message"]
+                }
+                logger.error(f"Claude API error: {json.dumps(debug_info, indent=2)}")
+                
+                # Create user-friendly error message
+                if error_details["error_type"] == "rate_limit_error":
+                    error_message = f"Rate limit exceeded: {error_details['error_message']}"
+                elif error_details["error_type"] == "authentication_error":
+                    error_message = f"Authentication failed: {error_details['error_message']}"
+                elif error_details["error_type"] == "permission_error":
+                    error_message = f"Permission denied: {error_details['error_message']}"
+                elif error_details["error_type"] == "invalid_request_error":
+                    error_message = f"Invalid request: {error_details['error_message']}"
+                else:
+                    error_message = f"Claude API error: {error_details['error_message']}"
+                
+                raise HTTPException(
+                    status_code=error_details["status_code"],
+                    detail=error_message
+                ) from http_err
+                
+            except httpx.ConnectError as conn_err:
+                logger.error(f"Connection error to Claude API: {conn_err}")
+                raise HTTPException(
+                    status_code=502,
+                    detail="Unable to connect to Claude API. Please check your network connection and try again."
+                ) from conn_err
+                
+            except httpx.TimeoutException as timeout_err:
+                logger.error(f"Timeout error to Claude API: {timeout_err}")
+                raise HTTPException(
+                    status_code=504,
+                    detail="Request to Claude API timed out. Please try again."
+                ) from timeout_err
+                
+            except HTTPException:
+                # Re-raise HTTPExceptions (from JSON parsing error above)
+                raise
+                
+            except Exception as e:
+                # Generic error fallback
+                logger.error(f"Unexpected error in direct Claude request: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Unexpected error occurred: {str(e)}"
+                ) from e
+            finally:
+                await claude_client.aclose()
+
+    except HTTPException:
+        # Re-raise HTTPExceptions that we've already handled properly
+        raise
+    except Exception as e:
+        # Fallback for any unhandled exceptions in the direct Claude request setup
+        logger.error(f"Unhandled error in direct Claude request setup: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        ) from e
+
+
 @app.post("/v1/messages")
 async def create_message(raw_request: Request):
     try:
@@ -183,6 +443,13 @@ async def create_message(raw_request: Request):
             f"📊 PROCESSING REQUEST: Original={original_model} → Routed={routed_model}, Tokens={token_count}, Stream={request.stream}"
         )
 
+        # Check if this model should use direct Claude API mode
+        if is_direct_mode_model(routed_model):
+            logger.info(f"🔗 DIRECT MODE: Using direct Claude API for {routed_model}")
+            return await handle_direct_claude_request(
+                request, routed_model, model_config, original_model, display_model, raw_request
+            )
+
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
         openai_request['store'] = False
@@ -212,14 +479,15 @@ async def create_message(raw_request: Request):
         if model_config.get("extra_body"):
             # For doubao-style thinking
             # see https://www.volcengine.com/docs/82379/1449737#fa3f44fa
-            if model_config["extra_body"].get("thinking") and isinstance(
+            if "doubao" in routed_model.lower() and model_config["extra_body"].get("thinking") and isinstance(
                 model_config["extra_body"].get("thinking"), dict
             ):
+                # Doubao
                 if has_thinking:
-                    openai_request["extra_body"]["thinking"] = {"type": "auto"}
+                    openai_request["extra_body"]["thinking"] = {"type": "enable"}
                 else:
                     # Pass the thinking block but disable it.
-                    openai_request["extra_body"]["thinking"] = {"type": "disabled"}
+                    openai_request["extra_body"]["thinking"] = {"type": "auto"}
 
             # For Gemini-style thinking
             if "thinkingConfig" in model_config["extra_body"]:
@@ -297,9 +565,22 @@ async def create_message(raw_request: Request):
             )
         else:
             start_time = time.time()
-            openai_response: ChatCompletion = await client.chat.completions.create(
-                **openai_request
-            )
+            try:
+                openai_response: ChatCompletion = await client.chat.completions.create(
+                    **openai_request
+                )
+            except Exception as e:
+                # Add specific context for debugging routing and API issues
+                error_context = {
+                    "original_model": original_model,
+                    "routed_model": routed_model,
+                    "display_model": display_model,
+                    "request_model": openai_request.get("model"),
+                    "api_base": getattr(client, "base_url", "unknown"),
+                    "error_type": type(e).__name__,
+                }
+                logger.error(f"API call failed with context: {json.dumps(error_context, indent=2)}")
+                raise e
 
             logger.debug(
                 f"✅ RESPONSE RECEIVED: Model={openai_request.get('model')}, Time={time.time() - start_time:.2f}s"

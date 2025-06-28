@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 
+import httpx
 import yaml
 from openai import AsyncOpenAI
 
@@ -73,6 +74,9 @@ def load_custom_models(config_file=None):
                 else:
                     output_cost_per_million = ModelDefaults.DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS
 
+            # Determine if this model should use direct Claude API mode
+            is_direct_mode = model.get("direct", False) or "anthropic.com" in model["api_base"].lower()
+
             CUSTOM_OPENAI_MODELS[model_id] = {
                 "model_id": model_id,
                 "model_name": model_name,
@@ -100,6 +104,8 @@ def load_custom_models(config_file=None):
                 "extra_headers": model.get("extra_headers", {}),
                 "extra_body": model.get("extra_body", {}),
                 "reasoning_effort": model.get("reasoning_effort", None),
+                # Direct mode configuration
+                "direct": is_direct_mode,
             }
 
             # Store pricing info for cost calculation
@@ -173,6 +179,46 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     return client
 
 
+def create_claude_client(model_id: str) -> httpx.AsyncClient:
+    """Create direct Claude API client for the given model."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        raise ValueError(f"Unknown model: {model_id}")
+
+    model_config = CUSTOM_OPENAI_MODELS[model_id]
+    api_key_name = model_config.get("api_key_name", "ANTHROPIC_API_KEY")
+    api_key = config.custom_api_keys.get(api_key_name)
+    base_url = model_config["api_base"]
+
+    if not api_key:
+        raise ValueError(f"No API key available for model: {model_id}")
+
+    # Ensure base_url ends with /v1 for Claude API
+    if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):
+        if base_url.endswith("/"):
+            base_url = base_url + "v1"
+        else:
+            base_url = base_url + "/v1"
+
+    headers = {
+        "x-api-key": api_key,
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01"
+    }
+
+    # Add any extra headers from model config
+    if model_config.get("extra_headers"):
+        headers.update(model_config["extra_headers"])
+
+    client = httpx.AsyncClient(
+        base_url=base_url,
+        headers=headers,
+        timeout=httpx.Timeout(60.0)
+    )
+
+    logger.debug(f"Create Claude Client: model={model_id}, base_url={base_url}")
+    return client
+
+
 def determine_model_by_router(
     original_model: str, token_count: int, has_thinking: bool
 ) -> str:
@@ -239,3 +285,10 @@ def list_available_models() -> list:
 def validate_model_exists(model_id: str) -> bool:
     """Check if a model exists in the custom models configuration."""
     return model_id in CUSTOM_OPENAI_MODELS
+
+
+def is_direct_mode_model(model_id: str) -> bool:
+    """Check if a model should use direct Claude API mode."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return False
+    return CUSTOM_OPENAI_MODELS[model_id].get("direct", False)

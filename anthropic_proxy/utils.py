@@ -360,6 +360,23 @@ def _extract_error_details(e: Exception) -> dict[str, Any]:
         "traceback": traceback.format_exc(),
     }
 
+    # Special handling for JSON decode errors from empty API responses
+    if type(e).__name__ == "JSONDecodeError":
+        error_details["status_code"] = 500
+        if hasattr(e, "doc"):
+            error_details["doc"] = e.doc
+        if hasattr(e, "pos"):
+            error_details["pos"] = e.pos
+        if hasattr(e, "lineno"):
+            error_details["lineno"] = e.lineno
+        if hasattr(e, "colno"):
+            error_details["colno"] = e.colno
+        if hasattr(e, "msg"):
+            error_details["msg"] = e.msg
+        # Add helpful context for empty response debugging
+        if e.pos == 0 and e.msg == "Expecting value":
+            error_details["likely_cause"] = "API returned empty or invalid response body"
+
     # Special handling for OpenAI API errors
     openai_error_types = [
         "APIError",

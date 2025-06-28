@@ -3,7 +3,12 @@
 [![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy)
 [![License](https://img.shields.io/github/license/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy/blob/main/LICENSE)
 
-A proxy server that translates Anthropic API requests to multiple model providers (OpenAI, Gemini, custom) using native OpenAI SDK. This allows you to use Claude Code with a wide range of OpenAI-compatible models. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
+A proxy server that enables Claude Code to work with multiple model providers through two modes:
+
+1. **OpenAI-Compatible Mode**: Translates Anthropic API requests to OpenAI-compatible endpoints
+2. **Direct Claude API Mode**: Routes requests directly to official Claude API or compatible endpoints
+
+This allows you to use Claude Code with both OpenAI-compatible models and native Claude API endpoints. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
 ## Primary Use Case: Claude Code Proxy
 
@@ -31,6 +36,7 @@ Use this proxy in the following scenarios:
 
 ## Tested Models
 
+### OpenAI-Compatible Mode
 | Provider | Model | Format | Status | Notes |
 |----------|-------|--------|--------|-------|
 | **DeepSeek** | deepseek-v3 | OpenAI | ✅ Fully Tested | Recommended for background tasks |
@@ -39,6 +45,35 @@ Use this proxy in the following scenarios:
 | **ByteDance** | doubao-seed-1.6 | OpenAI | ✅ Fully Tested | Doubao model support |
 | **OpenRouter** | Gemini-2.5-pro | OpenAI | ✅ Fully Tested | Google Gemini via OpenRouter |
 | **OpenRouter** | gemini-2.5-flash-lite-preview-06-17 | OpenAI | ✅ Fully Tested | Gemini preview via OpenRouter |
+
+### Direct Claude API Mode
+| Provider | Model | Format | Status | Notes |
+|----------|-------|--------|--------|-------|
+| **Anthropic** | claude-3-5-sonnet-20241022 | Direct | ✅ Fully Tested | Official Claude API |
+| **Anthropic** | claude-3-5-haiku-20241022 | Direct | ✅ Fully Tested | Official Claude API |
+| **Anthropic** | claude-3-opus-20240229 | Direct | ✅ Fully Tested | Official Claude API |
+
+## Key Features
+
+### 🔄 Dual-Mode Operation
+- **OpenAI-Compatible Mode**: Convert Anthropic API requests to OpenAI format for third-party providers
+- **Direct Claude API Mode**: Route requests directly to official Anthropic API with native format preservation
+
+### 🧠 Intelligent Routing
+- Automatic model selection based on request characteristics (token count, thinking mode, etc.)
+- Configurable fallback to long-context models when token limits are exceeded
+- Support for both direct and OpenAI-compatible models in routing configuration
+
+### 🔧 Enhanced Error Handling
+- Structured error parsing for both OpenAI and Claude API responses
+- Detailed logging and debugging information for API failures
+- Graceful handling of connection timeouts and rate limits
+
+### 📊 Advanced Features
+- Streaming support for both modes with proper error handling
+- Token counting and usage statistics tracking
+- Custom model configuration with per-model settings
+- Support for thinking mode and reasoning effort parameters
 
 ## Quick Start
 
@@ -57,7 +92,38 @@ uv install
 
 ### Configuration
 1. Copy `.env.example` to `.env`
-2. Set your API keys for the desired providers.
+2. Set your API keys for the desired providers
+3. Configure models in `models.yaml` with appropriate mode settings
+
+#### Direct Claude API Mode Configuration
+To use official Claude API or compatible endpoints directly:
+
+```yaml
+models:
+  claude-3-5-sonnet-direct:
+    model_name: claude-3-5-sonnet-20241022
+    api_base: https://api.anthropic.com
+    api_key_name: ANTHROPIC_API_KEY
+    direct: true  # Enable direct Claude API mode
+    max_tokens: 8k   # Supports shorthand: 8k, 16k, 32k, etc.
+    max_input_tokens: 200k
+```
+
+#### OpenAI-Compatible Mode Configuration
+For OpenAI-compatible endpoints:
+
+```yaml
+models:
+  deepseek-v3:
+    model_name: deepseek-chat
+    api_base: https://api.deepseek.com/v1
+    api_key_name: DEEPSEEK_API_KEY
+    direct: false  # Use OpenAI-compatible mode (default)
+    max_tokens: 8k   # Supports shorthand notation
+    max_input_tokens: 128k
+```
+
+**Note**: Token limits support both numeric values (e.g., `8192`) and shorthand notation (e.g., `8k`, `16K`, `32k`, `128K`, `200k`). The shorthand format is case-insensitive.
 
 ### Running the Server
 ```bash
