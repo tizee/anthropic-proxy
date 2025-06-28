@@ -487,7 +487,7 @@ async def create_message(raw_request: Request):
                     openai_request["extra_body"]["thinking"] = {"type": "enable"}
                 else:
                     # Pass the thinking block but disable it.
-                    openai_request["extra_body"]["thinking"] = {"type": "auto"}
+                    openai_request["extra_body"]["thinking"] = {"type": "disabled"}
 
             # For Gemini-style thinking
             if "thinkingConfig" in model_config["extra_body"]:
