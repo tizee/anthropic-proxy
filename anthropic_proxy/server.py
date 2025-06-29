@@ -484,7 +484,7 @@ async def create_message(raw_request: Request):
             ):
                 # Doubao
                 if has_thinking:
-                    openai_request["extra_body"]["thinking"] = {"type": "enable"}
+                    openai_request["extra_body"]["thinking"] = {"type": "enabled"}
                 else:
                     # Pass the thinking block but disable it.
                     openai_request["extra_body"]["thinking"] = {"type": "disabled"}
