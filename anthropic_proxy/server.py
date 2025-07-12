@@ -479,6 +479,10 @@ async def create_message(raw_request: Request):
         if model_config.get("extra_body"):
             # For doubao-style thinking
             # see https://www.volcengine.com/docs/82379/1449737#fa3f44fa
+            # thinking.type: Field value options.
+            #     disabled: Forcefully disables deep thinking capability; the model does not output chain-of-thought (CoT) content.
+            #     enabled: Forcefully enables deep thinking capability; the model is required to output chain-of-thought (CoT) content.
+            #     auto: The model automatically determines whether deep thinking is necessary.
             if "doubao" in routed_model.lower() and model_config["extra_body"].get("thinking") and isinstance(
                 model_config["extra_body"].get("thinking"), dict
             ):
