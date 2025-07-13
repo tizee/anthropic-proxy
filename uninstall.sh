@@ -21,10 +21,10 @@ remove_symlink() {
     
     if [[ -L "$symlink_path" ]]; then
         rm -f "$symlink_path"
-        echo -e "${GREEN}✅ 已删除符号链接: $symlink_path${NC}"
+        echo -e "${GREEN}✅ Removed symbolic link: $symlink_path${NC}"
         return 0
     elif [[ -f "$symlink_path" ]]; then
-        echo -e "${YELLOW}⚠️  警告: $symlink_path 是普通文件，跳过删除${NC}"
+        echo -e "${YELLOW}⚠️  Warning: $symlink_path is a regular file, skipping removal${NC}"
         return 1
     fi
     
@@ -41,14 +41,14 @@ remove_from_path() {
     
     # Remove the PATH addition
     sed -i.bak "/Claude Code Proxy - Add $target_dir to PATH/,+1d" "$rc_file" 2>/dev/null || {
-        echo -e "${YELLOW}⚠️  未找到 PATH 配置或无法修改 $rc_file${NC}"
+        echo -e "${YELLOW}⚠️  PATH configuration not found or unable to modify $rc_file${NC}"
     }
 }
 
 # Main uninstallation process
 main() {
     echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║          Claude Code Proxy 卸载器                ║${NC}"
+    echo -e "${GREEN}║         Claude Code Proxy Uninstaller            ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
     
     local search_dirs=()
@@ -71,7 +71,7 @@ main() {
     
     local removed_count=0
     
-    echo -e "${BLUE}🔍 正在查找安装的文件...${NC}"
+    echo -e "${BLUE}🔍 Searching for installed files...${NC}"
     
     for dir in "${search_dirs[@]}"; do
         local symlink_path="$dir/$SCRIPT_NAME"
@@ -106,28 +106,28 @@ main() {
     done
     
     if [[ $removed_count -eq 0 ]]; then
-        echo -e "${YELLOW}⚠️  未找到已安装的 $SCRIPT_NAME${NC}"
-        echo -e "${YELLOW}   可能的原因: 安装失败、手动删除或路径不在标准位置${NC}"
+        echo -e "${YELLOW}⚠️  No installed $SCRIPT_NAME found${NC}"
+        echo -e "${YELLOW}   Possible reasons: installation failed, manually deleted, or path not in standard locations${NC}"
     else
         echo ""
-        echo -e "${GREEN}🎉 卸载完成!${NC}"
-        echo -e "${YELLOW}提示: 卸载完成后，你可能需要重新加载 shell 配置文件:${NC}"
-        echo "  source ~/.zshrc  # 或对应 shell 的配置文件"
+        echo -e "${GREEN}🎉 Uninstallation complete!${NC}"
+        echo -e "${YELLOW}Note: After uninstallation, you may need to reload your shell configuration:${NC}"
+        echo "  source ~/.zshrc  # or your corresponding shell configuration file"
     fi
 }
 
 # Ask for confirmation if no arguments
 if [[ "$1" != "--force" ]]; then
-    echo -e "${YELLOW}此操作将删除全局安装的 claude-proxy 命令。${NC}"
-    echo -e "${YELLOW}要继续吗？ [y/N]:${NC} \c"
+    echo -e "${YELLOW}This will remove the globally installed claude-proxy command.${NC}"
+    echo -e "${YELLOW}Do you want to continue? [y/N]:${NC} \c"
     read -r response
     
     case $response in
         [yY][eE][sS]|[yY])
-            echo -e "${GREEN}开始卸载...${NC}"
+            echo -e "${GREEN}Starting uninstallation...${NC}"
             ;;
         *)
-            echo -e "${YELLOW}取消卸载。${NC}"
+            echo -e "${YELLOW}Uninstallation cancelled.${NC}"
             exit 0
             ;;
     esac

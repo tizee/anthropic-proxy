@@ -42,19 +42,19 @@ get_shell_rc() {
 
 # Check if the script can be run
 precheck() {
-    echo -e "${BLUE}🔍 正在检查系统兼容性...${NC}"
+    echo -e "${BLUE}🔍 Checking system compatibility...${NC}"
     
     if [[ ! -f "$SCRIPT_PATH" ]]; then
-        echo -e "${RED}错误: 找不到主脚本文件 $SCRIPT_PATH${NC}"
+        echo -e "${RED}Error: Main script file not found at $SCRIPT_PATH${NC}"
         exit 1
     fi
     
     if [[ ! -x "$SCRIPT_PATH" ]]; then
         chmod +x "$SCRIPT_PATH"
-        echo -e "${GREEN}已设置脚本执行权限${NC}"
+        echo -e "${GREEN}✅ Set script execution permissions${NC}"
     fi
     
-    echo -e "${GREEN}✅ 预检查通过${NC}"
+    echo -e "${GREEN}✅ Pre-check passed${NC}"
 }
 
 # Find a directory in PATH where we can write
@@ -75,7 +75,7 @@ create_symlink_path() {
         target_dir="$HOME/.local/bin"
         if [[ ! -d "$target_dir" ]]; then
             mkdir -p "$target_dir"
-            echo -e "${YELLOW}创建目录: $target_dir${NC}"
+            echo -e "${YELLOW}Created directory: $target_dir${NC}"
         fi
     fi
     
@@ -91,7 +91,7 @@ add_to_path() {
         echo "" >> "$rc_file"
         echo "# Claude Code Proxy - Add $target_dir to PATH" >> "$rc_file"
         echo "export PATH=\"$target_dir:\$PATH\"" >> "$rc_file"
-        echo -e "${GREEN}已将 $target_dir 添加到 PATH (写入 $rc_file)${NC}"
+        echo -e "${GREEN}Added $target_dir to PATH (written to $rc_file)${NC}"
         return 0
     fi
     
@@ -100,54 +100,54 @@ add_to_path() {
 
 # Install the script
 install_script() {
-    echo -e "${BLUE}📦 正在安装 Claude Code Proxy...${NC}"
+    echo -e "${BLUE}📦 Installing Claude Code Proxy...${NC}"
     
     local target_dir=$(create_symlink_path)
     local symlink_path="$target_dir/$SCRIPT_NAME"
     
     # Check if symlink already exists
     if [[ -L "$symlink_path" ]] || [[ -f "$symlink_path" ]]; then
-        echo -e "${YELLOW}⚠️  $symlink_path 已存在，将被替换${NC}"
+        echo -e "${YELLOW}⚠️  $symlink_path already exists and will be replaced${NC}"
         rm -f "$symlink_path"
     fi
     
     # Create symlink
     ln -sf "$SCRIPT_PATH" "$symlink_path"
-    echo -e "${GREEN}✅ 已创建符号链接: $symlink_path -> $SCRIPT_PATH${NC}"
+    echo -e "${GREEN}✅ Created symbolic link: $symlink_path -> $SCRIPT_PATH${NC}"
     
     # Add to PATH if necessary
     local rc_file=$(get_shell_rc)
     if add_to_path "$target_dir" "$rc_file"; then
-        echo -e "${YELLOW}🔔 请将 $target_dir 添加到 PATH，或重新加载 shell${NC}"
-        echo -e "${YELLOW}   你可以运行: source $rc_file${NC}"
+        echo -e "${YELLOW}🔔 Please add $target_dir to PATH or reload shell${NC}"
+        echo -e "${YELLOW}   You can run: source $rc_file${NC}"
     fi
     
     echo ""
-    echo -e "${GREEN}🎉 安装完成!${NC}"
+    echo -e "${GREEN}🎉 Installation complete!${NC}"
     echo ""
-    echo -e "${BLUE}使用说明:${NC}"
-    echo "  • 启动服务器: $SCRIPT_NAME"
-    echo "  • 开发模式: $SCRIPT_NAME -d"
-    echo "  • 指定端口: $SCRIPT_NAME -p 8080"
-    echo "  • Docker启动: $SCRIPT_NAME --docker"
-    echo "  • 查看帮助: $SCRIPT_NAME --help"
+    echo -e "${BLUE}Usage instructions:${NC}"
+    echo "  • Start server: $SCRIPT_NAME"
+    echo "  • Development mode: $SCRIPT_NAME -d"
+    echo "  • Custom port: $SCRIPT_NAME -p 8080"
+    echo "  • Docker launch: $SCRIPT_NAME --docker"
+    echo "  • View help: $SCRIPT_NAME --help"
     echo ""
-    echo -e "${YELLOW}配置提示:${NC}"
-    echo "  1. 在项目目录编辑 .env 文件配置 API 密钥"
-    echo "  2. 修改 models.yaml 配置模型设置"
-    echo "  3. 项目目录: $PROJECT_DIR"
+    echo -e "${YELLOW}Configuration tips:${NC}"
+    echo "  1. Edit .env file in project directory to configure API keys"
+    echo "  2. Modify models.yaml for model settings"
+    echo "  3. Project directory: $PROJECT_DIR"
 }
 
 # Main installation process
 main() {
     echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║          Claude Code Proxy 安装器                ║${NC}"
+    echo -e "${GREEN}║          Claude Code Proxy Installer             ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
     
     precheck
     install_script
     
-    echo -e "${GREEN}现在你可以在任何目录使用 $SCRIPT_NAME 命令!${NC}"
+    echo -e "${GREEN}You can now use the $SCRIPT_NAME command from any directory!${NC}"
 }
 
 # Handle special cases

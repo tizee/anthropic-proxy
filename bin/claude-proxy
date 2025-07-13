@@ -31,36 +31,38 @@ PROJECT_DIR=$(dirname "$SCRIPT_DIR")
 DEFAULT_PORT=8082
 
 usage() {
-    echo -e "【Claude Code Proxy 启动器】
+    echo -e "【Claude Code Proxy Launcher】
 
-${GREEN}用法:${NC}
-  claude-proxy [选项]
+${GREEN}Usage:${NC}
+  claude-proxy [options]
 
-${GREEN}选项:${NC}
-  -h, --help     显示此帮助信息
-  -d, --dev      开发模式（自动重载）
-  -p, --port     指定端口号（默认: $DEFAULT_PORT）
-  --docker       使用 Docker 启动
-  -v, --version  显示版本信息
+${GREEN}Options:${NC}
+  -h, --help     Show this help message
+  -d, --dev      Development mode (auto-reload)
+  -p, --port     Specify port number (default: $DEFAULT_PORT)
+  --docker       Use Docker to launch
+  -v, --version  Show version information
+  --stop         Stop the running server
 
-${GREEN}示例:${NC}
-  claude-proxy           # 启动服务器，监听 $DEFAULT_PORT 端口
-  claude-proxy -d        # 开发模式启动
-  claude-proxy -p 8080   # 自定义端口号
-  claude-proxy --docker  # 使用 Docker 启动
+${GREEN}Examples:${NC}
+  claude-proxy           # Start server on port $DEFAULT_PORT
+  claude-proxy -d        # Start in development mode
+  claude-proxy -p 8080   # Specify custom port
+  claude-proxy --docker  # Launch using Docker
+  claude-proxy --stop    # Stop running server
 
-${YELLOW}配置说明:${NC}
-  请在项目目录下的 .env 文件中配置 API 密钥和模型设置
-  项目目录: $PROJECT_DIR
+${YELLOW}Configuration:${NC}
+  Configure API keys and model settings in .env file
+  Project directory: $PROJECT_DIR
 
-${YELLOW}连接 Claude Code:${NC}
+${YELLOW}Connect Claude Code:${NC}
   export ANTHROPIC_BASE_URL=http://localhost:8082
   claude"
 }
 
 version() {
-    echo -e "${GREEN}Claude Code Proxy启动器 v1.0.0${NC}"
-    echo -e "项目地址: ${BLUE}https://github.com/tizee/claude-code-proxy${NC}"
+    echo -e "${GREEN}Claude Code Proxy Launcher v1.0.0${NC}"
+    echo -e "Project: ${BLUE}https://github.com/tizee/claude-code-proxy${NC}"
 }
 
 check_dependencies() {
@@ -75,8 +77,8 @@ check_dependencies() {
     fi
 
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        echo -e "${RED}错误: 缺少依赖项: ${missing_deps[*]}${NC}"
-        echo -e "${YELLOW}请安装:"
+        echo -e "${RED}Error: Missing dependencies: ${missing_deps[*]}${NC}"
+        echo -e "${YELLOW}Please install:"
         echo -e "  ${NC}Python:  ${BLUE}https://python.org/downloads/${NC}"
         echo -e "  ${NC}uv:      ${BLUE}curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
         exit 1
@@ -85,19 +87,19 @@ check_dependencies() {
 
 start_dev_server() {
     local port=$1
-    echo -e "${BLUE}🚀 启动开发模式服务器...${NC}"
-    echo -e "${YELLOW}端口: ${port}${NC}"
-    echo -e "${YELLOW}模式: 开发（自动重载）${NC}"
+    echo -e "${BLUE}🚀 Starting development server...${NC}"
+    echo -e "${YELLOW}Port: ${port}${NC}"
+    echo -e "${YELLOW}Mode: Development (auto-reload)${NC}"
 
     cd "$PROJECT_DIR"
 
     if [[ ! -f ".env" ]]; then
-        echo -e "${YELLOW}⚠️  检测到缺少 .env 文件${NC}"
+        echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
         if [[ -f ".env.example" ]]; then
             cp .env.example .env
-            echo -e "${GREEN}✅ 已创建 .env 文件，请编辑配置 API 密钥${NC}"
+            echo -e "${GREEN}✅ Created .env file - please configure API keys${NC}"
         else
-            echo -e "${RED}错误: 找不到 .env.example 文件${NC}"
+            echo -e "${RED}Error: .env.example file not found${NC}"
             exit 1
         fi
     fi
@@ -107,19 +109,19 @@ start_dev_server() {
 
 start_production_server() {
     local port=$1
-    echo -e "${BLUE}🚀 启动生产模式服务器...${NC}"
-    echo -e "${YELLOW}端口: ${port}${NC}"
+    echo -e "${BLUE}🚀 Starting production server...${NC}"
+    echo -e "${YELLOW}Port: ${port}${NC}"
 
     cd "$PROJECT_DIR"
 
     if [[ ! -f ".env" ]]; then
-        echo -e "${YELLOW}⚠️  检测到缺少 .env 文件${NC}"
+        echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
         if [[ -f ".env.example" ]]; then
             cp .env.example .env
-            echo -e "${GREEN}✅ 已创建 .env 文件，请编辑配置 API 密钥${NC}"
-            echo -e "${YELLOW}提示: 请使用编辑器打开 .env 文件并填入 API 密钥${NC}"
+            echo -e "${GREEN}✅ Created .env file - please configure API keys${NC}"
+            echo -e "${YELLOW}Tip: Use an editor to open .env file and add API keys${NC}"
         else
-            echo -e "${RED}错误: 找不到 .env.example 文件${NC}"
+            echo -e "${RED}Error: .env.example file not found${NC}"
             exit 1
         fi
     fi
@@ -130,17 +132,17 @@ start_production_server() {
 
 start_docker() {
     local port=$1
-    echo -e "${BLUE}🐳 使用 Docker 启动...${NC}"
+    echo -e "${BLUE}🐳 Launching with Docker...${NC}"
 
     if ! command -v docker &> /dev/null; then
-        echo -e "${RED}错误: 未安装 Docker${NC}"
+        echo -e "${RED}Error: Docker is not installed${NC}"
         exit 1
     fi
 
     cd "$PROJECT_DIR"
 
     if [[ ! -f "Dockerfile" ]]; then
-        echo -e "${YELLOW}⚠️  检测到缺少 Dockerfile${NC}"
+        echo -e "${YELLOW}⚠️  Dockerfile not found${NC}"
         exit 1
     fi
 
@@ -181,8 +183,12 @@ main() {
                 version
                 exit 0
                 ;;
+            --stop)
+                stop_server
+                exit 0
+                ;;
             *)
-                echo -e "${RED}错误: 未知选项: $1${NC}"
+                echo -e "${RED}Error: Unknown option: $1${NC}"
                 usage
                 exit 1
                 ;;
@@ -191,8 +197,8 @@ main() {
 
     # Check if this script is running from the bin directory
     if [[ ! -f "$PROJECT_DIR/pyproject.toml" ]]; then
-        echo -e "${RED}错误: 找不到项目根目录${NC}"
-        echo -e "${YELLOW}请确保脚本位于项目的 bin/ 目录下${NC}"
+        echo -e "${RED}Error: Project root directory not found${NC}"
+        echo -e "${YELLOW}Please ensure script is located in project's bin/ directory${NC}"
         exit 1
     fi
 
@@ -201,8 +207,8 @@ main() {
         check_dependencies
     fi
 
-    echo -e "${GREEN}正在启动 Claude Code Proxy...${NC}"
-    echo -e "${YELLOW}项目目录: $PROJECT_DIR${NC}"
+    echo -e "${GREEN}Starting Claude Code Proxy...${NC}"
+    echo -e "${YELLOW}Project directory: $PROJECT_DIR${NC}"
 
     # Start the appropriate server
     if [[ $use_docker == true ]]; then
@@ -212,6 +218,13 @@ main() {
     else
         start_production_server $port
     fi
+}
+
+stop_server() {
+    echo -e "${BLUE}🛑 Stopping Claude Code Proxy server...${NC}"
+    
+    cd "$PROJECT_DIR"
+    make stop
 }
 
 # Run main function with all arguments
