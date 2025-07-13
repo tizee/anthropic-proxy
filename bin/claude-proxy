@@ -1,0 +1,218 @@
+#!/bin/zsh
+
+# Claude Code Proxy - Global access script
+# Simple version that just runs make commands from anywhere
+
+set -e
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Find the actual directory where this script is located
+if [[ -L "$0" ]]; then
+    # Script is a symlink, resolve to actual file location
+    LOCAL_PATH=$(readlink "$0")
+    if [[ ! "$LOCAL_PATH" == /* ]]; then
+        LOCAL_PATH=$(dirname "$0")/$LOCAL_PATH
+    fi
+    LOCAL_PATH=$(realpath "$LOCAL_PATH")
+else
+    # Script is run directly
+    LOCAL_PATH=$(realpath "$0")
+fi
+
+SCRIPT_DIR=$(dirname "$LOCAL_PATH")
+PROJECT_DIR=$(dirname "$SCRIPT_DIR")
+
+DEFAULT_PORT=8082
+
+usage() {
+    echo -e "【Claude Code Proxy 启动器】
+
+${GREEN}用法:${NC}
+  claude-proxy [选项]
+
+${GREEN}选项:${NC}
+  -h, --help     显示此帮助信息
+  -d, --dev      开发模式（自动重载）
+  -p, --port     指定端口号（默认: $DEFAULT_PORT）
+  --docker       使用 Docker 启动
+  -v, --version  显示版本信息
+
+${GREEN}示例:${NC}
+  claude-proxy           # 启动服务器，监听 $DEFAULT_PORT 端口
+  claude-proxy -d        # 开发模式启动
+  claude-proxy -p 8080   # 自定义端口号
+  claude-proxy --docker  # 使用 Docker 启动
+
+${YELLOW}配置说明:${NC}
+  请在项目目录下的 .env 文件中配置 API 密钥和模型设置
+  项目目录: $PROJECT_DIR
+
+${YELLOW}连接 Claude Code:${NC}
+  export ANTHROPIC_BASE_URL=http://localhost:8082
+  claude"
+}
+
+version() {
+    echo -e "${GREEN}Claude Code Proxy启动器 v1.0.0${NC}"
+    echo -e "项目地址: ${BLUE}https://github.com/tizee/claude-code-proxy${NC}"
+}
+
+check_dependencies() {
+    local missing_deps=()
+
+    if ! command -v python3 &> /dev/null; then
+        missing_deps+=("python3")
+    fi
+
+    if ! command -v uv &> /dev/null; then
+        missing_deps+=("uv")
+    fi
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo -e "${RED}错误: 缺少依赖项: ${missing_deps[*]}${NC}"
+        echo -e "${YELLOW}请安装:"
+        echo -e "  ${NC}Python:  ${BLUE}https://python.org/downloads/${NC}"
+        echo -e "  ${NC}uv:      ${BLUE}curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
+        exit 1
+    fi
+}
+
+start_dev_server() {
+    local port=$1
+    echo -e "${BLUE}🚀 启动开发模式服务器...${NC}"
+    echo -e "${YELLOW}端口: ${port}${NC}"
+    echo -e "${YELLOW}模式: 开发（自动重载）${NC}"
+
+    cd "$PROJECT_DIR"
+
+    if [[ ! -f ".env" ]]; then
+        echo -e "${YELLOW}⚠️  检测到缺少 .env 文件${NC}"
+        if [[ -f ".env.example" ]]; then
+            cp .env.example .env
+            echo -e "${GREEN}✅ 已创建 .env 文件，请编辑配置 API 密钥${NC}"
+        else
+            echo -e "${RED}错误: 找不到 .env.example 文件${NC}"
+            exit 1
+        fi
+    fi
+
+    make dev
+}
+
+start_production_server() {
+    local port=$1
+    echo -e "${BLUE}🚀 启动生产模式服务器...${NC}"
+    echo -e "${YELLOW}端口: ${port}${NC}"
+
+    cd "$PROJECT_DIR"
+
+    if [[ ! -f ".env" ]]; then
+        echo -e "${YELLOW}⚠️  检测到缺少 .env 文件${NC}"
+        if [[ -f ".env.example" ]]; then
+            cp .env.example .env
+            echo -e "${GREEN}✅ 已创建 .env 文件，请编辑配置 API 密钥${NC}"
+            echo -e "${YELLOW}提示: 请使用编辑器打开 .env 文件并填入 API 密钥${NC}"
+        else
+            echo -e "${RED}错误: 找不到 .env.example 文件${NC}"
+            exit 1
+        fi
+    fi
+
+    export PORT=$port
+    make restart
+}
+
+start_docker() {
+    local port=$1
+    echo -e "${BLUE}🐳 使用 Docker 启动...${NC}"
+
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}错误: 未安装 Docker${NC}"
+        exit 1
+    fi
+
+    cd "$PROJECT_DIR"
+
+    if [[ ! -f "Dockerfile" ]]; then
+        echo -e "${YELLOW}⚠️  检测到缺少 Dockerfile${NC}"
+        exit 1
+    fi
+
+    docker build -t claude-code-proxy . && \
+    docker run -p "$port:$port" -e PORT=$port --env-file .env claude-code-proxy
+}
+
+# Main script logic
+main() {
+    local mode="production"
+    local port=$DEFAULT_PORT
+    local use_docker=false
+
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -d|--dev)
+                mode="dev"
+                shift
+                ;;
+            -p|--port)
+                if [[ -z $2 ]]; then
+                    echo -e "${RED}错误: 缺少端口号参数${NC}"
+                    exit 1
+                fi
+                port=$2
+                shift 2
+                ;;
+            --docker)
+                use_docker=true
+                shift
+                ;;
+            -v|--version)
+                version
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}错误: 未知选项: $1${NC}"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    # Check if this script is running from the bin directory
+    if [[ ! -f "$PROJECT_DIR/pyproject.toml" ]]; then
+        echo -e "${RED}错误: 找不到项目根目录${NC}"
+        echo -e "${YELLOW}请确保脚本位于项目的 bin/ 目录下${NC}"
+        exit 1
+    fi
+
+    # Check dependencies
+    if [[ $use_docker == false ]]; then
+        check_dependencies
+    fi
+
+    echo -e "${GREEN}正在启动 Claude Code Proxy...${NC}"
+    echo -e "${YELLOW}项目目录: $PROJECT_DIR${NC}"
+
+    # Start the appropriate server
+    if [[ $use_docker == true ]]; then
+        start_docker $port
+    elif [[ $mode == "dev" ]]; then
+        start_dev_server $port
+    else
+        start_production_server $port
+    fi
+}
+
+# Run main function with all arguments
+main "$@"

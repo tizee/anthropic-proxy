@@ -31,7 +31,7 @@ Use this proxy in the following scenarios:
 
 | Version | Status | Notes |
 |---------|--------|-------|
-| 1.0.43  | ✅ Tested | Current supported version |
+| 1.0.51 | ✅ Tested | Current supported version |
 | 1.0.x   | ⚠️ Likely Compatible | Earlier versions may work but are untested |
 
 ## Tested Models
@@ -85,6 +85,26 @@ Use this proxy in the following scenarios:
 - API keys for desired providers
 
 ### Installation
+
+#### Option 1: Global Installation (Recommended)
+Install once and use from any directory:
+
+```bash
+git clone https://github.com/tizee/claude-code-proxy.git
+cd claude-code-proxy
+./install.sh
+```
+
+After installation, you can run the proxy from anywhere:
+```bash
+claude-proxy        # Production mode
+claude-proxy -d     # Development mode
+claude-proxy -p 8080  # Custom port
+```
+
+#### Option 2: Local Installation
+Traditional local installation:
+
 ```bash
 git clone https://github.com/tizee/claude-code-proxy.git
 cd claude-code-proxy
@@ -154,6 +174,27 @@ Additionally, the `CLAUDE.md` file provides guidance for both developers and AI 
 - **For AI Assistants**: Contains specific instructions to help AI tools effectively navigate and modify the codebase.
 
 Reading both the documentation in `docs/` and `CLAUDE.md` will give you a comprehensive understanding of the project.
+
+## Scripts
+
+This repository includes convenient installation and management scripts:
+
+- **`./install.sh`**: Installs the proxy globally so you can run `claude-proxy` from any directory
+- **`./uninstall.sh`**: Removes the global installation
+- **`claude-proxy`**: Global command after installation (see [Installation](#installation))
+
+Example usage:
+```bash
+# Installation
+./install.sh
+
+# Usage
+claude-proxy -d    # Development mode
+claude-proxy --help
+
+# Removal
+./uninstall.sh
+```
 
 ## Credit & Acknowledgment
 
