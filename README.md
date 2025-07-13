@@ -31,7 +31,7 @@ Use this proxy in the following scenarios:
 
 | Version | Status | Notes |
 |---------|--------|-------|
-| 1.0.35  | ✅ Tested | Current supported version |
+| 1.0.43  | ✅ Tested | Current supported version |
 | 1.0.x   | ⚠️ Likely Compatible | Earlier versions may work but are untested |
 
 ## Tested Models
