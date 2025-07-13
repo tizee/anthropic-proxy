@@ -10,4 +10,4 @@ else
 fi
 
 # Launch Claude Code
-ANTHROPIC_BASE_URL=http://127.0.0.1:8082 claude
+ANTHROPIC_BASE_URL=http://127.0.0.1:8082 claude "$@"
