@@ -83,10 +83,10 @@ class Config:
     def __init__(self):
         # Router configuration for intelligent model selection
         self.router_config = {
-            "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3-250324"),
-            "think": os.environ.get("ROUTER_THINK", "deepseek-r1-250528"),
+            "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3"),
+            "think": os.environ.get("ROUTER_THINK", "deepseek-r1"),
             "long_context": os.environ.get("ROUTER_LONG_CONTEXT", "gemini-2.5-pro"),
-            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3-250324"),
+            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3"),
         }
 
         # Token thresholds

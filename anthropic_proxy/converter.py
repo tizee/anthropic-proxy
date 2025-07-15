@@ -175,10 +175,14 @@ def _extract_calls_with_regex(content: str) -> list:
 
 def _parse_tool_arguments(arguments_str: str) -> dict:
     """Parse tool arguments from string to dict."""
+    logger.debug(f"🔧 TOOL_DEBUG: Parsing tool arguments: '{arguments_str}'")
+    logger.debug(f"🔧 TOOL_DEBUG: Arguments type: {type(arguments_str)}")
     try:
-        return json.loads(arguments_str)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning(f"Failed to parse tool arguments: {arguments_str}")
+        result = json.loads(arguments_str)
+        logger.debug(f"🔧 TOOL_DEBUG: Successfully parsed arguments: {result}")
+        return result
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.error(f"🔧 TOOL_DEBUG: Failed to parse tool arguments: {arguments_str}, error: {e}")
         return {}
 
 
@@ -319,6 +323,11 @@ def convert_openai_response_to_anthropic(
         # Extract tool calls if present
         if message.tool_calls:
             tool_calls = message.tool_calls
+            logger.debug(f"🔧 TOOL_DEBUG: message.tool_calls found: {tool_calls}")
+            logger.debug(f"🔧 TOOL_DEBUG: tool_calls type: {type(tool_calls)}")
+            for i, tc in enumerate(tool_calls):
+                logger.debug(f"🔧 TOOL_DEBUG: tool_call {i}: {tc}")
+                logger.debug(f"🔧 TOOL_DEBUG: tool_call {i} type: {type(tc)}")
         # Extract finish reason
         finish_reason = choice.finish_reason
 
@@ -364,9 +373,16 @@ def convert_openai_response_to_anthropic(
         # Process tool calls
         # OpenAI tool calls -> Claude Tool Use
         if tool_calls:
-            for tool_call in tool_calls:
+            logger.debug(f"🔧 TOOL_DEBUG: Processing {len(tool_calls)} tool calls")
+            for i, tool_call in enumerate(tool_calls):
                 try:
+                    logger.debug(f"🔧 TOOL_DEBUG: Processing tool_call {i}: {tool_call}")
+                    logger.debug(f"🔧 TOOL_DEBUG: tool_call.function: {tool_call.function}")
+                    logger.debug(f"🔧 TOOL_DEBUG: tool_call.function.arguments: {tool_call.function.arguments}")
+                    
                     arguments_dict = _parse_tool_arguments(tool_call.function.arguments)
+                    logger.debug(f"🔧 TOOL_DEBUG: Parsed arguments: {arguments_dict}")
+                    
                     content_blocks.append(
                         ClaudeContentBlockToolUse(
                             type=Constants.CONTENT_TOOL_USE,
@@ -375,8 +391,10 @@ def convert_openai_response_to_anthropic(
                             input=arguments_dict,
                         )
                     )
+                    logger.debug(f"🔧 TOOL_DEBUG: Successfully created tool_use block for {tool_call.function.name}")
                 except Exception as e:
-                    logger.warning(f"Error processing tool call: {e}")
+                    logger.error(f"🔧 TOOL_DEBUG: Error processing tool call {i}: {e}")
+                    logger.error(f"🔧 TOOL_DEBUG: Failed tool_call data: {tool_call}")
                     continue
 
         # Map finish reason to Anthropic format

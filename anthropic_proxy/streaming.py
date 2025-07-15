@@ -425,12 +425,20 @@ class AnthropicStreamingConverter:
 
     async def _handle_tool_call_delta(self, tool_call):
         """Handle tool call delta with support for multiple simultaneous tool calls."""
+        # GROQ DEBUG: Log the raw tool call data
+        logger.debug(f"🔧 TOOL_DEBUG: Raw tool_call received: {tool_call}")
+        logger.debug(f"🔧 TOOL_DEBUG: tool_call type: {type(tool_call)}")
+        
         # Extract tool call index - this is crucial for multiple tool calls
         tool_index = None
         if isinstance(tool_call, dict):
             tool_index = tool_call.get("index")
+            logger.debug(f"🔧 TOOL_DEBUG: Dict tool_call keys: {list(tool_call.keys())}")
         elif hasattr(tool_call, "index"):
             tool_index = tool_call.index
+            logger.debug(f"🔧 TOOL_DEBUG: Object tool_call attributes: {dir(tool_call)}")
+        else:
+            logger.debug(f"🔧 TOOL_DEBUG: Unexpected tool_call type: {type(tool_call)}")
 
         if tool_index is None:
             logger.warning(
@@ -488,15 +496,24 @@ class AnthropicStreamingConverter:
 
     async def _initialize_new_tool_call(self, tool_call, tool_index):
         """Initialize a new tool call at the given index."""
+        # GROQ DEBUG: Log tool call structure during initialization
+        logger.debug(f"🔧 TOOL_DEBUG: Initializing tool call - raw data: {tool_call}")
+        
         # Extract tool info
         if isinstance(tool_call, dict):
             function = tool_call.get("function", {})
             tool_name = function.get("name", "") if isinstance(function, dict) else ""
+            logger.debug(f"🔧 TOOL_DEBUG: Dict function data: {function}")
         else:
             function = getattr(tool_call, "function", None)
             tool_name = getattr(function, "name", "") if function else ""
+            logger.debug(f"🔧 TOOL_DEBUG: Object function data: {function}")
+            if function:
+                logger.debug(f"🔧 TOOL_DEBUG: Function attributes: {dir(function)}")
 
         tool_id = generate_unique_id("toolu")
+        
+        logger.debug(f"🔧 TOOL_DEBUG: Extracted tool_name: '{tool_name}', tool_id: '{tool_id}'")
 
         # Create tool call entry
         self.tool_calls[tool_index] = {
@@ -531,6 +548,10 @@ class AnthropicStreamingConverter:
 
     async def _process_tool_call_arguments(self, tool_call, tool_index):
         """Process arguments for a specific tool call."""
+        # GROQ DEBUG: Log arguments extraction process
+        logger.debug(f"🔧 TOOL_DEBUG: Processing arguments for tool {tool_index}")
+        logger.debug(f"🔧 TOOL_DEBUG: tool_call data: {tool_call}")
+        
         # Extract function arguments
         arguments = None
         if isinstance(tool_call, dict) and "function" in tool_call:
@@ -538,13 +559,19 @@ class AnthropicStreamingConverter:
             arguments = (
                 function.get("arguments", "") if isinstance(function, dict) else ""
             )
+            logger.debug(f"🔧 TOOL_DEBUG: Dict function arguments: '{arguments}'")
         elif hasattr(tool_call, "function"):
             function = getattr(tool_call, "function", None)
             arguments = getattr(function, "arguments", "") if function else ""
+            logger.debug(f"🔧 TOOL_DEBUG: Object function arguments: '{arguments}'")
+        else:
+            logger.debug(f"🔧 TOOL_DEBUG: No function found in tool_call")
 
         if not arguments:
             logger.debug(f"🔧 TOOL_CALL_DELTA: No arguments for tool {tool_index}")
             return
+            
+        logger.debug(f"🔧 TOOL_DEBUG: Extracted arguments length: {len(arguments)}")
 
         tool_info = self.tool_calls[tool_index]
         accumulated_json = tool_info["json_accumulator"]
@@ -717,6 +744,11 @@ class AnthropicStreamingConverter:
 
             # Pre-extract delta data to minimize model_dump() calls
             raw_delta = delta.model_dump() if hasattr(delta, "model_dump") else {}
+            
+            # GROQ DEBUG: Log detailed delta information
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                logger.debug(f"🔧 TOOL_DEBUG: Delta has tool_calls: {delta.tool_calls}")
+                logger.debug(f"🔧 TOOL_DEBUG: raw_delta content: {raw_delta}")
 
             chunk_data.update(
                 {
@@ -731,6 +763,25 @@ class AnthropicStreamingConverter:
 
         # Debug logging for streaming chunk analysis
         logger.debug(f"🔄 STREAMING_CHUNK #{self.openai_chunks_received}: processing")
+        
+        # GROQ DEBUG: Log raw chunk data structure
+        if chunk_data["has_choices"] and chunk_data["delta_tool_calls"]:
+            logger.debug(f"🔧 TOOL_DEBUG: Chunk has tool calls - raw chunk: {chunk}")
+            logger.debug(f"🔧 TOOL_DEBUG: chunk.choices[0].delta attributes: {dir(chunk.choices[0].delta)}")
+            if hasattr(chunk.choices[0].delta, 'tool_calls'):
+                logger.debug(f"🔧 TOOL_DEBUG: tool_calls attribute value: {chunk.choices[0].delta.tool_calls}")
+                logger.debug(f"🔧 TOOL_DEBUG: tool_calls type: {type(chunk.choices[0].delta.tool_calls)}")
+        
+        # GROQ DEBUG: Log ALL chunks with their complete data structure
+        logger.debug(f"🔧 TOOL_DEBUG: Raw chunk: {chunk}")
+        logger.debug(f"🔧 TOOL_DEBUG: Chunk data: {chunk_data}")
+        
+        # GROQ DEBUG: Special attention to error-related chunks
+        if chunk_data["has_choices"] and chunk_data["finish_reason"] == "error":
+            logger.error(f"🔧 TOOL_DEBUG: ERROR chunk received! Full chunk: {chunk}")
+            logger.error(f"🔧 TOOL_DEBUG: Error chunk data: {chunk_data}")
+            logger.error(f"🔧 TOOL_DEBUG: Delta content: {chunk_data['delta_content']}")
+            logger.error(f"🔧 TOOL_DEBUG: Accumulated text so far: '{self.accumulated_text}'")
 
         # Handle usage data (final chunk)
         if chunk_data["has_usage"] and chunk_data["usage"]:
@@ -756,12 +807,23 @@ class AnthropicStreamingConverter:
             # Handle tool calls first
             if chunk_data["delta_tool_calls"]:
                 delta_tool_calls = chunk_data["delta_tool_calls"]
+                logger.debug(f"🔧 TOOL_DEBUG: Raw delta_tool_calls: {delta_tool_calls}")
+                logger.debug(f"🔧 TOOL_DEBUG: delta_tool_calls type: {type(delta_tool_calls)}")
+                
                 if not isinstance(delta_tool_calls, list):
                     delta_tool_calls = [delta_tool_calls]
+                    logger.debug(f"🔧 TOOL_DEBUG: Converted to list: {delta_tool_calls}")
 
-                for tool_call in delta_tool_calls:
-                    async for event in self._handle_tool_call_delta(tool_call):
-                        yield event
+                for i, tool_call in enumerate(delta_tool_calls):
+                    logger.debug(f"🔧 TOOL_DEBUG: Processing tool_call {i}: {tool_call}")
+                    try:
+                        async for event in self._handle_tool_call_delta(tool_call):
+                            yield event
+                    except Exception as e:
+                        logger.error(f"🔧 TOOL_DEBUG: Error in tool_call_delta for item {i}: {e}")
+                        logger.error(f"🔧 TOOL_DEBUG: Failed tool_call data: {tool_call}")
+                        # Re-raise the error to maintain existing error handling
+                        raise
 
             # Handle thinking/reasoning content
             if chunk_data["delta_reasoning"]:
@@ -785,6 +847,11 @@ class AnthropicStreamingConverter:
 
             # Process finish_reason - but wait for usage chunk before finalizing
             if chunk_data["finish_reason"] and not self.has_sent_stop_reason:
+                # GROQ DEBUG: Log finish_reason details
+                logger.debug(f"🔧 TOOL_DEBUG: Processing finish_reason: {chunk_data['finish_reason']}")
+                logger.debug(f"🔧 TOOL_DEBUG: Accumulated text: '{self.accumulated_text}'")
+                logger.debug(f"🔧 TOOL_DEBUG: Current tokens: input={self.input_tokens}, output={self.output_tokens}")
+                
                 # Store finish_reason and prepare for finalization, but don't send stop events yet
                 self.pending_finish_reason = chunk_data["finish_reason"]
                 async for event in self._prepare_finalization(
@@ -849,26 +916,178 @@ async def convert_openai_streaming_response_to_anthropic(
 
         # Process each chunk directly with enhanced error handling
         chunk_count = 0
-        async for chunk in response_generator:
-            chunk_count += 1
+        try:
+            async for chunk in response_generator:
+                chunk_count += 1
+                try:
+                    # Process chunk and yield all events
+                    async for event in converter.process_chunk(chunk):
+                        yield event
+
+                    # Reset consecutive errors on successful processing
+                    consecutive_errors = 0
+
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"🌊 ERROR_PROCESSING_CHUNK #{chunk_count}: {str(e)}")
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(
+                            f"Too many consecutive errors ({consecutive_errors}), aborting stream."
+                        )
+                        break
+                    continue
+        except Exception as streaming_error:
+            logger.error(f"🔧 TOOL_DEBUG: Streaming iteration error: {streaming_error}")
+            logger.error(f"🔧 TOOL_DEBUG: Error type: {type(streaming_error)}")
+            logger.error(f"🔧 TOOL_DEBUG: Chunks processed before error: {chunk_count}")
+            
+            # Try to extract detailed error information using proper OpenAI error handling
             try:
-                # Process chunk and yield all events
-                async for event in converter.process_chunk(chunk):
-                    yield event
-
-                # Reset consecutive errors on successful processing
-                consecutive_errors = 0
-
-            except Exception as e:
-                consecutive_errors += 1
-                logger.error(f"🌊 ERROR_PROCESSING_CHUNK #{chunk_count}: {str(e)}")
-
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(
-                        f"Too many consecutive errors ({consecutive_errors}), aborting stream."
-                    )
-                    break
-                continue
+                import openai
+                
+                # Check if this is an OpenAI APIStatusError (4xx/5xx responses)
+                if isinstance(streaming_error, openai.APIStatusError):
+                    logger.error(f"🔧 TOOL_DEBUG: This is an APIStatusError")
+                    logger.error(f"🔧 TOOL_DEBUG: Status code: {streaming_error.status_code}")
+                    logger.error(f"🔧 TOOL_DEBUG: Response: {streaming_error.response}")
+                    
+                    # Try to get response body
+                    try:
+                        response_text = streaming_error.response.text
+                        logger.error(f"🔧 TOOL_DEBUG: Response body: {response_text}")
+                        
+                        # Try to parse as JSON to get failed_generation
+                        import json
+                        try:
+                            response_json = json.loads(response_text)
+                            logger.error(f"🔧 TOOL_DEBUG: Response JSON: {json.dumps(response_json, indent=2)}")
+                            
+                            # Look for failed_generation specifically
+                            if 'failed_generation' in response_json:
+                                logger.error(f"🔧 TOOL_DEBUG: failed_generation: {response_json['failed_generation']}")
+                            if 'error' in response_json:
+                                logger.error(f"🔧 TOOL_DEBUG: error details: {response_json['error']}")
+                        except json.JSONDecodeError:
+                            logger.error(f"🔧 TOOL_DEBUG: Response is not valid JSON")
+                    except Exception as body_error:
+                        logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
+                        
+                # Check if this is an OpenAI APIConnectionError (network issues)
+                elif isinstance(streaming_error, openai.APIConnectionError):
+                    logger.error(f"🔧 TOOL_DEBUG: This is an APIConnectionError")
+                    logger.error(f"🔧 TOOL_DEBUG: Underlying cause: {streaming_error.__cause__}")
+                    
+                # Check if this is a general OpenAI APIError
+                elif isinstance(streaming_error, openai.APIError):
+                    logger.error(f"🔧 TOOL_DEBUG: This is a general APIError")
+                    
+                    # Print the complete error object
+                    import json
+                    try:
+                        # Try to convert the error object to a dictionary
+                        error_dict = {}
+                        for attr in dir(streaming_error):
+                            if not attr.startswith('_') and not callable(getattr(streaming_error, attr)):
+                                try:
+                                    value = getattr(streaming_error, attr)
+                                    # Convert to string if it's not JSON serializable
+                                    if isinstance(value, (str, int, float, bool, type(None))):
+                                        error_dict[attr] = value
+                                    else:
+                                        error_dict[attr] = str(value)
+                                except:
+                                    error_dict[attr] = f"<could not access {attr}>"
+                        
+                        logger.error(f"🔧 TOOL_DEBUG: Complete error object: {json.dumps(error_dict, indent=2)}")
+                    except Exception as e:
+                        logger.error(f"🔧 TOOL_DEBUG: Could not serialize error object: {e}")
+                    
+                    # Also try to access specific attributes we know might have the data
+                    for attr_name in ['body', 'message', 'code', 'type', 'param', 'request']:
+                        if hasattr(streaming_error, attr_name):
+                            try:
+                                attr_value = getattr(streaming_error, attr_name)
+                                logger.error(f"🔧 TOOL_DEBUG: {attr_name}: {attr_value}")
+                                
+                                # If it's the body and it's a string, try to parse as JSON
+                                if attr_name == 'body' and isinstance(attr_value, str):
+                                    try:
+                                        body_json = json.loads(attr_value)
+                                        logger.error(f"🔧 TOOL_DEBUG: Body JSON: {json.dumps(body_json, indent=2)}")
+                                        
+                                        # Look for failed_generation specifically
+                                        if 'failed_generation' in body_json:
+                                            logger.error(f"🔧 TOOL_DEBUG: failed_generation: {body_json['failed_generation']}")
+                                        if 'error' in body_json:
+                                            logger.error(f"🔧 TOOL_DEBUG: error details: {body_json['error']}")
+                                    except json.JSONDecodeError:
+                                        logger.error(f"🔧 TOOL_DEBUG: Body is not valid JSON")
+                            except Exception as attr_error:
+                                logger.error(f"🔧 TOOL_DEBUG: Could not access {attr_name}: {attr_error}")
+                            
+                # For other types of errors, try to extract what we can
+                else:
+                    logger.error(f"🔧 TOOL_DEBUG: This is not an OpenAI APIError subclass")
+                    
+                    # Print the complete error object
+                    import json
+                    try:
+                        # Try to convert the error object to a dictionary
+                        error_dict = {}
+                        for attr in dir(streaming_error):
+                            if not attr.startswith('_') and not callable(getattr(streaming_error, attr)):
+                                try:
+                                    value = getattr(streaming_error, attr)
+                                    # Convert to string if it's not JSON serializable
+                                    if isinstance(value, (str, int, float, bool, type(None))):
+                                        error_dict[attr] = value
+                                    else:
+                                        error_dict[attr] = str(value)
+                                except:
+                                    error_dict[attr] = f"<could not access {attr}>"
+                        
+                        logger.error(f"🔧 TOOL_DEBUG: Complete error object: {json.dumps(error_dict, indent=2)}")
+                    except Exception as e:
+                        logger.error(f"🔧 TOOL_DEBUG: Could not serialize error object: {e}")
+                    
+                    # Try to get the raw error message and parse it
+                    error_str = str(streaming_error)
+                    logger.error(f"🔧 TOOL_DEBUG: Full error string: {error_str}")
+                    
+                    # Try to extract JSON from the error message itself
+                    if 'failed_generation' in error_str:
+                        logger.error(f"🔧 TOOL_DEBUG: Error message contains 'failed_generation'")
+                        # Try to find JSON in the error message
+                        import re
+                        json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
+                        if json_match:
+                            try:
+                                import json
+                                error_json = json.loads(json_match.group())
+                                logger.error(f"🔧 TOOL_DEBUG: Extracted JSON from error: {json.dumps(error_json, indent=2)}")
+                                if 'failed_generation' in error_json:
+                                    logger.error(f"🔧 TOOL_DEBUG: failed_generation: {error_json['failed_generation']}")
+                            except json.JSONDecodeError:
+                                logger.error(f"🔧 TOOL_DEBUG: Could not parse JSON from error message")
+                        
+                # Check if this is a tool call related error
+                if "function" in str(streaming_error).lower() or "tool" in str(streaming_error).lower():
+                    logger.error(f"🔧 TOOL_DEBUG: This appears to be a tool call related error")
+                    logger.error(f"🔧 TOOL_DEBUG: Original request model: {original_request.model}")
+                    logger.error(f"🔧 TOOL_DEBUG: Routed model: {routed_model}")
+                    if original_request.tools:
+                        logger.error(f"🔧 TOOL_DEBUG: Number of tools in request: {len(original_request.tools)}")
+                        for i, tool in enumerate(original_request.tools):
+                            logger.error(f"🔧 TOOL_DEBUG: Tool {i}: {tool.name}")
+                            
+            except Exception as debug_error:
+                logger.error(f"🔧 TOOL_DEBUG: Error while debugging: {debug_error}")
+                import traceback
+                logger.error(f"🔧 TOOL_DEBUG: Debug error traceback: {traceback.format_exc()}")
+            
+            # Re-raise to maintain existing error handling
+            raise streaming_error
 
         # Handle stream completion - ensure proper cleanup regardless of how stream ended
         if not converter.has_sent_stop_reason:

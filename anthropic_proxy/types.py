@@ -955,8 +955,10 @@ class ClaudeMessagesRequest(BaseModel):
         # Claude request tools -> OpenAI request tools
         openai_tools = []
         if self.tools:
+            logger.debug(f"🔧 TOOL_DEBUG: Converting {len(self.tools)} Claude tools to OpenAI format")
             openai_tools: list[ChatCompletionToolParam] = []
-            for tool in self.tools:
+            for i, tool in enumerate(self.tools):
+                logger.debug(f"🔧 TOOL_DEBUG: Tool {i}: name={tool.name}, description={tool.description}")
                 tool_params: ChatCompletionToolParam = {
                     "type": "function",
                     "function": {
@@ -967,10 +969,18 @@ class ClaudeMessagesRequest(BaseModel):
                 if hasattr(tool, "input_schema"):
                     from .converter import clean_gemini_schema
 
-                    tool_params["function"]["parameters"] = clean_gemini_schema(
-                        tool.input_schema
-                    )
-                    openai_tools.append(tool_params)
+                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} input_schema: {tool.input_schema}")
+                    cleaned_schema = clean_gemini_schema(tool.input_schema)
+                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} cleaned_schema: {cleaned_schema}")
+                    tool_params["function"]["parameters"] = tool.input_schema
+                else:
+                    # If no input_schema, add empty parameters object
+                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} has no input_schema, adding empty parameters")
+                    tool_params["function"]["parameters"] = {}
+
+                openai_tools.append(tool_params)
+                logger.debug(f"🔧 TOOL_DEBUG: Tool {i} converted successfully")
+            logger.debug(f"🔧 TOOL_DEBUG: Final OpenAI tools count: {len(openai_tools)}")
 
         # Handle tool_choice with type validation
         tool_choice = None
@@ -991,8 +1001,12 @@ class ClaudeMessagesRequest(BaseModel):
 
         if openai_tools:
             request_params["tools"] = openai_tools
+            logger.debug(f"🔧 TOOL_DEBUG: Added {len(openai_tools)} tools to OpenAI request")
         if tool_choice:
             request_params["tool_choice"] = tool_choice
+            logger.debug(f"🔧 TOOL_DEBUG: Set tool_choice to: {tool_choice}")
+        else:
+            logger.debug(f"🔧 TOOL_DEBUG: No tool_choice specified")
 
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
 
