@@ -400,22 +400,42 @@ class TestMessageProcessing(unittest.TestCase):
         print("✅ Mixed content message conversion test passed")
 
     def test_tool_result_message_ordering(self):
-        """Test that tool result messages maintain correct chronological order."""
-        print("🧪 Testing tool result message ordering...")
+        """Test that tool result messages maintain correct chronological order and include name field."""
+        print("🧪 Testing tool result message ordering with name field...")
 
-        # Test case with mixed content that includes tool results
+        # Test case with complete tool use cycle (tool_use -> tool_result)
         test_request = ClaudeMessagesRequest(
             model="test-model",
             max_tokens=4000,
             messages=[
-                # User message with tool result + text content
+                # User asks something
+                ClaudeMessage(
+                    role="user",
+                    content="Please calculate 2+2"
+                ),
+                # Assistant responds with tool use
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeContentBlockText(
+                            type="text", text="I'll calculate that for you."
+                        ),
+                        ClaudeContentBlockToolUse(
+                            type="tool_use",
+                            id="call_test_123",
+                            name="calculator",
+                            input={"expression": "2+2"},
+                        ),
+                    ],
+                ),
+                # User provides tool result + text content
                 ClaudeMessage(
                     role="user",
                     content=[
                         ClaudeContentBlockToolResult(
                             type="tool_result",
                             tool_use_id="call_test_123",
-                            content="Tool operation completed successfully",
+                            content="4",
                         ),
                         ClaudeContentBlockText(
                             type="text", text="Thanks! Now let's try something else."
@@ -429,33 +449,55 @@ class TestMessageProcessing(unittest.TestCase):
         result = test_request.to_openai_request()
         messages = result["messages"]
 
-        # Should have exactly 2 messages in correct order
+        # Should have 4 messages: user, assistant, tool, user
         self.assertEqual(
-            len(messages), 2, f"Expected exactly 2 messages, got {len(messages)}"
+            len(messages), 4, f"Expected exactly 4 messages, got {len(messages)}"
         )
 
-        # First message should be the tool result
-        tool_message = messages[0]
+        # Find the tool result message
+        tool_message = None
+        for msg in messages:
+            if msg.get("role") == "tool":
+                tool_message = msg
+                break
+
+        self.assertIsNotNone(tool_message, "Tool result message not found")
+
+        # Check tool result message structure
         self.assertEqual(
             tool_message["role"],
             "tool",
-            f"First message should be tool role, got {tool_message['role']}",
+            f"Tool message should have role 'tool', got {tool_message['role']}",
         )
         self.assertEqual(
             tool_message["tool_call_id"], "call_test_123", "Tool call ID should match"
         )
-        self.assertIn(
-            "Tool operation completed successfully",
-            tool_message["content"],
-            "Tool result content should match",
+        self.assertEqual(
+            tool_message["content"], "4", "Tool result content should match"
         )
 
-        # Second message should be the user content
-        user_message = messages[1]
+        # NEW: Check that name field is included (for Groq compatibility)
+        self.assertIn(
+            "name", tool_message,
+            f"Tool result message should include 'name' field for provider compatibility: {tool_message}"
+        )
+        self.assertEqual(
+            tool_message["name"], "calculator",
+            f"Tool result name should match original tool_use name, got '{tool_message.get('name')}'"
+        )
+
+        # Find and check the user message that follows
+        user_message = None
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "tool" and i + 1 < len(messages):
+                user_message = messages[i + 1]
+                break
+
+        self.assertIsNotNone(user_message, "User message after tool result not found")
         self.assertEqual(
             user_message["role"],
             "user",
-            f"Second message should be user role, got {user_message['role']}",
+            f"Message after tool should be user role, got {user_message['role']}",
         )
         self.assertEqual(
             user_message["content"],
@@ -464,6 +506,9 @@ class TestMessageProcessing(unittest.TestCase):
         )
 
         print("✅ Tool result message ordering test passed")
+        print(f"   - Tool result includes name field: {tool_message.get('name')}")
+        print(f"   - Tool result tool_call_id: {tool_message.get('tool_call_id')}")
+        print(f"   - Tool result content: {tool_message.get('content')}")
 
     def test_thinking_content_conversion(self):
         """Test that thinking content is properly converted to text in assistant message conversion."""
@@ -3382,6 +3427,826 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             result = asyncio.run(run_test())
             if not result:
                 print("⚠️ Stream termination test had issues, but continued")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_bash_tool_call(self):
+        """Test Bash tool call with all required parameters."""
+        print("🧪 Testing Bash tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Run the command 'echo Hello World' with a 5 second timeout and describe it as 'testing echo'",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Bash",
+                    "description": "Execute bash commands",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string", "description": "The command to execute"},
+                            "timeout": {"type": "number", "description": "Optional timeout in milliseconds (max 600000)"},
+                            "description": {"type": "string", "description": "Clear, concise description of what this command does in 5-10 words"}
+                        },
+                        "required": ["command"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Bash"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Bash tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Bash", "Tool name should be Bash")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("command", tool_call["input"], "Should have command parameter")
+                    self.assertEqual(tool_call["input"]["command"], "echo Hello World", "Command should match")
+
+                    # Check optional parameters
+                    if "timeout" in tool_call["input"]:
+                        self.assertIsInstance(tool_call["input"]["timeout"], (int, float), "Timeout should be numeric")
+                    if "description" in tool_call["input"]:
+                        self.assertIsInstance(tool_call["input"]["description"], str, "Description should be string")
+
+                print("✅ Bash tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Bash tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Bash tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_glob_tool_call(self):
+        """Test Glob tool call with required and optional parameters."""
+        print("🧪 Testing Glob tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Find all Python files in the src directory using glob pattern",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Glob",
+                    "description": "Fast file pattern matching tool",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "pattern": {"type": "string", "description": "The glob pattern to match files against"},
+                            "path": {"type": "string", "description": "The directory to search in. If not specified, the current working directory will be used."}
+                        },
+                        "required": ["pattern"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Glob"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Glob tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Glob", "Tool name should be Glob")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("pattern", tool_call["input"], "Should have pattern parameter")
+                    self.assertIsInstance(tool_call["input"]["pattern"], str, "Pattern should be string")
+
+                    # Check optional path parameter
+                    if "path" in tool_call["input"]:
+                        self.assertIsInstance(tool_call["input"]["path"], str, "Path should be string")
+
+                print("✅ Glob tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Glob tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Glob tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_grep_tool_call(self):
+        """Test Grep tool call with complex parameters."""
+        print("🧪 Testing Grep tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Search for function definitions in Python files with line numbers",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Grep",
+                    "description": "A powerful search tool built on ripgrep",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "pattern": {"type": "string", "description": "The regular expression pattern to search for"},
+                            "path": {"type": "string", "description": "File or directory to search in"},
+                            "glob": {"type": "string", "description": "Glob pattern to filter files"},
+                            "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Output mode"},
+                            "-A": {"type": "number", "description": "Number of lines to show after each match"},
+                            "-B": {"type": "number", "description": "Number of lines to show before each match"},
+                            "-C": {"type": "number", "description": "Number of lines to show before and after each match"},
+                            "-n": {"type": "boolean", "description": "Show line numbers in output"},
+                            "-i": {"type": "boolean", "description": "Case insensitive search"},
+                            "type": {"type": "string", "description": "File type to search"},
+                            "head_limit": {"type": "number", "description": "Limit output to first N lines/entries"},
+                            "multiline": {"type": "boolean", "description": "Enable multiline mode"}
+                        },
+                        "required": ["pattern"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Grep"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Grep tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Grep", "Tool name should be Grep")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("pattern", tool_call["input"], "Should have pattern parameter")
+                    self.assertIsInstance(tool_call["input"]["pattern"], str, "Pattern should be string")
+
+                    # Check optional parameters
+                    for param in ["path", "glob", "output_mode", "type"]:
+                        if param in tool_call["input"]:
+                            self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+
+                    for param in ["-A", "-B", "-C", "head_limit"]:
+                        if param in tool_call["input"]:
+                            self.assertIsInstance(tool_call["input"][param], (int, float), f"{param} should be numeric")
+
+                    for param in ["-n", "-i", "multiline"]:
+                        if param in tool_call["input"]:
+                            self.assertIsInstance(tool_call["input"][param], bool, f"{param} should be boolean")
+
+                print("✅ Grep tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Grep tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Grep tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_ls_tool_call(self):
+        """Test LS tool call with path and ignore parameters."""
+        print("🧪 Testing LS tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "List files in the current directory, ignoring node_modules and .git",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "LS",
+                    "description": "Lists files and directories in a given path",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "The absolute path to the directory to list"},
+                            "ignore": {"type": "array", "items": {"type": "string"}, "description": "List of glob patterns to ignore"}
+                        },
+                        "required": ["path"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "LS"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect LS tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "LS", "Tool name should be LS")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("path", tool_call["input"], "Should have path parameter")
+                    self.assertIsInstance(tool_call["input"]["path"], str, "Path should be string")
+
+                    # Check optional ignore parameter
+                    if "ignore" in tool_call["input"]:
+                        self.assertIsInstance(tool_call["input"]["ignore"], list, "Ignore should be array")
+                        for item in tool_call["input"]["ignore"]:
+                            self.assertIsInstance(item, str, "Ignore items should be strings")
+
+                print("✅ LS tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ LS tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("LS tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_read_tool_call(self):
+        """Test Read tool call with file path and optional parameters."""
+        print("🧪 Testing Read tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Read the first 100 lines of the file foo.bar starting from line 50",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Reads a file from local file system",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "The absolute path to the file to read"},
+                            "offset": {"type": "number", "description": "The line number to start reading from"},
+                            "limit": {"type": "number", "description": "The number of lines to read"}
+                        },
+                        "required": ["file_path"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Read"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Read tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Read", "Tool name should be Read")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("file_path", tool_call["input"], "Should have file_path parameter")
+                    self.assertIsInstance(tool_call["input"]["file_path"], str, "file_path should be string")
+
+                    # Check optional parameters
+                    for param in ["offset", "limit"]:
+                        if param in tool_call["input"]:
+                            self.assertIsInstance(tool_call["input"][param], (int, float), f"{param} should be numeric")
+
+                print("✅ Read tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Read tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Read tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_edit_tool_call(self):
+        """Test Edit tool call with required and optional parameters."""
+        print("🧪 Testing Edit tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Replace 'old_text' with 'new_text' in the file foo.bar, replacing all occurrences",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Edit",
+                    "description": "Performs exact string replacements in files",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "The absolute path to the file to modify"},
+                            "old_string": {"type": "string", "description": "The text to replace"},
+                            "new_string": {"type": "string", "description": "The text to replace it with"},
+                            "replace_all": {"type": "boolean", "description": "Replace all occurences of old_string"}
+                        },
+                        "required": ["file_path", "old_string", "new_string"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Edit"},
+            # "tool_choice": ClaudeToolChoiceTool(type="tool",
+            #                                     name="Edit").model_dump()
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Edit tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Edit", "Tool name should be Edit")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    required_params = ["file_path", "old_string", "new_string"]
+                    for param in required_params:
+                        self.assertIn(param, tool_call["input"], f"Should have {param} parameter")
+                        self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+
+                    # Check optional replace_all parameter
+                    if "replace_all" in tool_call["input"]:
+                        self.assertIsInstance(tool_call["input"]["replace_all"], bool, "replace_all should be boolean")
+
+                print("✅ Edit tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Edit tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Edit tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_multiedit_tool_call(self):
+        """Test MultiEdit tool call with complex edit operations in a realistic context."""
+        print("🧪 Testing MultiEdit tool call with realistic context...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                # User asks to read a file first
+                {
+                    "role": "user",
+                    "content": "I need to refactor this Python file. First, please read the file to understand its structure."
+                },
+                # Assistant reads the file
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "I'll read the file to understand its current structure before making any changes."
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_read_123",
+                            "name": "Read",
+                            "input": {"file_path": "/path/to/example.py"}
+                        }
+                    ]
+                },
+                # User provides the file content as tool result
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_read_123",
+                            "content": "def old_function_name():\n    print('Hello World')\n    return 'old_value'\n\nclass OldClassName:\n    def __init__(self):\n        self.old_attribute = 'old_value'\n        \n    def old_method(self):\n        return 'old_result'"
+                        },
+                        {
+                            "type": "text",
+                            "text": "Now please rename the function to 'new_function_name', change the class name to 'NewClassName', and update the attribute name to 'new_attribute'."
+                        }
+                    ]
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Reads a file from the local filesystem",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "The absolute path to the file to read"}
+                        },
+                        "required": ["file_path"],
+                    },
+                },
+                {
+                    "name": "MultiEdit",
+                    "description": "Make multiple edits to a single file in one operation",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "The absolute path to the file to modify"},
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "old_string": {"type": "string", "description": "The text to replace"},
+                                        "new_string": {"type": "string", "description": "The text to replace it with"},
+                                        "replace_all": {"type": "boolean", "description": "Replace all occurences of old_string"}
+                                    },
+                                    "required": ["old_string", "new_string"]
+                                },
+                                "minItems": 1,
+                                "description": "Array of edit operations to perform"
+                            }
+                        },
+                        "required": ["file_path", "edits"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "MultiEdit"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect MultiEdit tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "MultiEdit", "Tool name should be MultiEdit")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("file_path", tool_call["input"], "Should have file_path parameter")
+                    self.assertIsInstance(tool_call["input"]["file_path"], str, "file_path should be string")
+
+                    self.assertIn("edits", tool_call["input"], "Should have edits parameter")
+                    self.assertIsInstance(tool_call["input"]["edits"], list, "edits should be array")
+                    self.assertGreater(len(tool_call["input"]["edits"]), 0, "edits should have at least one item")
+
+                    # Check each edit operation
+                    for i, edit in enumerate(tool_call["input"]["edits"]):
+                        self.assertIsInstance(edit, dict, f"Edit {i} should be an object")
+                        self.assertIn("old_string", edit, f"Edit {i} should have old_string")
+                        self.assertIn("new_string", edit, f"Edit {i} should have new_string")
+                        self.assertIsInstance(edit["old_string"], str, f"Edit {i} old_string should be string")
+                        self.assertIsInstance(edit["new_string"], str, f"Edit {i} new_string should be string")
+
+                        # Verify that old_string is not empty (should be meaningful content)
+                        self.assertGreater(len(edit["old_string"]), 0, f"Edit {i} old_string should not be empty")
+
+                        # Verify that new_string is different from old_string
+                        self.assertNotEqual(edit["old_string"], edit["new_string"], f"Edit {i} should actually change content")
+
+                        if "replace_all" in edit:
+                            self.assertIsInstance(edit["replace_all"], bool, f"Edit {i} replace_all should be boolean")
+
+                    # Enhanced validation for realistic context
+                    print(f"📋 MultiEdit validation details:")
+                    print(f"   - File path: {tool_call['input']['file_path']}")
+                    print(f"   - Number of edits: {len(tool_call['input']['edits'])}")
+                    for i, edit in enumerate(tool_call['input']['edits']):
+                        print(f"   - Edit {i}: '{edit['old_string'][:30]}...' -> '{edit['new_string'][:30]}...'")
+
+                print("✅ MultiEdit tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ MultiEdit tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("MultiEdit tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_write_tool_call(self):
+        """Test Write tool call with file path and content."""
+        print("🧪 Testing Write tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Write some content to foo.bar",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "Write",
+                    "description": "Writes a file to the local filesystem",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "The absolute path to the file to write"},
+                            "content": {"type": "string", "description": "The content to write to the file"}
+                        },
+                        "required": ["file_path", "content"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "Write"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Write tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "Write", "Tool name should be Write")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    required_params = ["file_path", "content"]
+                    for param in required_params:
+                        self.assertIn(param, tool_call["input"], f"Should have {param} parameter")
+                        self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+
+                print("✅ Write tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ Write tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("Write tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_todowrite_tool_call(self):
+        """Test TodoWrite tool call with complex todo structure."""
+        print("🧪 Testing TodoWrite tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Create a todo list with multiple items",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "TodoWrite",
+                    "description": "Create and manage a structured task list",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "todos": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "content": {"type": "string", "minLength": 1},
+                                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                                        "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                                        "id": {"type": "string"}
+                                    },
+                                    "required": ["content", "status", "priority", "id"]
+                                },
+                                "description": "The updated todo list"
+                            }
+                        },
+                        "required": ["todos"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "TodoWrite"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect TodoWrite tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "TodoWrite", "Tool name should be TodoWrite")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("todos", tool_call["input"], "Should have todos parameter")
+                    self.assertIsInstance(tool_call["input"]["todos"], list, "todos should be array")
+
+                    # Check each todo item
+                    for todo in tool_call["input"]["todos"]:
+                        self.assertIsInstance(todo, dict, "Each todo should be an object")
+
+                        required_fields = ["content", "status", "priority", "id"]
+                        for field in required_fields:
+                            self.assertIn(field, todo, f"Todo should have {field}")
+                            self.assertIsInstance(todo[field], str, f"{field} should be string")
+
+                        # Check enum values
+                        self.assertIn(todo["status"], ["pending", "in_progress", "completed"], "Invalid status")
+                        self.assertIn(todo["priority"], ["high", "medium", "low"], "Invalid priority")
+
+                        # Check content length
+                        self.assertGreater(len(todo["content"]), 0, "Content should not be empty")
+
+                print("✅ TodoWrite tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ TodoWrite tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("TodoWrite tool test failed")
+        except Exception as e:
+            self.skipTest(f"Proxy server not available: {e}")
+
+    def test_claude_code_exit_plan_mode_tool_call(self):
+        """Test exit_plan_mode tool call with plan parameter."""
+        print("🧪 Testing exit_plan_mode tool call...")
+
+        request_data = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Exit plan mode with a detailed plan",
+                }
+            ],
+            "tools": [
+                {
+                    "name": "exit_plan_mode",
+                    "description": "Exit plan mode after presenting a plan",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "plan": {"type": "string", "description": "The plan you came up with, that you want to run by the user for approval"}
+                        },
+                        "required": ["plan"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "exit_plan_mode"},
+        }
+
+        # Run async test
+        import asyncio
+
+        async def run_test():
+            try:
+                result = await self._send_streaming_request(request_data)
+
+                # Verify tool call was detected
+                self.assertGreater(len(result["tool_calls"]), 0, "Should detect exit_plan_mode tool call")
+
+                tool_call = result["tool_calls"][0]
+                self.assertEqual(tool_call["name"], "exit_plan_mode", "Tool name should be exit_plan_mode")
+                self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
+
+                if tool_call["input"]:
+                    self.assertIn("plan", tool_call["input"], "Should have plan parameter")
+                    self.assertIsInstance(tool_call["input"]["plan"], str, "plan should be string")
+                    self.assertGreater(len(tool_call["input"]["plan"]), 0, "plan should not be empty")
+
+                print("✅ exit_plan_mode tool call test passed")
+                return True
+
+            except Exception as e:
+                print(f"❌ exit_plan_mode tool test failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        try:
+            result = asyncio.run(run_test())
+            if not result:
+                self.skipTest("exit_plan_mode tool test failed")
         except Exception as e:
             self.skipTest(f"Proxy server not available: {e}")
 

@@ -346,13 +346,19 @@ class ClaudeContentBlockToolResult(BaseModel):
             # This case should not occur per API spec, but handle gracefully
             return str(self.content)
 
-    def to_openai_message(self) -> ChatCompletionToolMessageParam:
+    def to_openai_message(self, tool_name: str = None) -> ChatCompletionToolMessageParam:
         """Convert Claude tool_result to OpenAI tool role message format."""
-        return {
+        result = {
             "role": "tool",
             "tool_call_id": self.tool_use_id,
             "content": self.process_content(),
         }
+        
+        # Add name field if provided (required by some providers like Groq)
+        if tool_name:
+            result["name"] = tool_name
+        
+        return result
 
 
 class ClaudeContentBlockThinking(BaseModel):
@@ -703,11 +709,14 @@ class ClaudeMessage(BaseModel):
 
         return content
 
-    def to_openai_messages(self) -> list[ChatCompletionMessageParam]:
+    def to_openai_messages(self, tool_name_mapping: dict[str, str] = None) -> list[ChatCompletionMessageParam]:
         """
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
         Handles complex logic including tool_result splitting, content block ordering, etc.
         Returns a list of OpenAI messages (can be multiple due to tool_result splitting).
+        
+        Args:
+            tool_name_mapping: Optional mapping from tool_use_id to tool_name for tool_result messages
         """
         openai_messages = []
 
@@ -793,7 +802,11 @@ class ClaudeMessage(BaseModel):
                     if len(merged_text) > 0:
                         openai_parts.append({"type": "text", "text": merged_text})
                         merged_text = ""
-                    pending_tool_result_msgs.append(block.to_openai_message())
+                    # Get tool name from mapping if available
+                    tool_name = None
+                    if tool_name_mapping:
+                        tool_name = tool_name_mapping.get(block.tool_use_id)
+                    pending_tool_result_msgs.append(block.to_openai_message(tool_name))
 
             # Handle remaining text content
             if len(merged_text) > 0:
@@ -943,13 +956,21 @@ class ClaudeMessagesRequest(BaseModel):
                 }
                 openai_messages.append(system_msg)
 
+        # Build tool_name_mapping by scanning all messages for tool_use blocks
+        tool_name_mapping: dict[str, str] = {}
+        for msg in self.messages:
+            if isinstance(msg.content, list):
+                for block in msg.content:
+                    if isinstance(block, ClaudeContentBlockToolUse):
+                        tool_name_mapping[block.id] = block.name
+        
         # Convert Claude messages to OpenAI messages
         for msg in self.messages:
             if msg.role == Constants.ROLE_USER:
-                user_messages = msg.to_openai_messages()
+                user_messages = msg.to_openai_messages(tool_name_mapping)
                 openai_messages.extend(user_messages)
             elif msg.role == Constants.ROLE_ASSISTANT:
-                assistant_messages = msg.to_openai_messages()
+                assistant_messages = msg.to_openai_messages(tool_name_mapping)
                 openai_messages.extend(assistant_messages)
 
         # Claude request tools -> OpenAI request tools

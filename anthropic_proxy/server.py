@@ -562,9 +562,11 @@ async def create_message(raw_request: Request):
         max_tokens = min(model_config.get("max_tokens"), request.max_tokens)
         openai_request["max_tokens"] = max_tokens
 
+        openai_request["stream"] = model_config["can_stream"]
+
         # Handle streaming mode
         # Use OpenAI SDK async streaming
-        if model_config.get("can_stream"):
+        if openai_request["stream"]:
             logger.debug(f"🔧 TOOL_DEBUG: Starting streaming request with model: {openai_request.get('model')}")
 
             # Log the actual request being sent to help debug
