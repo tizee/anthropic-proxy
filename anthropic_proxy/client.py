@@ -103,6 +103,7 @@ def load_custom_models(config_file=None):
                 # openai request extra options
                 "extra_headers": model.get("extra_headers", {}),
                 "extra_body": model.get("extra_body", {}),
+                "temperature": model.get("temperature", 1.0),
                 "reasoning_effort": model.get("reasoning_effort", None),
                 # Direct mode configuration
                 "direct": is_direct_mode,
@@ -169,16 +170,12 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     if not api_key:
         raise ValueError(f"No API key available for model: {model_id}")
 
-    # Create client with retry-enabled HTTP client
-    # Configure retry transport for better reliability
-    transport = httpx.AsyncHTTPTransport(retries=ModelDefaults.DEFAULT_MAX_RETRIES)
-    http_client = httpx.AsyncClient(transport=transport)
-    
-    client_kwargs = {"api_key": api_key, "http_client": http_client}
+    # Create client without retry transport (it causes 404 errors with some APIs)
+    client_kwargs = {"api_key": api_key}
     if base_url:
         client_kwargs["base_url"] = base_url
 
-    client = AsyncOpenAI(**client_kwargs)
+    client = AsyncOpenAI(**client_kwargs, timeout=httpx.Timeout(60.0))
     logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}")
     return client
 
@@ -212,7 +209,7 @@ def create_claude_client(model_id: str) -> httpx.AsyncClient:
 
     # Configure retry transport for better reliability
     transport = httpx.AsyncHTTPTransport(retries=ModelDefaults.DEFAULT_MAX_RETRIES)
-    
+
     client = httpx.AsyncClient(
         base_url=base_url,
         headers=headers,

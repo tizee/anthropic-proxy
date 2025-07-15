@@ -53,6 +53,27 @@ Use this proxy in the following scenarios:
 | **Anthropic** | claude-3-5-haiku-20241022 | Direct | ✅ Fully Tested | Official Claude API |
 | **Anthropic** | claude-3-opus-20240229 | Direct | ✅ Fully Tested | Official Claude API |
 
+## Known Issues
+
+### Provider-Specific Issues
+
+**⚠️ Groq Provider - Tool Call Limitations (as of January 2025)**
+
+The Groq provider has known issues with tool call functionality:
+- **Multiple tool calls fail**: When Claude Code requests multiple tools in a single interaction, Groq may not handle them correctly
+- **Tool call generation instability**: Even single tool calls may fail intermittently
+- **Confirmed across implementations**: This issue affects both JavaScript and Python implementations, confirming it's a provider-side problem
+
+**Root Cause**: This is acknowledged by the Kimi model team on Twitter, where they mentioned bugs in the Kimi-K2-Instruct model's tool call handling, specifically for multi-turn tool calls.
+
+**Workaround**: Use alternative providers like:
+- **Moonshot AI** (kimi-k2-0711-preview via direct API)
+- **Google Gemini** (via OpenRouter)
+- **DeepSeek** models
+- **OpenRouter** with other models
+
+**Future**: This issue may be resolved by Groq in future updates, but currently requires using alternative providers for reliable tool call functionality.
+
 ## Key Features
 
 ### 🔄 Dual-Mode Operation

@@ -49,7 +49,9 @@ from anthropic_proxy.types import (
     ClaudeThinkingConfigDisabled,
     ClaudeThinkingConfigEnabled,
     ClaudeTool,
+    ClaudeToolChoiceTool,
     generate_unique_id,
+    ClaudeToolChoiceAuto
 )
 from anthropic_proxy.streaming import AnthropicStreamingConverter
 from anthropic_proxy.converter import (
@@ -1999,7 +2001,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     f"  - {tool.get('name', 'unnamed')}: {tool.get('description', 'no description')}"
                 )
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream(
                 "POST",
                 f"{self.proxy_url}/v1/messages",
@@ -2158,8 +2160,10 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "test_function"},
+            "tool_choice":
+            ClaudeToolChoiceAuto(type="auto").model_dump()
         }
+        #"tool_choice": {"type": "tool", "name": "test_function"},
 
         # Run async test
         import asyncio
@@ -2294,7 +2298,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "MultiEdit"},
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump()
+            # "tool_choice": ClaudeToolChoiceTool(type="tool",
+            #                                     name="MultiEdit").model_dump(),
         }
 
         import asyncio
@@ -2399,7 +2405,8 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "test_function"},
+            #"tool_choice": {"type": "tool", "name": "test_function"},
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump()
         }
 
         import asyncio
@@ -2531,7 +2538,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice": {"type": "tool", "name": "MultiEdit"},
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump(),
         }
 
         import asyncio
@@ -3026,7 +3033,8 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                             },
                         }
                     ],
-                    "tool_choice": {"type": "tool", "name": "test_function"},
+                    "tool_choice": ClaudeToolChoiceTool(type="tool",
+                                                        name="test_function").model_dump(),
                 },
                 "expected_events": [
                     "message_start",

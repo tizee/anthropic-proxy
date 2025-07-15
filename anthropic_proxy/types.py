@@ -964,15 +964,18 @@ class ClaudeMessagesRequest(BaseModel):
                     "function": {
                         "name": tool.name,
                         "description": tool.description or "",
+                        "strict": False,
                     },
                 }
                 if hasattr(tool, "input_schema"):
-                    from .converter import clean_gemini_schema
+                    from .converter import clean_gemini_schema, validate_gemini_function_schema
 
                     logger.debug(f"🔧 TOOL_DEBUG: Tool {i} input_schema: {tool.input_schema}")
                     cleaned_schema = clean_gemini_schema(tool.input_schema)
                     logger.debug(f"🔧 TOOL_DEBUG: Tool {i} cleaned_schema: {cleaned_schema}")
-                    tool_params["function"]["parameters"] = tool.input_schema
+                    tool_params["function"]["parameters"] = cleaned_schema
+                    is_valid, errors = validate_gemini_function_schema(tool_params)
+                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} is valid: {is_valid} errors: {errors}")
                 else:
                     # If no input_schema, add empty parameters object
                     logger.debug(f"🔧 TOOL_DEBUG: Tool {i} has no input_schema, adding empty parameters")

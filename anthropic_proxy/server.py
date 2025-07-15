@@ -377,6 +377,7 @@ async def handle_direct_claude_request(
 
 @app.post("/v1/messages")
 async def create_message(raw_request: Request):
+    import json  # Import json at function start to avoid scope issues
     try:
         # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
@@ -440,7 +441,7 @@ async def create_message(raw_request: Request):
         display_model = routed_model
 
         logger.info(
-            f"📊 PROCESSING REQUEST: Original={original_model} → Routed={routed_model}, Tokens={token_count}, Stream={request.stream}"
+            f"📊 PROCESSING REQUEST: Original={original_model} → Routed={routed_model}, Tokens={token_count},Stream={model_config.get("can_stream")}"
         )
 
         # Check if this model should use direct Claude API mode
@@ -453,12 +454,12 @@ async def create_message(raw_request: Request):
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
         openai_request['store'] = False
-        
+
         # GROQ DEBUG: Log the OpenAI request for tool call debugging
         if request.tools:
             logger.debug(f"🔧 TOOL_DEBUG: Original request has {len(request.tools)} tools")
             logger.debug(f"🔧 TOOL_DEBUG: Tools: {[tool.name for tool in request.tools]}")
-            
+
         if openai_request.get('tools'):
             logger.debug(f"🔧 TOOL_DEBUG: OpenAI request has {len(openai_request['tools'])} tools")
             logger.debug(f"🔧 TOOL_DEBUG: OpenAI tools: {openai_request['tools']}")
@@ -474,6 +475,7 @@ async def create_message(raw_request: Request):
         # Add extra headers if defined in model config
         openai_request["extra_headers"] = model_config["extra_headers"]
         openai_request["extra_body"] = model_config["extra_body"]
+        openai_request["temperature"] = model_config["temperature"]
 
         # Handle thinking/reasoning based on model capabilities
 
@@ -526,14 +528,11 @@ async def create_message(raw_request: Request):
         # - Exception: Thinking models don't support tool_choice=required (API limitation)
         # IMPORTANT: Only set tool_choice if we actually have tools
         if (
-            not has_thinking
-            and openai_request.get("tools")
+            openai_request.get("tools")
             and len(openai_request.get("tools", [])) > 0
         ):
-            current_tool_choice = openai_request.get("tool_choice")
-            if not current_tool_choice:
-                openai_request["tool_choice"] = "auto"
-                logger.debug("🔧 TOOL_DEBUG: Set tool_choice to 'auto' because tools are present")
+            openai_request["tool_choice"] = "auto"
+            logger.debug("🔧 TOOL_DEBUG: Set tool_choice to 'auto' because tools are present")
         else:
             # Remove tool_choice if no tools are present (OpenAI API requirement)
             if "tool_choice" in openai_request:
@@ -565,18 +564,18 @@ async def create_message(raw_request: Request):
 
         # Handle streaming mode
         # Use OpenAI SDK async streaming
-        if request.stream:
+        if model_config.get("can_stream"):
             logger.debug(f"🔧 TOOL_DEBUG: Starting streaming request with model: {openai_request.get('model')}")
-            
+
             # Log the actual request being sent to help debug
             logger.debug(f"🔧 TOOL_DEBUG: Full OpenAI request: {openai_request}")
-            
+
             try:
                 response_generator: AsyncStream[
                     ChatCompletionChunk
                 ] = await client.chat.completions.create(**openai_request)
-                logger.debug(f"🔧 TOOL_DEBUG: Successfully created streaming response generator")
-                
+                logger.debug("🔧 TOOL_DEBUG: Successfully created streaming response generator")
+
                 # Wrap the generator to apply response hooks
                 hooked_generator = hook_streaming_response(
                     response_generator, request, routed_model
@@ -596,28 +595,27 @@ async def create_message(raw_request: Request):
                 logger.error(f"🔧 TOOL_DEBUG: Error creating streaming response: {e}")
                 logger.error(f"🔧 TOOL_DEBUG: Error type: {type(e)}")
                 logger.error(f"🔧 TOOL_DEBUG: Request details: model={openai_request.get('model')}, tools={len(openai_request.get('tools', []))}")
-                
+
                 # Try to extract detailed error information using proper OpenAI error handling
                 try:
                     import openai
-                    
+
                     # Check if this is an OpenAI APIStatusError (4xx/5xx responses)
                     if isinstance(e, openai.APIStatusError):
                         logger.error(f"🔧 TOOL_DEBUG: This is an APIStatusError")
                         logger.error(f"🔧 TOOL_DEBUG: Status code: {e.status_code}")
                         logger.error(f"🔧 TOOL_DEBUG: Response: {e.response}")
-                        
+
                         # Try to get response body
                         try:
                             response_text = e.response.text
                             logger.error(f"🔧 TOOL_DEBUG: Response body: {response_text}")
-                            
+
                             # Try to parse as JSON to get failed_generation
-                            import json
                             try:
                                 response_json = json.loads(response_text)
                                 logger.error(f"🔧 TOOL_DEBUG: Response JSON: {json.dumps(response_json, indent=2)}")
-                                
+
                                 # Look for failed_generation specifically
                                 if 'failed_generation' in response_json:
                                     logger.error(f"🔧 TOOL_DEBUG: failed_generation: {response_json['failed_generation']}")
@@ -627,33 +625,32 @@ async def create_message(raw_request: Request):
                                 logger.error(f"🔧 TOOL_DEBUG: Response is not valid JSON")
                         except Exception as body_error:
                             logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
-                            
+
                     # Check if this is an OpenAI APIConnectionError (network issues)
                     elif isinstance(e, openai.APIConnectionError):
                         logger.error(f"🔧 TOOL_DEBUG: This is an APIConnectionError")
                         logger.error(f"🔧 TOOL_DEBUG: Underlying cause: {e.__cause__}")
-                        
+
                     # Check if this is a general OpenAI APIError
                     elif isinstance(e, openai.APIError):
                         logger.error(f"🔧 TOOL_DEBUG: This is a general APIError")
                         logger.error(f"🔧 TOOL_DEBUG: Error attributes: {dir(e)}")
-                        
+
                         # Try to access different attributes
                         if hasattr(e, 'response') and e.response:
                             response = e.response
                             logger.error(f"🔧 TOOL_DEBUG: Response: {response}")
-                            
+
                             # Try to get response body
                             try:
                                 response_text = response.text
                                 logger.error(f"🔧 TOOL_DEBUG: Response body: {response_text}")
-                                
+
                                 # Try to parse as JSON to get failed_generation
-                                import json
                                 try:
                                     response_json = json.loads(response_text)
                                     logger.error(f"🔧 TOOL_DEBUG: Response JSON: {json.dumps(response_json, indent=2)}")
-                                    
+
                                     # Look for failed_generation specifically
                                     if 'failed_generation' in response_json:
                                         logger.error(f"🔧 TOOL_DEBUG: failed_generation: {response_json['failed_generation']}")
@@ -663,16 +660,16 @@ async def create_message(raw_request: Request):
                                     logger.error(f"🔧 TOOL_DEBUG: Response is not valid JSON")
                             except Exception as body_error:
                                 logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
-                                
+
                     # For other types of errors, try to extract what we can
                     else:
                         logger.error(f"🔧 TOOL_DEBUG: This is not an OpenAI APIError subclass")
                         logger.error(f"🔧 TOOL_DEBUG: Error attributes: {dir(e)}")
-                        
+
                         # Try to get the raw error message and parse it
                         error_str = str(e)
                         logger.error(f"🔧 TOOL_DEBUG: Full error string: {error_str}")
-                        
+
                         # Try to extract JSON from the error message itself
                         if 'failed_generation' in error_str:
                             logger.error(f"🔧 TOOL_DEBUG: Error message contains 'failed_generation'")
@@ -680,19 +677,18 @@ async def create_message(raw_request: Request):
                             json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
                             if json_match:
                                 try:
-                                    import json
                                     error_json = json.loads(json_match.group())
                                     logger.error(f"🔧 TOOL_DEBUG: Extracted JSON from error: {json.dumps(error_json, indent=2)}")
                                     if 'failed_generation' in error_json:
                                         logger.error(f"🔧 TOOL_DEBUG: failed_generation: {error_json['failed_generation']}")
                                 except json.JSONDecodeError:
                                     logger.error(f"🔧 TOOL_DEBUG: Could not parse JSON from error message")
-                                    
+
                 except Exception as debug_error:
                     logger.error(f"🔧 TOOL_DEBUG: Error while debugging streaming error: {debug_error}")
                     import traceback
                     logger.error(f"🔧 TOOL_DEBUG: Debug error traceback: {traceback.format_exc()}")
-                    
+
                 raise
         else:
             start_time = time.time()
@@ -702,7 +698,7 @@ async def create_message(raw_request: Request):
                     **openai_request
                 )
                 logger.debug(f"🔧 TOOL_DEBUG: Successfully received non-streaming response")
-                
+
                 # GROQ DEBUG: Log the raw OpenAI response for tool call analysis
                 if hasattr(openai_response, 'choices') and openai_response.choices:
                     choice = openai_response.choices[0]
@@ -710,7 +706,7 @@ async def create_message(raw_request: Request):
                         logger.debug(f"🔧 TOOL_DEBUG: Non-streaming response has {len(choice.message.tool_calls)} tool calls")
                         for i, tc in enumerate(choice.message.tool_calls):
                             logger.debug(f"🔧 TOOL_DEBUG: Tool call {i}: {tc}")
-                            
+
             except Exception as e:
                 # Add specific context for debugging routing and API issues
                 error_context = {
@@ -722,23 +718,22 @@ async def create_message(raw_request: Request):
                     "error_type": type(e).__name__,
                 }
                 logger.error(f"🔧 TOOL_DEBUG: API call failed with context: {json.dumps(error_context, indent=2)}")
-                
+
                 # Try to extract detailed error information for non-streaming
                 try:
                     if hasattr(e, 'response') and e.response:
                         response = e.response
                         logger.error(f"🔧 TOOL_DEBUG: Non-streaming error response status: {response.status_code}")
                         logger.error(f"🔧 TOOL_DEBUG: Non-streaming error response headers: {dict(response.headers)}")
-                        
+
                         try:
                             response_text = response.text
                             logger.error(f"🔧 TOOL_DEBUG: Non-streaming error response body: {response_text}")
-                            
-                            import json
+
                             try:
                                 response_json = json.loads(response_text)
                                 logger.error(f"🔧 TOOL_DEBUG: Non-streaming error response JSON: {json.dumps(response_json, indent=2)}")
-                                
+
                                 if 'failed_generation' in response_json:
                                     logger.error(f"🔧 TOOL_DEBUG: failed_generation: {response_json['failed_generation']}")
                                 if 'error' in response_json:
@@ -749,7 +744,7 @@ async def create_message(raw_request: Request):
                             logger.error(f"🔧 TOOL_DEBUG: Could not read non-streaming error response body: {body_error}")
                 except Exception as debug_error:
                     logger.error(f"🔧 TOOL_DEBUG: Error while debugging non-streaming error: {debug_error}")
-                
+
                 # Check if this is a tool call related error
                 if openai_request.get('tools'):
                     logger.error(f"🔧 TOOL_DEBUG: Error occurred with tools present: {len(openai_request['tools'])} tools")
