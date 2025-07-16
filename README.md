@@ -66,6 +66,10 @@ The Groq provider has known issues with tool call functionality:
 
 **Root Cause**: This is acknowledged by the Kimi model team on Twitter, where they mentioned bugs in the Kimi-K2-Instruct model's tool call handling, specifically for multi-turn tool calls.
 
+**Discussion Links**:
+- **GitHub Issue**: [sst/opencode#1018](https://github.com/sst/opencode/issues/1018#issuecomment-3075860647) - Contains detailed discussion about tool use errors with Groq's Kimi K2
+- **Groq Community**: [Tool call issues discussion](https://community.groq.com/discussion-forum-7/groq-kimi-k2-tool-call-issues-213) - Official Groq community thread on Kimi K2 tool call problems
+
 **Workaround**: Use alternative providers like:
 - **Moonshot AI** (kimi-k2-0711-preview via direct API)
 - **Google Gemini** (via OpenRouter)
