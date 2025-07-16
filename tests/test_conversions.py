@@ -3670,7 +3670,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "List files in the current directory, ignoring node_modules and .git",
+                    "content": "List files in the ~/dev/project/foo, ignoring node_modules and .git",
                 }
             ],
             "tools": [
@@ -4036,7 +4036,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Write some content to foo.bar",
+                    "content": "Write Hello World to foo.bar",
                 }
             ],
             "tools": [
@@ -4103,13 +4103,13 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             "messages": [
                 {
                     "role": "user",
-                    "content": "Create a todo list with multiple items",
+                    "content": "Please use the TodoWrite tool to create a structured todo list. I need exactly 4 tasks for implementing a Python module called 'foo.bar' with a hello world function. The todos should have these specific contents: 1) 'Create foo package directory with __init__.py files for module structure' (high priority, pending), 2) 'Implement hello_world() function in foo/bar.py that prints Hello World' (medium priority, pending), 3) 'Add comprehensive docstrings and module documentation' (low priority, pending), 4) 'Create unit tests for the hello_world function' (low priority, pending). Use string IDs like 'setup_dirs', 'implement_func', 'add_docs', 'create_tests'.",
                 }
             ],
             "tools": [
                 {
                     "name": "TodoWrite",
-                    "description": "Create and manage a structured task list",
+                    "description": "Create and manage a structured task list with specific task items containing content, status, priority, and unique ID",
                     "input_schema": {
                         "type": "object",
                         "properties": {
@@ -4118,14 +4118,15 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "content": {"type": "string", "minLength": 1},
-                                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
-                                        "priority": {"type": "string", "enum": ["high", "medium", "low"]},
-                                        "id": {"type": "string"}
+                                        "content": {"type": "string", "minLength": 5, "description": "Specific task description"},
+                                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Current task status"},
+                                        "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Task priority level"},
+                                        "id": {"type": "string", "minLength": 3, "description": "Unique identifier for the task"}
                                     },
                                     "required": ["content", "status", "priority", "id"]
                                 },
-                                "description": "The updated todo list"
+                                "description": "Array of todo items to create or update",
+                                "minItems": 1
                             }
                         },
                         "required": ["todos"],
@@ -4151,23 +4152,38 @@ class TestStreamingFunctionCalls(unittest.TestCase):
 
                 if tool_call["input"]:
                     self.assertIn("todos", tool_call["input"], "Should have todos parameter")
-                    self.assertIsInstance(tool_call["input"]["todos"], list, "todos should be array")
+                    todos = tool_call["input"]["todos"]
+                    self.assertIsInstance(todos, list, "todos should be array")
+                    self.assertGreaterEqual(len(todos), 1, "Should have at least one todo item")
+
+                    print(f"📋 Found {len(todos)} todo items")
 
                     # Check each todo item
-                    for todo in tool_call["input"]["todos"]:
-                        self.assertIsInstance(todo, dict, "Each todo should be an object")
+                    for i, todo in enumerate(todos):
+                        self.assertIsInstance(todo, dict, f"Todo {i+1} should be an object")
 
                         required_fields = ["content", "status", "priority", "id"]
                         for field in required_fields:
-                            self.assertIn(field, todo, f"Todo should have {field}")
-                            self.assertIsInstance(todo[field], str, f"{field} should be string")
+                            self.assertIn(field, todo, f"Todo {i+1} should have {field}")
+                            self.assertIsInstance(todo[field], str, f"Todo {i+1} {field} should be string")
 
                         # Check enum values
-                        self.assertIn(todo["status"], ["pending", "in_progress", "completed"], "Invalid status")
-                        self.assertIn(todo["priority"], ["high", "medium", "low"], "Invalid priority")
+                        self.assertIn(todo["status"], ["pending", "in_progress", "completed"], 
+                                    f"Todo {i+1} has invalid status: {todo.get('status')}")
+                        self.assertIn(todo["priority"], ["high", "medium", "low"], 
+                                    f"Todo {i+1} has invalid priority: {todo.get('priority')}")
 
-                        # Check content length
-                        self.assertGreater(len(todo["content"]), 0, "Content should not be empty")
+                        # Check content length and quality
+                        self.assertGreaterEqual(len(todo["content"]), 5, 
+                                              f"Todo {i+1} content should be at least 5 characters")
+                        self.assertGreater(len(todo["content"]), 0, 
+                                         f"Todo {i+1} content should not be empty")
+                        
+                        # Check ID quality
+                        self.assertGreaterEqual(len(todo["id"]), 3, 
+                                              f"Todo {i+1} ID should be at least 3 characters")
+
+                        print(f"  ✅ Todo {i+1}: {todo['content'][:50]}...")
 
                 print("✅ TodoWrite tool call test passed")
                 return True
