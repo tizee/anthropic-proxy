@@ -8,6 +8,9 @@ A proxy server that enables Claude Code to work with multiple model providers th
 1. **OpenAI-Compatible Mode**: Translates Anthropic API requests to OpenAI-compatible endpoints
 2. **Direct Claude API Mode**: Routes requests directly to official Claude API or compatible endpoints
 
+- kimi official supports Anthropic API https://api.moonshot.cn/anthropic
+- deepseek supports Anthropic https://api-docs.deepseek.com/guides/anthropic_api
+
 This allows you to use Claude Code with both OpenAI-compatible models and native Claude API endpoints. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
 ## Primary Use Case: Claude Code Proxy
@@ -52,6 +55,34 @@ Use this proxy in the following scenarios:
 | **Anthropic** | claude-3-5-sonnet-20241022 | Direct | ✅ Fully Tested | Official Claude API |
 | **Anthropic** | claude-3-5-haiku-20241022 | Direct | ✅ Fully Tested | Official Claude API |
 | **Anthropic** | claude-3-opus-20240229 | Direct | ✅ Fully Tested | Official Claude API |
+
+## Third-Party Providers Supporting Anthropic Format
+
+The following providers offer native Anthropic API compatibility, allowing direct usage without format conversion:
+
+| Provider | API Endpoint | Supported Models | Status | Notes |
+|----------|-------------|------------------|---------|-------|
+| **Moonshot AI (Kimi)** | `https://api.moonshot.cn/anthropic` | kimi-k2-0711-preview, kimi-k2-0711-chat | ✅ Tested | Native Anthropic API compatibility |
+| **DeepSeek** | `https://api.deepseek.com/anthropic` | deepseek-chat, deepseek-reasoner | ✅ Tested | Full Anthropic API compatibility |
+
+### Usage Notes
+
+- **✅ Tested**: Provider has been tested and confirmed to work with Anthropic API compatibility
+
+### Configuration Example
+
+For providers with native Anthropic support, configure as direct mode:
+
+```yaml
+models:
+  kimi-k2-direct:
+    model_name: kimi-k2-0711-preview
+    api_base: https://api.moonshot.cn/anthropic
+    api_key_name: MOONSHOT_API_KEY
+    direct: true
+    max_tokens: 16k
+    max_input_tokens: 200k
+```
 
 ## Known Issues
 
