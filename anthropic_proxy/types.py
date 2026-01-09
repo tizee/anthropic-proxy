@@ -37,14 +37,6 @@ class ModelDefaults:
     MAX_TOKENS_LIMIT = 16384  # Maximum tokens limit for responses
     LONG_CONTEXT_THRESHOLD = 128000  # Threshold for long-context models
 
-    # Pricing defaults (approximate costs in USD per million tokens)
-    DEFAULT_INPUT_COST_PER_MILLION_TOKENS = 1.0  # Default cost per million input tokens
-    DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS = 2.0  # Default cost per million output tokens
-
-    # Backward compatibility constants (deprecated, will be removed in future versions)
-    DEFAULT_INPUT_COST_PER_TOKEN = DEFAULT_INPUT_COST_PER_MILLION_TOKENS / 1_000_000  # Deprecated: use DEFAULT_INPUT_COST_PER_MILLION_TOKENS
-    DEFAULT_OUTPUT_COST_PER_TOKEN = DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS / 1_000_000  # Deprecated: use DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS
-
     # Thinking configuration
     THINKING_SIGNATURE_LENGTH = 16  # Length of thinking block signature hash
 
@@ -353,11 +345,11 @@ class ClaudeContentBlockToolResult(BaseModel):
             "tool_call_id": self.tool_use_id,
             "content": self.process_content(),
         }
-        
+
         # Add name field if provided (required by some providers like Groq)
         if tool_name:
             result["name"] = tool_name
-        
+
         return result
 
 
@@ -963,7 +955,7 @@ class ClaudeMessagesRequest(BaseModel):
                 for block in msg.content:
                     if isinstance(block, ClaudeContentBlockToolUse):
                         tool_name_mapping[block.id] = block.name
-        
+
         # Convert Claude messages to OpenAI messages
         for msg in self.messages:
             if msg.role == Constants.ROLE_USER:
@@ -989,7 +981,10 @@ class ClaudeMessagesRequest(BaseModel):
                     },
                 }
                 if hasattr(tool, "input_schema"):
-                    from .converter import clean_gemini_schema, validate_gemini_function_schema
+                    from .converter import (
+                        clean_gemini_schema,
+                        validate_gemini_function_schema,
+                    )
 
                     logger.debug(f"🔧 TOOL_DEBUG: Tool {i} input_schema: {tool.input_schema}")
                     cleaned_schema = clean_gemini_schema(tool.input_schema)
@@ -1030,7 +1025,7 @@ class ClaudeMessagesRequest(BaseModel):
             request_params["tool_choice"] = tool_choice
             logger.debug(f"🔧 TOOL_DEBUG: Set tool_choice to: {tool_choice}")
         else:
-            logger.debug(f"🔧 TOOL_DEBUG: No tool_choice specified")
+            logger.debug("🔧 TOOL_DEBUG: No tool_choice specified")
 
         logger.debug(f"🔄 Output messages count: {len(openai_messages)}")
 

@@ -117,10 +117,6 @@ class Config:
         # Custom models configuration file
         self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", "models.yaml")
 
-        # Custom API keys storage
-        self.custom_api_keys = {}
-        self.model_pricing = {}
-
         # Set the project root path for .env file checking
         self.project_root = self._get_project_root()
 
@@ -137,25 +133,6 @@ class Config:
     def get_env_file_path(self) -> str:
         """Get the full path to the .env file"""
         return str(Path(self.project_root) / ".env")
-
-    def validate_api_keys(self):
-        """Validate that at least one provider API key is configured"""
-        providers_configured = []
-        if self.custom_api_keys:
-            providers_configured.append("custom")
-
-        return providers_configured
-
-    def add_custom_api_key(self, key_name: str, key_value: str):
-        """Add a custom API key"""
-        self.custom_api_keys[key_name] = key_value
-
-    def get_api_key_for_provider(self, provider: str) -> str | None:
-        """Get API key for a specific provider"""
-        if provider in self.custom_api_keys:
-            return self.custom_api_keys[provider]
-        return None
-
 
 # Global configuration instance
 config = Config()

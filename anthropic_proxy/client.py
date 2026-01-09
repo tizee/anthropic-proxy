@@ -4,7 +4,6 @@ This module manages OpenAI client creation and custom model configurations.
 """
 
 import logging
-import os
 from pathlib import Path
 
 import httpx
@@ -21,7 +20,12 @@ CUSTOM_OPENAI_MODELS = {}
 
 
 def load_custom_models(config_file=None):
-    """Load custom OpenAI-compatible model configurations from YAML file."""
+    """Load custom OpenAI-compatible model configurations from YAML file.
+
+    Note: API keys and pricing are no longer handled here.
+    API keys come from request headers (via ccproxy).
+    Pricing should be tracked via provider billing dashboards.
+    """
     global CUSTOM_OPENAI_MODELS
 
     if config_file is None:
@@ -39,9 +43,6 @@ def load_custom_models(config_file=None):
             logger.warning(f"No models found in config file: {config_file}")
             return
 
-        # Store model pricing information for cost calculation
-        model_pricing = {}
-
         for model in models:
             if "model_id" not in model or "api_base" not in model:
                 logger.warning(
@@ -52,28 +53,6 @@ def load_custom_models(config_file=None):
             model_id = model["model_id"]
             model_name = model.get("model_name", model_id)
 
-            # Set default pricing if not provided - support both old and new formats
-            # Priority: new format > old format > defaults
-            input_cost_per_million = model.get("input_cost_per_million_tokens")
-            output_cost_per_million = model.get("output_cost_per_million_tokens")
-
-            # Backward compatibility: convert old per-token pricing to per-million
-            if input_cost_per_million is None:
-                input_cost_per_token = model.get("input_cost_per_token")
-                if input_cost_per_token is not None:
-                    input_cost_per_million = input_cost_per_token * 1_000_000
-                    logger.warning(f"Model {model_id}: Using deprecated 'input_cost_per_token' field. Please use 'input_cost_per_million_tokens' instead.")
-                else:
-                    input_cost_per_million = ModelDefaults.DEFAULT_INPUT_COST_PER_MILLION_TOKENS
-
-            if output_cost_per_million is None:
-                output_cost_per_token = model.get("output_cost_per_token")
-                if output_cost_per_token is not None:
-                    output_cost_per_million = output_cost_per_token * 1_000_000
-                    logger.warning(f"Model {model_id}: Using deprecated 'output_cost_per_token' field. Please use 'output_cost_per_million_tokens' instead.")
-                else:
-                    output_cost_per_million = ModelDefaults.DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS
-
             # Determine if this model should use direct Claude API mode
             is_direct_mode = model.get("direct", False) or "anthropic.com" in model["api_base"].lower()
 
@@ -81,7 +60,6 @@ def load_custom_models(config_file=None):
                 "model_id": model_id,
                 "model_name": model_name,
                 "api_base": model["api_base"],
-                "api_key_name": model.get("api_key_name", "OPENAI_API_KEY"),
                 "can_stream": model.get("can_stream", True),
                 "max_tokens": parse_token_value(
                     model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS
@@ -89,11 +67,6 @@ def load_custom_models(config_file=None):
                 "context": parse_token_value(
                     model.get("context"), ModelDefaults.LONG_CONTEXT_THRESHOLD
                 ),
-                "input_cost_per_million_tokens": input_cost_per_million,
-                "output_cost_per_million_tokens": output_cost_per_million,
-                # Backward compatibility fields
-                "input_cost_per_token": input_cost_per_million / 1_000_000,  # Deprecated
-                "output_cost_per_token": output_cost_per_million / 1_000_000,  # Deprecated
                 "max_input_tokens": parse_token_value(
                     model.get(
                         "max_input_tokens", ModelDefaults.DEFAULT_MAX_INPUT_TOKENS
@@ -109,66 +82,41 @@ def load_custom_models(config_file=None):
                 "direct": is_direct_mode,
             }
 
-            # Store pricing info for cost calculation
-            model_variations = [
-                f"{model_name}",
-            ]
-
-            for variation in model_variations:
-                model_pricing[variation] = {
-                    "input_cost_per_million_tokens": input_cost_per_million,
-                    "output_cost_per_million_tokens": output_cost_per_million,
-                    # Backward compatibility
-                    "input_cost_per_token": input_cost_per_million / 1_000_000,  # Deprecated
-                    "output_cost_per_token": output_cost_per_million / 1_000_000,  # Deprecated
-                }
-
             logger.info(
-                f"\nLoaded custom OpenAI-compatible model:\n{CUSTOM_OPENAI_MODELS[model_id]}"
+                f"Loaded model: {model_id} -> {model_name} ({model['api_base']})"
             )
-
-        # Store pricing information globally for cost calculation
-        if model_pricing:
-            # Add to global model pricing dictionary
-            if not hasattr(config, "model_pricing"):
-                config.model_pricing = {}
-            config.model_pricing.update(model_pricing)
-            logger.info(f"Loaded pricing for {len(model_pricing)} model variations")
 
     except Exception as e:
         logger.error(f"Error loading custom models: {str(e)}")
 
 
 def initialize_custom_models():
-    """Initialize custom models and API keys. Called when running as main."""
+    """Initialize custom models. Called when running as main.
+
+    Note: API keys are now passed via request headers from ccproxy,
+    so we no longer load them from environment variables.
+    """
     load_custom_models()
 
-    # Get custom API keys from environment and store in config
-    for model_config in CUSTOM_OPENAI_MODELS.values():
-        api_key_name = model_config.get("api_key_name")
-        if api_key_name:
-            api_key_value = os.environ.get(api_key_name)
-            if api_key_value:
-                config.add_custom_api_key(api_key_name, api_key_value)
-            else:
-                logger.warning(f"Missing API key for {api_key_name}")
 
+def create_openai_client(model_id: str, api_key: str) -> AsyncOpenAI:
+    """Create OpenAI client for the given model.
 
-def create_openai_client(model_id: str) -> AsyncOpenAI:
-    """Create OpenAI client for the given model and return client and request parameters."""
-    api_key = None
-    base_url = None
-    # Custom OpenAI-compatible models
-    if model_id in CUSTOM_OPENAI_MODELS:
-        model_config = CUSTOM_OPENAI_MODELS[model_id]
-        api_key_name = model_config.get("api_key_name", "OPENAI_API_KEY")
-        api_key = config.custom_api_keys.get(api_key_name)
-        base_url = model_config["api_base"]
-    else:
+    Args:
+        model_id: The model identifier from models.yaml
+        api_key: The API key passed from request headers (via ccproxy)
+
+    Returns:
+        AsyncOpenAI client configured for the model's API base URL
+    """
+    if model_id not in CUSTOM_OPENAI_MODELS:
         raise ValueError(f"Unknown custom model: {model_id}")
 
+    model_config = CUSTOM_OPENAI_MODELS[model_id]
+    base_url = model_config["api_base"]
+
     if not api_key:
-        raise ValueError(f"No API key available for model: {model_id}")
+        raise ValueError(f"No API key provided for model: {model_id}")
 
     # Create client without retry transport (it causes 404 errors with some APIs)
     client_kwargs = {"api_key": api_key}
@@ -180,18 +128,24 @@ def create_openai_client(model_id: str) -> AsyncOpenAI:
     return client
 
 
-def create_claude_client(model_id: str) -> httpx.AsyncClient:
-    """Create direct Claude API client for the given model."""
+def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
+    """Create direct Claude API client for the given model.
+
+    Args:
+        model_id: The model identifier from models.yaml
+        api_key: The API key passed from request headers (via ccproxy)
+
+    Returns:
+        httpx.AsyncClient configured for direct Claude API calls
+    """
     if model_id not in CUSTOM_OPENAI_MODELS:
         raise ValueError(f"Unknown model: {model_id}")
 
     model_config = CUSTOM_OPENAI_MODELS[model_id]
-    api_key_name = model_config.get("api_key_name", "ANTHROPIC_API_KEY")
-    api_key = config.custom_api_keys.get(api_key_name)
     base_url = model_config["api_base"]
 
     if not api_key:
-        raise ValueError(f"No API key available for model: {model_id}")
+        raise ValueError(f"No API key provided for model: {model_id}")
 
     # Ensure base_url ends with /v1 for Claude API
     if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):

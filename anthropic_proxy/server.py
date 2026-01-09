@@ -51,6 +51,35 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
+def extract_api_key(request: Request) -> str:
+    """Extract API key from request Authorization header.
+
+    Claude Code sends the API key via Authorization header when ANTHROPIC_AUTH_TOKEN is set.
+    The format is: "Bearer <api_key>" or just the key directly.
+
+    Args:
+        request: FastAPI Request object
+
+    Returns:
+        The API key extracted from the Authorization header
+
+    Raises:
+        HTTPException: If no Authorization header is present
+    """
+    auth_header = request.headers.get("Authorization") or request.headers.get("x-api-key")
+
+    if not auth_header:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header. API key should be provided via ccproxy."
+        )
+
+    # Handle "Bearer <token>" format
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+
+    # Handle plain token
+    return auth_header
 
 
 
@@ -171,8 +200,11 @@ async def handle_direct_claude_request(
 ):
     """Handle direct Claude API requests without OpenAI conversion."""
     try:
-        # Create Claude client
-        claude_client = create_claude_client(routed_model)
+        # Extract API key from request header (passed by ccproxy)
+        api_key = extract_api_key(raw_request)
+
+        # Create Claude client with the extracted API key
+        claude_client = create_claude_client(routed_model, api_key)
 
         # Prepare request payload - use original Claude format
         claude_request_data = request.model_dump(exclude_none=True)
@@ -379,6 +411,9 @@ async def handle_direct_claude_request(
 async def create_message(raw_request: Request):
     import json  # Import json at function start to avoid scope issues
     try:
+        # Extract API key from request header (passed by ccproxy)
+        api_key = extract_api_key(raw_request)
+
         # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
         request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
@@ -468,8 +503,8 @@ async def create_message(raw_request: Request):
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
 
-        # Create OpenAI client for the model
-        client = create_openai_client(routed_model)
+        # Create OpenAI client for the model with the extracted API key
+        client = create_openai_client(routed_model, api_key)
         openai_request["model"] = model_config.get("model_name")
 
         # Add extra headers if defined in model config
@@ -604,7 +639,7 @@ async def create_message(raw_request: Request):
 
                     # Check if this is an OpenAI APIStatusError (4xx/5xx responses)
                     if isinstance(e, openai.APIStatusError):
-                        logger.error(f"🔧 TOOL_DEBUG: This is an APIStatusError")
+                        logger.error("🔧 TOOL_DEBUG: This is an APIStatusError")
                         logger.error(f"🔧 TOOL_DEBUG: Status code: {e.status_code}")
                         logger.error(f"🔧 TOOL_DEBUG: Response: {e.response}")
 
@@ -624,18 +659,18 @@ async def create_message(raw_request: Request):
                                 if 'error' in response_json:
                                     logger.error(f"🔧 TOOL_DEBUG: error details: {response_json['error']}")
                             except json.JSONDecodeError:
-                                logger.error(f"🔧 TOOL_DEBUG: Response is not valid JSON")
+                                logger.error("🔧 TOOL_DEBUG: Response is not valid JSON")
                         except Exception as body_error:
                             logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
 
                     # Check if this is an OpenAI APIConnectionError (network issues)
                     elif isinstance(e, openai.APIConnectionError):
-                        logger.error(f"🔧 TOOL_DEBUG: This is an APIConnectionError")
+                        logger.error("🔧 TOOL_DEBUG: This is an APIConnectionError")
                         logger.error(f"🔧 TOOL_DEBUG: Underlying cause: {e.__cause__}")
 
                     # Check if this is a general OpenAI APIError
                     elif isinstance(e, openai.APIError):
-                        logger.error(f"🔧 TOOL_DEBUG: This is a general APIError")
+                        logger.error("🔧 TOOL_DEBUG: This is a general APIError")
                         logger.error(f"🔧 TOOL_DEBUG: Error attributes: {dir(e)}")
 
                         # Try to access different attributes
@@ -659,13 +694,13 @@ async def create_message(raw_request: Request):
                                     if 'error' in response_json:
                                         logger.error(f"🔧 TOOL_DEBUG: error details: {response_json['error']}")
                                 except json.JSONDecodeError:
-                                    logger.error(f"🔧 TOOL_DEBUG: Response is not valid JSON")
+                                    logger.error("🔧 TOOL_DEBUG: Response is not valid JSON")
                             except Exception as body_error:
                                 logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
 
                     # For other types of errors, try to extract what we can
                     else:
-                        logger.error(f"🔧 TOOL_DEBUG: This is not an OpenAI APIError subclass")
+                        logger.error("🔧 TOOL_DEBUG: This is not an OpenAI APIError subclass")
                         logger.error(f"🔧 TOOL_DEBUG: Error attributes: {dir(e)}")
 
                         # Try to get the raw error message and parse it
@@ -674,7 +709,7 @@ async def create_message(raw_request: Request):
 
                         # Try to extract JSON from the error message itself
                         if 'failed_generation' in error_str:
-                            logger.error(f"🔧 TOOL_DEBUG: Error message contains 'failed_generation'")
+                            logger.error("🔧 TOOL_DEBUG: Error message contains 'failed_generation'")
                             import re
                             json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
                             if json_match:
@@ -684,7 +719,7 @@ async def create_message(raw_request: Request):
                                     if 'failed_generation' in error_json:
                                         logger.error(f"🔧 TOOL_DEBUG: failed_generation: {error_json['failed_generation']}")
                                 except json.JSONDecodeError:
-                                    logger.error(f"🔧 TOOL_DEBUG: Could not parse JSON from error message")
+                                    logger.error("🔧 TOOL_DEBUG: Could not parse JSON from error message")
 
                 except Exception as debug_error:
                     logger.error(f"🔧 TOOL_DEBUG: Error while debugging streaming error: {debug_error}")
@@ -699,7 +734,7 @@ async def create_message(raw_request: Request):
                 openai_response: ChatCompletion = await client.chat.completions.create(
                     **openai_request
                 )
-                logger.debug(f"🔧 TOOL_DEBUG: Successfully received non-streaming response")
+                logger.debug("🔧 TOOL_DEBUG: Successfully received non-streaming response")
 
                 # GROQ DEBUG: Log the raw OpenAI response for tool call analysis
                 if hasattr(openai_response, 'choices') and openai_response.choices:
@@ -741,7 +776,7 @@ async def create_message(raw_request: Request):
                                 if 'error' in response_json:
                                     logger.error(f"🔧 TOOL_DEBUG: error details: {response_json['error']}")
                             except json.JSONDecodeError:
-                                logger.error(f"🔧 TOOL_DEBUG: Non-streaming error response is not valid JSON")
+                                logger.error("🔧 TOOL_DEBUG: Non-streaming error response is not valid JSON")
                         except Exception as body_error:
                             logger.error(f"🔧 TOOL_DEBUG: Could not read non-streaming error response body: {body_error}")
                 except Exception as debug_error:
@@ -846,6 +881,9 @@ async def test_message_conversion(raw_request: Request):
     Useful for testing specific model integrations and message format conversion.
     """
     try:
+        # Extract API key from request header (passed by ccproxy)
+        api_key = extract_api_key(raw_request)
+
         # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
         request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
@@ -857,8 +895,8 @@ async def test_message_conversion(raw_request: Request):
         openai_request = request.to_openai_request()
         openai_request['store'] = False
 
-        # Create OpenAI client for the model
-        client = create_openai_client(original_model)
+        # Create OpenAI client for the model with the extracted API key
+        client = create_openai_client(original_model, api_key)
         # model_id -> model_name in CUSTOM_OPENAI_MODELS configs
         openai_request["model"] = CUSTOM_OPENAI_MODELS[request.model]["model_name"]
 

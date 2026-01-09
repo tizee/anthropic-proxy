@@ -56,33 +56,13 @@ def count_tokens_in_messages(messages: list, model: str) -> int:
     return total_tokens
 
 
-def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost based on model and token usage using per-million token pricing."""
-    try:
-        from .types import ModelDefaults
-
-        # Default pricing per million tokens (will be replaced with actual model pricing)
-        input_cost_per_million = ModelDefaults.DEFAULT_INPUT_COST_PER_MILLION_TOKENS  # $1.0 per million input tokens
-        output_cost_per_million = ModelDefaults.DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS  # $2.0 per million output tokens
-
-        # Calculate cost using per-million token pricing
-        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
-        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
-
-        return round(input_cost + output_cost, 6)
-    except Exception as e:
-        logger.error(f"Error calculating cost: {e}")
-        return 0.0
-
-
 def add_session_stats(
     model: str,
     input_tokens: int,
     output_tokens: int,
-    cost: float,
     routed_model: str = "",
 ):
-    """Add usage statistics to session tracking."""
+    """Add usage statistics to session tracking (cost calculation removed)."""
     try:
         # Create ClaudeUsage object for the existing global usage stats system
         usage = ClaudeUsage(
@@ -95,7 +75,7 @@ def add_session_stats(
             context=f"session_stats_{routed_model or model}",
         )
         logger.debug(
-            f"Added session stats: {model}, input={input_tokens}, output={output_tokens}, cost=${cost}"
+            f"Added session stats: {model}, input={input_tokens}, output={output_tokens}"
         )
     except Exception as e:
         logger.error(f"Error adding session stats: {e}")
