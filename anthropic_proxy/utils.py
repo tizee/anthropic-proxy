@@ -14,6 +14,33 @@ from .types import ClaudeUsage, global_usage_stats
 logger = logging.getLogger(__name__)
 
 
+def _get_tiktoken_encoding():
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        logger.warning(f"Failed to get encoding, using fallback: {e}")
+        return tiktoken.get_encoding("p50k_base")
+
+
+def _normalize_payload(payload: Any) -> Any:
+    if payload is None:
+        return None
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump()
+    if isinstance(payload, dict):
+        return {key: _normalize_payload(value) for key, value in payload.items()}
+    if isinstance(payload, (list, tuple)):
+        return [_normalize_payload(value) for value in payload]
+    return payload
+
+
+def _count_tokens_for_payload(payload: Any, encoding) -> int:
+    if payload is None:
+        return 0
+    payload_str = json.dumps(_normalize_payload(payload))
+    return len(encoding.encode(payload_str))
+
+
 def count_tokens_in_response(
     response_content: str = "",
     thinking_content: str = "",
@@ -23,33 +50,30 @@ def count_tokens_in_response(
     if tool_calls is None:
         tool_calls = []
 
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception as e:
-        logger.warning(f"Failed to get encoding, using fallback: {e}")
-        encoding = tiktoken.get_encoding("p50k_base")
+    encoding = _get_tiktoken_encoding()
 
     content = response_content + thinking_content
     if tool_calls:
-        content += json.dumps(tool_calls)
+        content += json.dumps(_normalize_payload(tool_calls))
 
     return len(encoding.encode(content))
 
 
 def count_tokens_in_messages(messages: list, model: str) -> int:
     """Count tokens in messages using tiktoken."""
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception as e:
-        logger.warning(f"Failed to get encoding, using fallback: {e}")
-        encoding = tiktoken.get_encoding("p50k_base")
+    encoding = _get_tiktoken_encoding()
 
     total_tokens = 0
     for message in messages:
-        message_str = json.dumps(message.model_dump())
-        total_tokens += len(encoding.encode(message_str))
+        total_tokens += _count_tokens_for_payload(message, encoding)
 
     return total_tokens
+
+
+def count_tokens_in_payload(payload: Any) -> int:
+    """Count tokens in any payload using tiktoken."""
+    encoding = _get_tiktoken_encoding()
+    return _count_tokens_for_payload(payload, encoding)
 
 
 def add_session_stats(
