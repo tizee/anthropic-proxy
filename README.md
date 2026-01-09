@@ -74,14 +74,12 @@ The following providers offer native Anthropic API compatibility, allowing direc
 For providers with native Anthropic support, configure as direct mode:
 
 ```yaml
-models:
-  kimi-k2-direct:
-    model_name: kimi-k2-0711-preview
-    api_base: https://api.moonshot.cn/anthropic
-    api_key_name: MOONSHOT_API_KEY
-    direct: true
-    max_tokens: 16k
-    max_input_tokens: 200k
+- model_id: kimi-k2-direct
+  model_name: kimi-k2-0711-preview
+  api_base: https://api.moonshot.cn/anthropic
+  direct: true
+  max_tokens: 16k
+  max_input_tokens: 200k
 ```
 
 ## Known Issues
@@ -114,6 +112,12 @@ The Groq provider has known issues with tool call functionality:
 ### 🔄 Dual-Mode Operation
 - **OpenAI-Compatible Mode**: Convert Anthropic API requests to OpenAI format for third-party providers
 - **Direct Claude API Mode**: Route requests directly to official Anthropic API with native format preservation
+
+### 🔗 ccproxy Integration (Recommended)
+This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper script):
+- **API keys managed by ccproxy**: No need to store keys in the proxy's config - they're passed via request headers
+- **Simplified configuration**: `models.yaml` only defines model-to-URL mappings
+- **Unified key management**: Use ccproxy's `cc-proxy.json` config for all provider keys
 
 ### 🧠 Intelligent Routing
 - Automatic model selection based on request characteristics (token count, thinking mode, etc.)
@@ -168,36 +172,54 @@ uv install
 ```
 
 ### Configuration
-1. Copy `.env.example` to `.env`
-2. Set your API keys for the desired providers
-3. Configure models in `models.yaml` with appropriate mode settings
+
+#### ccproxy Integration Mode (Recommended)
+
+When using with ccproxy, API keys are passed via request headers automatically:
+
+1. Configure models in `models.yaml` - only URL mappings needed, no API keys
+2. Configure your API keys in ccproxy's `~/.config/llm/cc-proxy.json`
+3. ccproxy sets `ANTHROPIC_BASE_URL` to point to this proxy and passes keys via headers
+
+```yaml
+# models.yaml - simplified configuration (no api_key_name needed)
+- model_id: deepseek-chat
+  model_name: deepseek-chat
+  api_base: https://api.deepseek.com/v1
+  can_stream: true
+  max_tokens: 8k
+  context: 64k
+
+- model_id: claude-sonnet-4
+  model_name: anthropic/claude-sonnet-4
+  api_base: https://openrouter.ai/api/v1
+  can_stream: true
+  max_tokens: 64000
+  context: 200k
+```
 
 #### Direct Claude API Mode Configuration
 To use official Claude API or compatible endpoints directly:
 
 ```yaml
-models:
-  claude-3-5-sonnet-direct:
-    model_name: claude-3-5-sonnet-20241022
-    api_base: https://api.anthropic.com
-    api_key_name: ANTHROPIC_API_KEY
-    direct: true  # Enable direct Claude API mode
-    max_tokens: 8k   # Supports shorthand: 8k, 16k, 32k, etc.
-    max_input_tokens: 200k
+- model_id: claude-3-5-sonnet-direct
+  model_name: claude-3-5-sonnet-20241022
+  api_base: https://api.anthropic.com
+  direct: true  # Enable direct Claude API mode
+  max_tokens: 8k   # Supports shorthand: 8k, 16k, 32k, etc.
+  max_input_tokens: 200k
 ```
 
 #### OpenAI-Compatible Mode Configuration
 For OpenAI-compatible endpoints:
 
 ```yaml
-models:
-  deepseek-v3:
-    model_name: deepseek-chat
-    api_base: https://api.deepseek.com/v1
-    api_key_name: DEEPSEEK_API_KEY
-    direct: false  # Use OpenAI-compatible mode (default)
-    max_tokens: 8k   # Supports shorthand notation
-    max_input_tokens: 128k
+- model_id: deepseek-v3
+  model_name: deepseek-chat
+  api_base: https://api.deepseek.com/v1
+  direct: false  # Use OpenAI-compatible mode (default)
+  max_tokens: 8k   # Supports shorthand notation
+  max_input_tokens: 128k
 ```
 
 **Note**: Token limits support both numeric values (e.g., `8192`) and shorthand notation (e.g., `8k`, `16K`, `32k`, `128K`, `200k`). The shorthand format is case-insensitive.

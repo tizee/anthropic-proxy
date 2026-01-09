@@ -51,7 +51,7 @@ from anthropic_proxy.types import (
     ClaudeTool,
     ClaudeToolChoiceTool,
     generate_unique_id,
-    ClaudeToolChoiceAuto
+    ClaudeToolChoiceAuto,
 )
 from anthropic_proxy.streaming import AnthropicStreamingConverter
 from anthropic_proxy.converter import (
@@ -409,10 +409,7 @@ class TestMessageProcessing(unittest.TestCase):
             max_tokens=4000,
             messages=[
                 # User asks something
-                ClaudeMessage(
-                    role="user",
-                    content="Please calculate 2+2"
-                ),
+                ClaudeMessage(role="user", content="Please calculate 2+2"),
                 # Assistant responds with tool use
                 ClaudeMessage(
                     role="assistant",
@@ -441,7 +438,7 @@ class TestMessageProcessing(unittest.TestCase):
                             type="text", text="Thanks! Now let's try something else."
                         ),
                     ],
-                )
+                ),
             ],
         )
 
@@ -478,12 +475,14 @@ class TestMessageProcessing(unittest.TestCase):
 
         # NEW: Check that name field is included (for Groq compatibility)
         self.assertIn(
-            "name", tool_message,
-            f"Tool result message should include 'name' field for provider compatibility: {tool_message}"
+            "name",
+            tool_message,
+            f"Tool result message should include 'name' field for provider compatibility: {tool_message}",
         )
         self.assertEqual(
-            tool_message["name"], "calculator",
-            f"Tool result name should match original tool_use name, got '{tool_message.get('name')}'"
+            tool_message["name"],
+            "calculator",
+            f"Tool result name should match original tool_use name, got '{tool_message.get('name')}'",
         )
 
         # Find and check the user message that follows
@@ -2205,10 +2204,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice":
-            ClaudeToolChoiceAuto(type="auto").model_dump()
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump(),
         }
-        #"tool_choice": {"type": "tool", "name": "test_function"},
+        # "tool_choice": {"type": "tool", "name": "test_function"},
 
         # Run async test
         import asyncio
@@ -2343,7 +2341,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump()
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump(),
             # "tool_choice": ClaudeToolChoiceTool(type="tool",
             #                                     name="MultiEdit").model_dump(),
         }
@@ -2450,8 +2448,8 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     },
                 }
             ],
-            #"tool_choice": {"type": "tool", "name": "test_function"},
-            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump()
+            # "tool_choice": {"type": "tool", "name": "test_function"},
+            "tool_choice": ClaudeToolChoiceAuto(type="auto").model_dump(),
         }
 
         import asyncio
@@ -3078,8 +3076,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                             },
                         }
                     ],
-                    "tool_choice": ClaudeToolChoiceTool(type="tool",
-                                                        name="test_function").model_dump(),
+                    "tool_choice": ClaudeToolChoiceTool(
+                        type="tool", name="test_function"
+                    ).model_dump(),
                 },
                 "expected_events": [
                     "message_start",
@@ -3451,9 +3450,18 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "command": {"type": "string", "description": "The command to execute"},
-                            "timeout": {"type": "number", "description": "Optional timeout in milliseconds (max 600000)"},
-                            "description": {"type": "string", "description": "Clear, concise description of what this command does in 5-10 words"}
+                            "command": {
+                                "type": "string",
+                                "description": "The command to execute",
+                            },
+                            "timeout": {
+                                "type": "number",
+                                "description": "Optional timeout in milliseconds (max 600000)",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Clear, concise description of what this command does in 5-10 words",
+                            },
                         },
                         "required": ["command"],
                     },
@@ -3470,21 +3478,37 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Bash tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Bash tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "Bash", "Tool name should be Bash")
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("command", tool_call["input"], "Should have command parameter")
-                    self.assertEqual(tool_call["input"]["command"], "echo Hello World", "Command should match")
+                    self.assertIn(
+                        "command", tool_call["input"], "Should have command parameter"
+                    )
+                    self.assertEqual(
+                        tool_call["input"]["command"],
+                        "echo Hello World",
+                        "Command should match",
+                    )
 
                     # Check optional parameters
                     if "timeout" in tool_call["input"]:
-                        self.assertIsInstance(tool_call["input"]["timeout"], (int, float), "Timeout should be numeric")
+                        self.assertIsInstance(
+                            tool_call["input"]["timeout"],
+                            (int, float),
+                            "Timeout should be numeric",
+                        )
                     if "description" in tool_call["input"]:
-                        self.assertIsInstance(tool_call["input"]["description"], str, "Description should be string")
+                        self.assertIsInstance(
+                            tool_call["input"]["description"],
+                            str,
+                            "Description should be string",
+                        )
 
                 print("✅ Bash tool call test passed")
                 return True
@@ -3492,6 +3516,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Bash tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3523,8 +3548,14 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "pattern": {"type": "string", "description": "The glob pattern to match files against"},
-                            "path": {"type": "string", "description": "The directory to search in. If not specified, the current working directory will be used."}
+                            "pattern": {
+                                "type": "string",
+                                "description": "The glob pattern to match files against",
+                            },
+                            "path": {
+                                "type": "string",
+                                "description": "The directory to search in. If not specified, the current working directory will be used.",
+                            },
                         },
                         "required": ["pattern"],
                     },
@@ -3541,19 +3572,27 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Glob tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Glob tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "Glob", "Tool name should be Glob")
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("pattern", tool_call["input"], "Should have pattern parameter")
-                    self.assertIsInstance(tool_call["input"]["pattern"], str, "Pattern should be string")
+                    self.assertIn(
+                        "pattern", tool_call["input"], "Should have pattern parameter"
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["pattern"], str, "Pattern should be string"
+                    )
 
                     # Check optional path parameter
                     if "path" in tool_call["input"]:
-                        self.assertIsInstance(tool_call["input"]["path"], str, "Path should be string")
+                        self.assertIsInstance(
+                            tool_call["input"]["path"], str, "Path should be string"
+                        )
 
                 print("✅ Glob tool call test passed")
                 return True
@@ -3561,6 +3600,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Glob tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3592,18 +3632,55 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "pattern": {"type": "string", "description": "The regular expression pattern to search for"},
-                            "path": {"type": "string", "description": "File or directory to search in"},
-                            "glob": {"type": "string", "description": "Glob pattern to filter files"},
-                            "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Output mode"},
-                            "-A": {"type": "number", "description": "Number of lines to show after each match"},
-                            "-B": {"type": "number", "description": "Number of lines to show before each match"},
-                            "-C": {"type": "number", "description": "Number of lines to show before and after each match"},
-                            "-n": {"type": "boolean", "description": "Show line numbers in output"},
-                            "-i": {"type": "boolean", "description": "Case insensitive search"},
-                            "type": {"type": "string", "description": "File type to search"},
-                            "head_limit": {"type": "number", "description": "Limit output to first N lines/entries"},
-                            "multiline": {"type": "boolean", "description": "Enable multiline mode"}
+                            "pattern": {
+                                "type": "string",
+                                "description": "The regular expression pattern to search for",
+                            },
+                            "path": {
+                                "type": "string",
+                                "description": "File or directory to search in",
+                            },
+                            "glob": {
+                                "type": "string",
+                                "description": "Glob pattern to filter files",
+                            },
+                            "output_mode": {
+                                "type": "string",
+                                "enum": ["content", "files_with_matches", "count"],
+                                "description": "Output mode",
+                            },
+                            "-A": {
+                                "type": "number",
+                                "description": "Number of lines to show after each match",
+                            },
+                            "-B": {
+                                "type": "number",
+                                "description": "Number of lines to show before each match",
+                            },
+                            "-C": {
+                                "type": "number",
+                                "description": "Number of lines to show before and after each match",
+                            },
+                            "-n": {
+                                "type": "boolean",
+                                "description": "Show line numbers in output",
+                            },
+                            "-i": {
+                                "type": "boolean",
+                                "description": "Case insensitive search",
+                            },
+                            "type": {
+                                "type": "string",
+                                "description": "File type to search",
+                            },
+                            "head_limit": {
+                                "type": "number",
+                                "description": "Limit output to first N lines/entries",
+                            },
+                            "multiline": {
+                                "type": "boolean",
+                                "description": "Enable multiline mode",
+                            },
                         },
                         "required": ["pattern"],
                     },
@@ -3620,28 +3697,46 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Grep tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Grep tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "Grep", "Tool name should be Grep")
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("pattern", tool_call["input"], "Should have pattern parameter")
-                    self.assertIsInstance(tool_call["input"]["pattern"], str, "Pattern should be string")
+                    self.assertIn(
+                        "pattern", tool_call["input"], "Should have pattern parameter"
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["pattern"], str, "Pattern should be string"
+                    )
 
                     # Check optional parameters
                     for param in ["path", "glob", "output_mode", "type"]:
                         if param in tool_call["input"]:
-                            self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+                            self.assertIsInstance(
+                                tool_call["input"][param],
+                                str,
+                                f"{param} should be string",
+                            )
 
                     for param in ["-A", "-B", "-C", "head_limit"]:
                         if param in tool_call["input"]:
-                            self.assertIsInstance(tool_call["input"][param], (int, float), f"{param} should be numeric")
+                            self.assertIsInstance(
+                                tool_call["input"][param],
+                                (int, float),
+                                f"{param} should be numeric",
+                            )
 
                     for param in ["-n", "-i", "multiline"]:
                         if param in tool_call["input"]:
-                            self.assertIsInstance(tool_call["input"][param], bool, f"{param} should be boolean")
+                            self.assertIsInstance(
+                                tool_call["input"][param],
+                                bool,
+                                f"{param} should be boolean",
+                            )
 
                 print("✅ Grep tool call test passed")
                 return True
@@ -3649,6 +3744,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Grep tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3680,8 +3776,15 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string", "description": "The absolute path to the directory to list"},
-                            "ignore": {"type": "array", "items": {"type": "string"}, "description": "List of glob patterns to ignore"}
+                            "path": {
+                                "type": "string",
+                                "description": "The absolute path to the directory to list",
+                            },
+                            "ignore": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of glob patterns to ignore",
+                            },
                         },
                         "required": ["path"],
                     },
@@ -3698,21 +3801,31 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect LS tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect LS tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "LS", "Tool name should be LS")
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("path", tool_call["input"], "Should have path parameter")
-                    self.assertIsInstance(tool_call["input"]["path"], str, "Path should be string")
+                    self.assertIn(
+                        "path", tool_call["input"], "Should have path parameter"
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["path"], str, "Path should be string"
+                    )
 
                     # Check optional ignore parameter
                     if "ignore" in tool_call["input"]:
-                        self.assertIsInstance(tool_call["input"]["ignore"], list, "Ignore should be array")
+                        self.assertIsInstance(
+                            tool_call["input"]["ignore"], list, "Ignore should be array"
+                        )
                         for item in tool_call["input"]["ignore"]:
-                            self.assertIsInstance(item, str, "Ignore items should be strings")
+                            self.assertIsInstance(
+                                item, str, "Ignore items should be strings"
+                            )
 
                 print("✅ LS tool call test passed")
                 return True
@@ -3720,6 +3833,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ LS tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3751,9 +3865,18 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "The absolute path to the file to read"},
-                            "offset": {"type": "number", "description": "The line number to start reading from"},
-                            "limit": {"type": "number", "description": "The number of lines to read"}
+                            "file_path": {
+                                "type": "string",
+                                "description": "The absolute path to the file to read",
+                            },
+                            "offset": {
+                                "type": "number",
+                                "description": "The line number to start reading from",
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "The number of lines to read",
+                            },
                         },
                         "required": ["file_path"],
                     },
@@ -3770,20 +3893,34 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Read tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Read tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "Read", "Tool name should be Read")
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("file_path", tool_call["input"], "Should have file_path parameter")
-                    self.assertIsInstance(tool_call["input"]["file_path"], str, "file_path should be string")
+                    self.assertIn(
+                        "file_path",
+                        tool_call["input"],
+                        "Should have file_path parameter",
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["file_path"],
+                        str,
+                        "file_path should be string",
+                    )
 
                     # Check optional parameters
                     for param in ["offset", "limit"]:
                         if param in tool_call["input"]:
-                            self.assertIsInstance(tool_call["input"][param], (int, float), f"{param} should be numeric")
+                            self.assertIsInstance(
+                                tool_call["input"][param],
+                                (int, float),
+                                f"{param} should be numeric",
+                            )
 
                 print("✅ Read tool call test passed")
                 return True
@@ -3791,6 +3928,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Read tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3822,10 +3960,22 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "The absolute path to the file to modify"},
-                            "old_string": {"type": "string", "description": "The text to replace"},
-                            "new_string": {"type": "string", "description": "The text to replace it with"},
-                            "replace_all": {"type": "boolean", "description": "Replace all occurences of old_string"}
+                            "file_path": {
+                                "type": "string",
+                                "description": "The absolute path to the file to modify",
+                            },
+                            "old_string": {
+                                "type": "string",
+                                "description": "The text to replace",
+                            },
+                            "new_string": {
+                                "type": "string",
+                                "description": "The text to replace it with",
+                            },
+                            "replace_all": {
+                                "type": "boolean",
+                                "description": "Replace all occurences of old_string",
+                            },
                         },
                         "required": ["file_path", "old_string", "new_string"],
                     },
@@ -3844,7 +3994,9 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Edit tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Edit tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
                 self.assertEqual(tool_call["name"], "Edit", "Tool name should be Edit")
@@ -3853,12 +4005,20 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 if tool_call["input"]:
                     required_params = ["file_path", "old_string", "new_string"]
                     for param in required_params:
-                        self.assertIn(param, tool_call["input"], f"Should have {param} parameter")
-                        self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+                        self.assertIn(
+                            param, tool_call["input"], f"Should have {param} parameter"
+                        )
+                        self.assertIsInstance(
+                            tool_call["input"][param], str, f"{param} should be string"
+                        )
 
                     # Check optional replace_all parameter
                     if "replace_all" in tool_call["input"]:
-                        self.assertIsInstance(tool_call["input"]["replace_all"], bool, "replace_all should be boolean")
+                        self.assertIsInstance(
+                            tool_call["input"]["replace_all"],
+                            bool,
+                            "replace_all should be boolean",
+                        )
 
                 print("✅ Edit tool call test passed")
                 return True
@@ -3866,6 +4026,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Edit tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -3888,7 +4049,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 # User asks to read a file first
                 {
                     "role": "user",
-                    "content": "I need to refactor this Python file. First, please read the file to understand its structure."
+                    "content": "I need to refactor this Python file. First, please read the file to understand its structure.",
                 },
                 # Assistant reads the file
                 {
@@ -3896,15 +4057,15 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "content": [
                         {
                             "type": "text",
-                            "text": "I'll read the file to understand its current structure before making any changes."
+                            "text": "I'll read the file to understand its current structure before making any changes.",
                         },
                         {
                             "type": "tool_use",
                             "id": "toolu_read_123",
                             "name": "Read",
-                            "input": {"file_path": "/path/to/example.py"}
-                        }
-                    ]
+                            "input": {"file_path": "/path/to/example.py"},
+                        },
+                    ],
                 },
                 # User provides the file content as tool result
                 {
@@ -3913,14 +4074,14 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                         {
                             "type": "tool_result",
                             "tool_use_id": "toolu_read_123",
-                            "content": "def old_function_name():\n    print('Hello World')\n    return 'old_value'\n\nclass OldClassName:\n    def __init__(self):\n        self.old_attribute = 'old_value'\n        \n    def old_method(self):\n        return 'old_result'"
+                            "content": "def old_function_name():\n    print('Hello World')\n    return 'old_value'\n\nclass OldClassName:\n    def __init__(self):\n        self.old_attribute = 'old_value'\n        \n    def old_method(self):\n        return 'old_result'",
                         },
                         {
                             "type": "text",
-                            "text": "Now please rename the function to 'new_function_name', change the class name to 'NewClassName', and update the attribute name to 'new_attribute'."
-                        }
-                    ]
-                }
+                            "text": "Now please rename the function to 'new_function_name', change the class name to 'NewClassName', and update the attribute name to 'new_attribute'.",
+                        },
+                    ],
+                },
             ],
             "tools": [
                 {
@@ -3929,7 +4090,10 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "The absolute path to the file to read"}
+                            "file_path": {
+                                "type": "string",
+                                "description": "The absolute path to the file to read",
+                            }
                         },
                         "required": ["file_path"],
                     },
@@ -3940,25 +4104,37 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "The absolute path to the file to modify"},
+                            "file_path": {
+                                "type": "string",
+                                "description": "The absolute path to the file to modify",
+                            },
                             "edits": {
                                 "type": "array",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "old_string": {"type": "string", "description": "The text to replace"},
-                                        "new_string": {"type": "string", "description": "The text to replace it with"},
-                                        "replace_all": {"type": "boolean", "description": "Replace all occurences of old_string"}
+                                        "old_string": {
+                                            "type": "string",
+                                            "description": "The text to replace",
+                                        },
+                                        "new_string": {
+                                            "type": "string",
+                                            "description": "The text to replace it with",
+                                        },
+                                        "replace_all": {
+                                            "type": "boolean",
+                                            "description": "Replace all occurences of old_string",
+                                        },
                                     },
-                                    "required": ["old_string", "new_string"]
+                                    "required": ["old_string", "new_string"],
                                 },
                                 "minItems": 1,
-                                "description": "Array of edit operations to perform"
-                            }
+                                "description": "Array of edit operations to perform",
+                            },
                         },
                         "required": ["file_path", "edits"],
                     },
-                }
+                },
             ],
             "tool_choice": {"type": "tool", "name": "MultiEdit"},
         }
@@ -3971,43 +4147,91 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect MultiEdit tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect MultiEdit tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
-                self.assertEqual(tool_call["name"], "MultiEdit", "Tool name should be MultiEdit")
+                self.assertEqual(
+                    tool_call["name"], "MultiEdit", "Tool name should be MultiEdit"
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("file_path", tool_call["input"], "Should have file_path parameter")
-                    self.assertIsInstance(tool_call["input"]["file_path"], str, "file_path should be string")
+                    self.assertIn(
+                        "file_path",
+                        tool_call["input"],
+                        "Should have file_path parameter",
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["file_path"],
+                        str,
+                        "file_path should be string",
+                    )
 
-                    self.assertIn("edits", tool_call["input"], "Should have edits parameter")
-                    self.assertIsInstance(tool_call["input"]["edits"], list, "edits should be array")
-                    self.assertGreater(len(tool_call["input"]["edits"]), 0, "edits should have at least one item")
+                    self.assertIn(
+                        "edits", tool_call["input"], "Should have edits parameter"
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["edits"], list, "edits should be array"
+                    )
+                    self.assertGreater(
+                        len(tool_call["input"]["edits"]),
+                        0,
+                        "edits should have at least one item",
+                    )
 
                     # Check each edit operation
                     for i, edit in enumerate(tool_call["input"]["edits"]):
-                        self.assertIsInstance(edit, dict, f"Edit {i} should be an object")
-                        self.assertIn("old_string", edit, f"Edit {i} should have old_string")
-                        self.assertIn("new_string", edit, f"Edit {i} should have new_string")
-                        self.assertIsInstance(edit["old_string"], str, f"Edit {i} old_string should be string")
-                        self.assertIsInstance(edit["new_string"], str, f"Edit {i} new_string should be string")
+                        self.assertIsInstance(
+                            edit, dict, f"Edit {i} should be an object"
+                        )
+                        self.assertIn(
+                            "old_string", edit, f"Edit {i} should have old_string"
+                        )
+                        self.assertIn(
+                            "new_string", edit, f"Edit {i} should have new_string"
+                        )
+                        self.assertIsInstance(
+                            edit["old_string"],
+                            str,
+                            f"Edit {i} old_string should be string",
+                        )
+                        self.assertIsInstance(
+                            edit["new_string"],
+                            str,
+                            f"Edit {i} new_string should be string",
+                        )
 
                         # Verify that old_string is not empty (should be meaningful content)
-                        self.assertGreater(len(edit["old_string"]), 0, f"Edit {i} old_string should not be empty")
+                        self.assertGreater(
+                            len(edit["old_string"]),
+                            0,
+                            f"Edit {i} old_string should not be empty",
+                        )
 
                         # Verify that new_string is different from old_string
-                        self.assertNotEqual(edit["old_string"], edit["new_string"], f"Edit {i} should actually change content")
+                        self.assertNotEqual(
+                            edit["old_string"],
+                            edit["new_string"],
+                            f"Edit {i} should actually change content",
+                        )
 
                         if "replace_all" in edit:
-                            self.assertIsInstance(edit["replace_all"], bool, f"Edit {i} replace_all should be boolean")
+                            self.assertIsInstance(
+                                edit["replace_all"],
+                                bool,
+                                f"Edit {i} replace_all should be boolean",
+                            )
 
                     # Enhanced validation for realistic context
                     print(f"📋 MultiEdit validation details:")
                     print(f"   - File path: {tool_call['input']['file_path']}")
                     print(f"   - Number of edits: {len(tool_call['input']['edits'])}")
-                    for i, edit in enumerate(tool_call['input']['edits']):
-                        print(f"   - Edit {i}: '{edit['old_string'][:30]}...' -> '{edit['new_string'][:30]}...'")
+                    for i, edit in enumerate(tool_call["input"]["edits"]):
+                        print(
+                            f"   - Edit {i}: '{edit['old_string'][:30]}...' -> '{edit['new_string'][:30]}...'"
+                        )
 
                 print("✅ MultiEdit tool call test passed")
                 return True
@@ -4015,6 +4239,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ MultiEdit tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -4046,8 +4271,14 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "The absolute path to the file to write"},
-                            "content": {"type": "string", "description": "The content to write to the file"}
+                            "file_path": {
+                                "type": "string",
+                                "description": "The absolute path to the file to write",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The content to write to the file",
+                            },
                         },
                         "required": ["file_path", "content"],
                     },
@@ -4064,17 +4295,25 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect Write tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect Write tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
-                self.assertEqual(tool_call["name"], "Write", "Tool name should be Write")
+                self.assertEqual(
+                    tool_call["name"], "Write", "Tool name should be Write"
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
                     required_params = ["file_path", "content"]
                     for param in required_params:
-                        self.assertIn(param, tool_call["input"], f"Should have {param} parameter")
-                        self.assertIsInstance(tool_call["input"][param], str, f"{param} should be string")
+                        self.assertIn(
+                            param, tool_call["input"], f"Should have {param} parameter"
+                        )
+                        self.assertIsInstance(
+                            tool_call["input"][param], str, f"{param} should be string"
+                        )
 
                 print("✅ Write tool call test passed")
                 return True
@@ -4082,6 +4321,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ Write tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -4118,15 +4358,35 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "content": {"type": "string", "minLength": 5, "description": "Specific task description"},
-                                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Current task status"},
-                                        "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Task priority level"},
-                                        "id": {"type": "string", "minLength": 3, "description": "Unique identifier for the task"}
+                                        "content": {
+                                            "type": "string",
+                                            "minLength": 5,
+                                            "description": "Specific task description",
+                                        },
+                                        "status": {
+                                            "type": "string",
+                                            "enum": [
+                                                "pending",
+                                                "in_progress",
+                                                "completed",
+                                            ],
+                                            "description": "Current task status",
+                                        },
+                                        "priority": {
+                                            "type": "string",
+                                            "enum": ["high", "medium", "low"],
+                                            "description": "Task priority level",
+                                        },
+                                        "id": {
+                                            "type": "string",
+                                            "minLength": 3,
+                                            "description": "Unique identifier for the task",
+                                        },
                                     },
-                                    "required": ["content", "status", "priority", "id"]
+                                    "required": ["content", "status", "priority", "id"],
                                 },
                                 "description": "Array of todo items to create or update",
-                                "minItems": 1
+                                "minItems": 1,
                             }
                         },
                         "required": ["todos"],
@@ -4144,46 +4404,77 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect TodoWrite tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]), 0, "Should detect TodoWrite tool call"
+                )
 
                 tool_call = result["tool_calls"][0]
-                self.assertEqual(tool_call["name"], "TodoWrite", "Tool name should be TodoWrite")
+                self.assertEqual(
+                    tool_call["name"], "TodoWrite", "Tool name should be TodoWrite"
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("todos", tool_call["input"], "Should have todos parameter")
+                    self.assertIn(
+                        "todos", tool_call["input"], "Should have todos parameter"
+                    )
                     todos = tool_call["input"]["todos"]
                     self.assertIsInstance(todos, list, "todos should be array")
-                    self.assertGreaterEqual(len(todos), 1, "Should have at least one todo item")
+                    self.assertGreaterEqual(
+                        len(todos), 1, "Should have at least one todo item"
+                    )
 
                     print(f"📋 Found {len(todos)} todo items")
 
                     # Check each todo item
                     for i, todo in enumerate(todos):
-                        self.assertIsInstance(todo, dict, f"Todo {i+1} should be an object")
+                        self.assertIsInstance(
+                            todo, dict, f"Todo {i + 1} should be an object"
+                        )
 
                         required_fields = ["content", "status", "priority", "id"]
                         for field in required_fields:
-                            self.assertIn(field, todo, f"Todo {i+1} should have {field}")
-                            self.assertIsInstance(todo[field], str, f"Todo {i+1} {field} should be string")
+                            self.assertIn(
+                                field, todo, f"Todo {i + 1} should have {field}"
+                            )
+                            self.assertIsInstance(
+                                todo[field],
+                                str,
+                                f"Todo {i + 1} {field} should be string",
+                            )
 
                         # Check enum values
-                        self.assertIn(todo["status"], ["pending", "in_progress", "completed"], 
-                                    f"Todo {i+1} has invalid status: {todo.get('status')}")
-                        self.assertIn(todo["priority"], ["high", "medium", "low"], 
-                                    f"Todo {i+1} has invalid priority: {todo.get('priority')}")
+                        self.assertIn(
+                            todo["status"],
+                            ["pending", "in_progress", "completed"],
+                            f"Todo {i + 1} has invalid status: {todo.get('status')}",
+                        )
+                        self.assertIn(
+                            todo["priority"],
+                            ["high", "medium", "low"],
+                            f"Todo {i + 1} has invalid priority: {todo.get('priority')}",
+                        )
 
                         # Check content length and quality
-                        self.assertGreaterEqual(len(todo["content"]), 5, 
-                                              f"Todo {i+1} content should be at least 5 characters")
-                        self.assertGreater(len(todo["content"]), 0, 
-                                         f"Todo {i+1} content should not be empty")
-                        
-                        # Check ID quality
-                        self.assertGreaterEqual(len(todo["id"]), 3, 
-                                              f"Todo {i+1} ID should be at least 3 characters")
+                        self.assertGreaterEqual(
+                            len(todo["content"]),
+                            5,
+                            f"Todo {i + 1} content should be at least 5 characters",
+                        )
+                        self.assertGreater(
+                            len(todo["content"]),
+                            0,
+                            f"Todo {i + 1} content should not be empty",
+                        )
 
-                        print(f"  ✅ Todo {i+1}: {todo['content'][:50]}...")
+                        # Check ID quality
+                        self.assertGreaterEqual(
+                            len(todo["id"]),
+                            3,
+                            f"Todo {i + 1} ID should be at least 3 characters",
+                        )
+
+                        print(f"  ✅ Todo {i + 1}: {todo['content'][:50]}...")
 
                 print("✅ TodoWrite tool call test passed")
                 return True
@@ -4191,6 +4482,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ TodoWrite tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 
@@ -4222,7 +4514,10 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "plan": {"type": "string", "description": "The plan you came up with, that you want to run by the user for approval"}
+                            "plan": {
+                                "type": "string",
+                                "description": "The plan you came up with, that you want to run by the user for approval",
+                            }
                         },
                         "required": ["plan"],
                     },
@@ -4239,16 +4534,30 @@ class TestStreamingFunctionCalls(unittest.TestCase):
                 result = await self._send_streaming_request(request_data)
 
                 # Verify tool call was detected
-                self.assertGreater(len(result["tool_calls"]), 0, "Should detect exit_plan_mode tool call")
+                self.assertGreater(
+                    len(result["tool_calls"]),
+                    0,
+                    "Should detect exit_plan_mode tool call",
+                )
 
                 tool_call = result["tool_calls"][0]
-                self.assertEqual(tool_call["name"], "exit_plan_mode", "Tool name should be exit_plan_mode")
+                self.assertEqual(
+                    tool_call["name"],
+                    "exit_plan_mode",
+                    "Tool name should be exit_plan_mode",
+                )
                 self.assertIsNotNone(tool_call["input"], "Tool input should be parsed")
 
                 if tool_call["input"]:
-                    self.assertIn("plan", tool_call["input"], "Should have plan parameter")
-                    self.assertIsInstance(tool_call["input"]["plan"], str, "plan should be string")
-                    self.assertGreater(len(tool_call["input"]["plan"]), 0, "plan should not be empty")
+                    self.assertIn(
+                        "plan", tool_call["input"], "Should have plan parameter"
+                    )
+                    self.assertIsInstance(
+                        tool_call["input"]["plan"], str, "plan should be string"
+                    )
+                    self.assertGreater(
+                        len(tool_call["input"]["plan"]), 0, "plan should not be empty"
+                    )
 
                 print("✅ exit_plan_mode tool call test passed")
                 return True
@@ -4256,6 +4565,7 @@ class TestStreamingFunctionCalls(unittest.TestCase):
             except Exception as e:
                 print(f"❌ exit_plan_mode tool test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return False
 

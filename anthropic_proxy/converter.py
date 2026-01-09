@@ -38,16 +38,16 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
     cleaned_content = thinking_content
 
     matches = re.findall(pattern, thinking_content, re.DOTALL)
-    
+
     logger.debug(f"Found {len(matches)} function call matches in thinking content")
 
     for match in matches:
         match_content = match.strip()
         logger.debug(f"Raw function call content: {match_content[:200]}...")
-        
+
         # Try multiple parsing approaches
         parsed_calls = _parse_function_call_content(match_content)
-        
+
         for call_data in parsed_calls:
             if (
                 isinstance(call_data, dict)
@@ -75,7 +75,7 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
 def _parse_function_call_content(content: str) -> list:
     """Parse function call content with multiple fallback approaches."""
     parsed_calls = []
-    
+
     # Approach 1: Try direct JSON parsing (content should be a JSON array)
     try:
         logger.debug(f"Attempting direct JSON parse: {content[:100]}...")
@@ -135,28 +135,26 @@ def _parse_function_call_content(content: str) -> list:
 def _repair_json_formatting(content: str) -> str:
     """Attempt to repair common JSON formatting issues."""
     repaired = content.strip()
-    
+
     # Remove trailing commas before closing brackets/braces
     repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
-    
+
     # Ensure proper array wrapping
-    if not repaired.startswith('[') and not repaired.startswith('{'):
+    if not repaired.startswith('[') and not repaired.startswith('{') or repaired.startswith('{') and not repaired.startswith('['):
         repaired = f"[{repaired}]"
-    elif repaired.startswith('{') and not repaired.startswith('['):
-        repaired = f"[{repaired}]"
-        
+
     return repaired
 
 
 def _extract_calls_with_regex(content: str) -> list:
     """Extract function calls using regex patterns as a last resort."""
     calls = []
-    
+
     # Pattern to match individual function call objects
     call_pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\})\s*\}'
-    
+
     matches = re.findall(call_pattern, content, re.DOTALL)
-    
+
     for name, params_str in matches:
         try:
             parameters = json.loads(params_str)
@@ -169,7 +167,7 @@ def _extract_calls_with_regex(content: str) -> list:
         except json.JSONDecodeError as e:
             logger.debug(f"Failed to parse parameters for {name}: {e}")
             continue
-    
+
     return calls
 
 
@@ -379,10 +377,10 @@ def convert_openai_response_to_anthropic(
                     logger.debug(f"🔧 TOOL_DEBUG: Processing tool_call {i}: {tool_call}")
                     logger.debug(f"🔧 TOOL_DEBUG: tool_call.function: {tool_call.function}")
                     logger.debug(f"🔧 TOOL_DEBUG: tool_call.function.arguments: {tool_call.function.arguments}")
-                    
+
                     arguments_dict = _parse_tool_arguments(tool_call.function.arguments)
                     logger.debug(f"🔧 TOOL_DEBUG: Parsed arguments: {arguments_dict}")
-                    
+
                     content_blocks.append(
                         ClaudeContentBlockToolUse(
                             type=Constants.CONTENT_TOOL_USE,

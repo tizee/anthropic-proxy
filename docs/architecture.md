@@ -14,11 +14,30 @@ The proxy is composed of several key components that work together to process an
 
 - **Streaming (`anthropic_proxy/streaming.py`)**: Handles the complexities of streaming responses. It processes Server-Sent Events (SSE) from the target API and transforms them into the format expected by the Anthropic client.
 
-- **Configuration (`anthropic_proxy/config.py`)**: Manages the application's configuration, including API keys, model mappings, and routing rules. It loads settings from environment variables and `models.yaml`.
+- **Configuration (`anthropic_proxy/config.py`)**: Manages the application's configuration, including server settings, model mappings, and routing rules. It loads settings from environment variables and `models.yaml`. Note: API keys are no longer stored in config - they're passed via request headers from ccproxy.
 
 - **Utilities (`anthropic_proxy/utils.py`)**: A collection of helper functions used across the application, such as token counting and error handling.
 
 - **Types (`anthropic_proxy/types.py`)**: Defines the data structures and types used throughout the application, ensuring type safety and clarity.
+
+## ccproxy Integration
+
+This proxy is designed to work with **ccproxy** (Claude Code wrapper script), which handles API key management externally:
+
+```
+ccproxy (sets ANTHROPIC_BASE_URL=localhost:8082, passes API key via Authorization header)
+    ↓
+Claude Code (sends Anthropic-format requests with model name + auth header)
+    ↓
+claude-code-proxy (extracts key from header, routes model to API URL, converts format)
+    ↓
+Provider API (receives OpenAI-format request with API key)
+```
+
+**Key design decisions:**
+- API keys are extracted from the `Authorization: Bearer <key>` header on each request
+- Model-to-URL routing is defined in `models.yaml` without storing any API keys
+- This allows unified key management through ccproxy's configuration
 
 ## Request Flow
 
