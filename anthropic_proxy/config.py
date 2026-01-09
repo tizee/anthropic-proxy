@@ -25,18 +25,18 @@ def parse_token_value(value, default_value=None):
     """Parse token value that can be in 'k' format (16k, 66k) or specific number.
 
     Args:
-        value: The value to parse (can be string like "16k", "66k" or integer)
+        value: The value to parse (can be string like "16K", "66k" or integer)
         default_value: Default value to return if parsing fails
 
     Returns:
         Integer token count
 
     Examples:
-        parse_token_value("16k") -> 16384
-        parse_token_value("66k") -> 67584
-        parse_token_value("8k") -> 8192
-        parse_token_value(8192) -> 8192
-        parse_token_value("256k") -> 262144
+        parse_token_value("16K") -> 16000
+        parse_token_value("66k") -> 66000
+        parse_token_value("8K") -> 8000
+        parse_token_value(8000) -> 8000
+        parse_token_value("256K") -> 256000
     """
     if value is None:
         return default_value
@@ -49,12 +49,12 @@ def parse_token_value(value, default_value=None):
     if isinstance(value, str):
         value = value.strip().lower()
 
-        # Handle 'k' suffix format
+        # Handle 'k' suffix format (both lowercase and uppercase K are supported)
         if value.endswith("k"):
             try:
                 num_str = value[:-1]  # Remove 'k'
                 num = float(num_str)
-                return int(num * 1024)
+                return int(num * 1000)  # Use SI standard: 1K = 1000
             except (ValueError, TypeError):
                 logger.warning(
                     f"Could not parse token value '{value}', using default {default_value}"
