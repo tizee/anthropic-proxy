@@ -52,7 +52,7 @@ ${GREEN}Examples:${NC}
   claude-proxy --stop    # Stop running server
 
 ${YELLOW}Configuration:${NC}
-  Configure API keys and model settings in .env file
+  Configure server settings in .env file (API keys are supplied by ccproxy)
   Project directory: $PROJECT_DIR
 
 ${YELLOW}Connect Claude Code:${NC}
@@ -97,7 +97,7 @@ start_dev_server() {
         echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
         if [[ -f ".env.example" ]]; then
             cp .env.example .env
-            echo -e "${GREEN}✅ Created .env file - please configure API keys${NC}"
+            echo -e "${GREEN}✅ Created .env file - please configure server settings${NC}"
         else
             echo -e "${RED}Error: .env.example file not found${NC}"
             exit 1
@@ -118,8 +118,7 @@ start_production_server() {
         echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
         if [[ -f ".env.example" ]]; then
             cp .env.example .env
-            echo -e "${GREEN}✅ Created .env file - please configure API keys${NC}"
-            echo -e "${YELLOW}Tip: Use an editor to open .env file and add API keys${NC}"
+            echo -e "${GREEN}✅ Created .env file - please configure server settings${NC}"
         else
             echo -e "${RED}Error: .env.example file not found${NC}"
             exit 1
