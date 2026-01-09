@@ -536,6 +536,10 @@ async def create_message(raw_request: Request):
 
         openai_request["stream"] = model_config["can_stream"]
 
+        # Add stream_options to include usage data in streaming responses
+        if openai_request["stream"]:
+            openai_request["stream_options"] = {"include_usage": True}
+
         # Handle streaming mode
         # Use OpenAI SDK async streaming
         if openai_request["stream"]:
@@ -698,6 +702,10 @@ async def test_message_conversion(raw_request: Request):
         client = create_openai_client(original_model, api_key)
         # model_id -> model_name in CUSTOM_OPENAI_MODELS configs
         openai_request["model"] = CUSTOM_OPENAI_MODELS[request.model]["model_name"]
+
+        # Add stream_options to include usage data in streaming responses
+        if request.stream:
+            openai_request["stream_options"] = {"include_usage": True}
 
         logger.debug(
             f"🧪 Converted request for {original_model}: {json.dumps({k: v for k, v in openai_request.items() if k != 'messages'}, indent=2)}"
