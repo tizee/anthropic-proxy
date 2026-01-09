@@ -473,31 +473,12 @@ async def create_message(raw_request: Request):
         # Handle thinking/reasoning based on model capabilities
 
         # 1. OpenAI native `reasoning_effort`
-        if (
-            has_thinking
-            and model_config.get("reasoning_effort")
-            and model_config["reasoning_effort"] in ["low", "medium", "high"]
-        ):
-            openai_request["reasoning_effort"] = model_config["reasoning_effort"]
+        reasoning_effort = model_config.get("reasoning_effort")
+        if reasoning_effort in ["minimal", "low", "medium", "high"]:
+            openai_request["reasoning_effort"] = reasoning_effort
 
-        # 2. Custom `thinking` and `thinkingConfig` in `extra_body`
+        # 2. Custom `thinkingConfig` in `extra_body`
         if model_config.get("extra_body"):
-            # For doubao-style thinking
-            # see https://www.volcengine.com/docs/82379/1449737#fa3f44fa
-            # thinking.type: Field value options.
-            #     disabled: Forcefully disables deep thinking capability; the model does not output chain-of-thought (CoT) content.
-            #     enabled: Forcefully enables deep thinking capability; the model is required to output chain-of-thought (CoT) content.
-            #     auto: The model automatically determines whether deep thinking is necessary.
-            if "doubao" in model_id.lower() and model_config["extra_body"].get("thinking") and isinstance(
-                model_config["extra_body"].get("thinking"), dict
-            ):
-                # Doubao
-                if has_thinking:
-                    openai_request["extra_body"]["thinking"] = {"type": "enabled"}
-                else:
-                    # Pass the thinking block but disable it.
-                    openai_request["extra_body"]["thinking"] = {"type": "disabled"}
-
             # For Gemini-style thinking
             if "thinkingConfig" in model_config["extra_body"]:
                 # doc https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig#ThinkingConfig

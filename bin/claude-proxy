@@ -34,7 +34,9 @@ usage() {
     echo -e "【Claude Code Proxy Launcher】
 
 ${GREEN}Usage:${NC}
-  claude-proxy [options]
+  claude-proxy start [options]
+  claude-proxy stop
+  claude-proxy status
 
 ${GREEN}Options:${NC}
   -h, --help     Show this help message
@@ -42,16 +44,14 @@ ${GREEN}Options:${NC}
   -p, --port     Specify port number (default: $DEFAULT_PORT)
   --docker       Use Docker to launch
   -v, --version  Show version information
-  --stop         Stop the running server
-  status         Show current server status
 
 ${GREEN}Examples:${NC}
-  claude-proxy           # Start server on port $DEFAULT_PORT
-  claude-proxy -d        # Start in development mode
-  claude-proxy -p 8080   # Specify custom port
-  claude-proxy --docker  # Launch using Docker
-  claude-proxy --stop    # Stop running server
-  claude-proxy status    # Show server status
+  claude-proxy start           # Start server on port $DEFAULT_PORT
+  claude-proxy start -d        # Start in development mode
+  claude-proxy start -p 8080   # Specify custom port
+  claude-proxy start --docker  # Launch using Docker
+  claude-proxy stop            # Stop running server
+  claude-proxy status          # Show server status
 
 ${YELLOW}Configuration:${NC}
   Configure server settings in .env file (API keys are supplied by ccproxy)
@@ -202,6 +202,35 @@ main() {
         exit 0
     fi
 
+    local command=$1
+    shift
+
+    case $command in
+        start)
+            ;;
+        stop)
+            stop_server
+            exit 0
+            ;;
+        status)
+            show_status
+            exit 0
+            ;;
+        -h|--help|help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            version
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown command: ${command}${NC}"
+            usage
+            exit 1
+            ;;
+    esac
+
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -224,18 +253,6 @@ main() {
             --docker)
                 use_docker=true
                 shift
-                ;;
-            -v|--version)
-                version
-                exit 0
-                ;;
-            --stop)
-                stop_server
-                exit 0
-                ;;
-            status)
-                show_status
-                exit 0
                 ;;
             *)
                 echo -e "${RED}Error: Unknown option: $1${NC}"

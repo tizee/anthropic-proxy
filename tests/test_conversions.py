@@ -19,6 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import our conversion functions and models
+from openai.types.chat import ChatCompletionChunk
+
 from anthropic_proxy.types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockText,
@@ -2406,6 +2408,84 @@ class TestAnthropicStreamingConverter(unittest.TestCase):
         import asyncio
 
         asyncio.run(process_and_verify())
+
+    def test_thinking_closes_before_tool_use_in_streaming(self):
+        """Test that thinking block is closed before tool_use when reasoning is streamed."""
+        converter = AnthropicStreamingConverter(self.test_request)
+
+        thinking_chunk = ChatCompletionChunk.model_validate(
+            {
+                "id": "chunk_thinking",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "reasoning_content": "Thinking"},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+
+        tool_chunk = ChatCompletionChunk.model_validate(
+            {
+                "id": "chunk_tool",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_test_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "Skill",
+                                        "arguments": '{"skill": "planning-with-files"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+
+        async def collect_events(chunk):
+            events = []
+            async for event in converter.process_chunk(chunk):
+                events.append(event)
+            return events
+
+        import asyncio
+
+        asyncio.run(collect_events(thinking_chunk))
+        self.assertTrue(converter.thinking_block_started)
+        self.assertFalse(converter.thinking_block_closed)
+
+        tool_events = asyncio.run(collect_events(tool_chunk))
+
+        self.assertTrue(converter.thinking_block_closed)
+        self.assertIn(0, converter.tool_calls)
+        self.assertEqual(converter.tool_calls[0]["content_block_index"], 1)
+
+        stop_index = next(
+            i for i, event in enumerate(tool_events) if event.startswith("event: content_block_stop")
+        )
+        tool_start_index = next(
+            i
+            for i, event in enumerate(tool_events)
+            if event.startswith("event: content_block_start")
+            and '"type": "tool_use"' in event
+        )
+        self.assertLess(stop_index, tool_start_index)
 
     def test_streaming_json_accumulation(self):
         """Test that JSON arguments are accumulated correctly across streaming chunks."""

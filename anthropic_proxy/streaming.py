@@ -806,6 +806,14 @@ class AnthropicStreamingConverter:
         if chunk_data["has_choices"]:
             # Handle tool calls first
             if chunk_data["delta_tool_calls"]:
+                # If reasoning was streamed, close the thinking block before starting tool_use blocks
+                if self.thinking_block_started and not self.thinking_block_closed:
+                    logger.debug(
+                        "🔚 PRE-TOOL_CALL: Closing thinking block before tool calls"
+                    )
+                    async for event in self._close_thinking_block():
+                        yield event
+
                 delta_tool_calls = chunk_data["delta_tool_calls"]
                 logger.debug(f"🔧 TOOL_DEBUG: Raw delta_tool_calls: {delta_tool_calls}")
                 logger.debug(f"🔧 TOOL_DEBUG: delta_tool_calls type: {type(delta_tool_calls)}")

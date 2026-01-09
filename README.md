@@ -122,6 +122,33 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 ### 🎯 Model Selection
 - Model choice comes from the incoming request (ccproxy controls this)
 - Support for both direct and OpenAI-compatible models in `models.yaml`
+- Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose “reasoning level” variants. `reasoning_effort` supports `minimal|low|medium|high` (where `minimal` means no thinking).
+
+Example:
+
+```yaml
+- model_id: doubao-seed-1-8-nothinking
+  model_name: doubao-seed-1-8-251228
+  api_base: "https://ark.cn-beijing.volces.com/api/v3"
+  reasoning_effort: "minimal"
+
+- model_id: doubao-seed-1-8-high
+  model_name: doubao-seed-1-8-251228
+  api_base: "https://ark.cn-beijing.volces.com/api/v3"
+  reasoning_effort: "high"
+```
+
+Then select the variant by setting `model` in your ccproxy provider config (or switching providers):
+
+```json
+{
+  "doubao-high": {
+    "base_url": "http://127.0.0.1:8082",
+    "model": "doubao-seed-1-8-high",
+    "auth_key": "YOUR_KEY"
+  }
+}
+```
 
 ### 🔧 Enhanced Error Handling
 - Structured error parsing for both OpenAI and Claude API responses
