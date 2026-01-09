@@ -133,7 +133,7 @@ install_script() {
     echo "  • View help: $SCRIPT_NAME --help"
     echo ""
     echo -e "${YELLOW}Configuration tips:${NC}"
-    echo "  1. Edit .env file in project directory to configure API keys"
+    echo "  1. Edit .env file in project directory to configure server settings"
     echo "  2. Modify models.yaml for model settings"
     echo "  3. Project directory: $PROJECT_DIR"
 }
