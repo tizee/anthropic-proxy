@@ -1,14 +1,55 @@
 """
 Utility functions for the anthropic_proxy package.
-This module contains validation, debugging, and usage tracking helpers.
+This module contains token counting, validation, debugging, and usage tracking helpers.
 """
 
+import json
 import logging
 from typing import Any
+
+import tiktoken
 
 from .types import ClaudeUsage, global_usage_stats
 
 logger = logging.getLogger(__name__)
+
+
+def count_tokens_in_response(
+    response_content: str = "",
+    thinking_content: str = "",
+    tool_calls: list | None = None,
+) -> int:
+    """Count tokens in response content using tiktoken."""
+    if tool_calls is None:
+        tool_calls = []
+
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        logger.warning(f"Failed to get encoding, using fallback: {e}")
+        encoding = tiktoken.get_encoding("p50k_base")
+
+    content = response_content + thinking_content
+    if tool_calls:
+        content += json.dumps(tool_calls)
+
+    return len(encoding.encode(content))
+
+
+def count_tokens_in_messages(messages: list, model: str) -> int:
+    """Count tokens in messages using tiktoken."""
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        logger.warning(f"Failed to get encoding, using fallback: {e}")
+        encoding = tiktoken.get_encoding("p50k_base")
+
+    total_tokens = 0
+    for message in messages:
+        message_str = json.dumps(message.model_dump())
+        total_tokens += len(encoding.encode(message_str))
+
+    return total_tokens
 
 
 def add_session_stats(

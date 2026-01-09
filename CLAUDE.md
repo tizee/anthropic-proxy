@@ -14,7 +14,7 @@ Key points:
 - **API keys** come from the `Authorization` header (ccproxy sets `ANTHROPIC_AUTH_TOKEN`). The proxy does not read API keys from `.env`.
 - **Model selection** is driven by the incoming request model. The server does not perform routing or model switching.
 - **models.yaml** defines model → API URL mappings and per-model options (no `api_key_name`, no pricing fields).
-- **/v1/messages/count_tokens** returns a fixed fallback response for client compatibility; local token counting is removed.
+- **/v1/messages/count_tokens** returns a local tiktoken-based estimate for input tokens.
 
 ## Architecture Reference
 - `anthropic_proxy/server.py`: FastAPI endpoints, request handling, and response conversion.

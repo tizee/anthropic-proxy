@@ -765,7 +765,6 @@ async def count_tokens(raw_request: Request):
         logger.warning(f"Token count request parsing failed; returning fallback: {e}")
         return fallback_response
 
-    # Log the incoming token count request
     display_model = request.model
     if "/" in display_model:
         display_model = display_model.split("/")[-1]
@@ -778,10 +777,15 @@ async def count_tokens(raw_request: Request):
         request.model,
         len(request.messages),
         num_tools,
-        200,  # Always return fallback
+        200,
     )
 
-    return fallback_response
+    try:
+        token_count = request.calculate_tokens()
+        return ClaudeTokenCountResponse(input_tokens=token_count)
+    except Exception as e:
+        logger.error(f"Error in local token counting: {e}")
+        return fallback_response
 
 
 @app.get("/v1/stats")
