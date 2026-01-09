@@ -1044,6 +1044,17 @@ class ClaudeMessagesRequest(BaseModel):
 
         return request_params
 
+    def calculate_tokens(self) -> int:
+        """Calculate estimated token count for the request (same as ClaudeTokenCountRequest)."""
+        from .utils import count_tokens_in_messages, count_tokens_in_payload
+
+        total_tokens = count_tokens_in_messages(self.messages, self.model)
+        total_tokens += count_tokens_in_payload(self.system)
+        total_tokens += count_tokens_in_payload(self.tools)
+        total_tokens += count_tokens_in_payload(self.thinking)
+        total_tokens += count_tokens_in_payload(self.tool_choice)
+        return total_tokens
+
 class ClaudeMessagesResponse(BaseModel):
     """
     Claude Messages API response model.

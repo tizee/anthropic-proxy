@@ -47,7 +47,8 @@ class AnthropicStreamingConverter:
 
         # Response state
         self.has_sent_stop_reason = False
-        self.input_tokens = 0
+        # Calculate input tokens locally for message_start event
+        self.input_tokens = original_request.calculate_tokens()
         self.completion_tokens = 0
         self.output_tokens = 0
         self.openai_chunks_received = 0
@@ -66,9 +67,7 @@ class AnthropicStreamingConverter:
                 "stop_sequence": None,
                 "usage": {
                     "input_tokens": self.input_tokens,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "output_tokens": 0,
+                    "output_tokens": 1  # Following Anthropic convention
                 },
             },
         }
@@ -141,33 +140,28 @@ class AnthropicStreamingConverter:
         return event_str
 
     def _send_message_delta_event(self, stop_reason: str, output_tokens: int) -> str:
-        """Send message_delta event with cumulative usage information."""
+        """Send message_delta event with output token usage information."""
         event_data = {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
             "usage": {
-                "input_tokens": self.input_tokens,
                 "output_tokens": output_tokens,
             },
         }
         event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
         logger.debug(
-            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, input_tokens: {self.input_tokens}, output_tokens: {output_tokens}"
+            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}"
         )
         return event_str
 
     def _send_message_stop_event(self) -> str:
-        """Send message_stop event with usage information."""
+        """Send message_stop event (no usage information)."""
         event_data = {
             "type": "message_stop",
-            "usage": {
-                "input_tokens": self.input_tokens,
-                "output_tokens": self.output_tokens,
-            },
         }
         event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
         logger.debug(
-            f"STREAMING_EVENT: message_stop with usage - input:{self.input_tokens}, output:{self.output_tokens}"
+            f"STREAMING_EVENT: message_stop"
         )
         return event_str
 
@@ -786,12 +780,20 @@ class AnthropicStreamingConverter:
 
         # Handle usage data (final chunk)
         if chunk_data["has_usage"] and chunk_data["usage"]:
-            self.input_tokens = getattr(
-                chunk_data["usage"], "prompt_tokens", self.input_tokens
-            )
-            self.completion_tokens = getattr(
-                chunk_data["usage"], "completion_tokens", self.output_tokens
-            )
+            usage = chunk_data["usage"]
+
+            # Handle both object and dictionary usage formats
+            if hasattr(usage, "prompt_tokens"):
+                self.input_tokens = usage.prompt_tokens
+                self.completion_tokens = usage.completion_tokens
+            elif isinstance(usage, dict):
+                self.input_tokens = usage.get("prompt_tokens", self.input_tokens)
+                self.completion_tokens = usage.get("completion_tokens", self.output_tokens)
+            else:
+                # Fallback to getattr for any other format
+                self.input_tokens = getattr(usage, "prompt_tokens", self.input_tokens)
+                self.completion_tokens = getattr(usage, "completion_tokens", self.output_tokens)
+
             # Sync output_tokens with completion_tokens for consistency
             self.output_tokens = self.completion_tokens
             logger.debug(
