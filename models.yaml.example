@@ -1,13 +1,14 @@
 # Example custom OpenAI-compatible model configurations
 # Required fields: model_id, api_base, api_key_name
 # Optional fields: model_name, can_stream, max_tokens, max_input_tokens, enable_thinking, reasoning_effort, extra_headers, extra_body
+# reasoning_effort supports: minimal, low, medium, high (minimal = no thinking)
 - model_id: example-model-1
   model_name: example-name-1
   api_base: "https://example.com/api/v1"
   api_key_name: EXAMPLE_API_KEY
   can_stream: true
   max_tokens: 16384
-  reasoning_effort: "medium"
+  reasoning_effort: "minimal"
 
 - model_id: example-model-2
   model_name: example-name-2
