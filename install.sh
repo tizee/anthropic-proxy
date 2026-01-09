@@ -135,7 +135,8 @@ install_script() {
     echo -e "${YELLOW}Configuration tips:${NC}"
     echo "  1. Edit .env file in project directory to configure server settings"
     echo "  2. Modify models.yaml for model settings"
-    echo "  3. Project directory: $PROJECT_DIR"
+    echo "  3. API keys are supplied by ccproxy via request headers"
+    echo "  4. Project directory: $PROJECT_DIR"
 }
 
 # Main installation process

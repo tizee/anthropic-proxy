@@ -43,6 +43,7 @@ ${GREEN}Options:${NC}
   --docker       Use Docker to launch
   -v, --version  Show version information
   --stop         Stop the running server
+  status         Show current server status
 
 ${GREEN}Examples:${NC}
   claude-proxy           # Start server on port $DEFAULT_PORT
@@ -50,6 +51,7 @@ ${GREEN}Examples:${NC}
   claude-proxy -p 8080   # Specify custom port
   claude-proxy --docker  # Launch using Docker
   claude-proxy --stop    # Stop running server
+  claude-proxy status    # Show server status
 
 ${YELLOW}Configuration:${NC}
   Configure server settings in .env file (API keys are supplied by ccproxy)
@@ -63,6 +65,44 @@ ${YELLOW}Connect Claude Code:${NC}
 version() {
     echo -e "${GREEN}Claude Code Proxy Launcher v1.0.0${NC}"
     echo -e "Project: ${BLUE}https://github.com/tizee/claude-code-proxy${NC}"
+}
+
+show_status() {
+    local service_status="stopped"
+    local detail=""
+    local stale_pid=""
+
+    if [[ -f "$PROJECT_DIR/uvicorn.pid" ]]; then
+        local pid
+        pid=$(cat "$PROJECT_DIR/uvicorn.pid")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            service_status="running"
+            detail="PID $pid (uvicorn.pid)"
+        else
+            stale_pid="$pid"
+        fi
+    fi
+
+    if [[ "$service_status" != "running" ]]; then
+        local pids
+        pids=$(pgrep -f "anthropic-proxy" | tr '\n' ' ')
+        for pid in $pids; do
+            if [[ "$pid" != "$$" ]]; then
+                service_status="running"
+                detail="PIDs ${pids} (pgrep anthropic-proxy)"
+                break
+            fi
+        done
+    fi
+
+    if [[ "$service_status" == "running" ]]; then
+        echo -e "${GREEN}Status: running${NC} ${detail}"
+    else
+        echo -e "${YELLOW}Status: stopped${NC}"
+        if [[ -n "$stale_pid" ]]; then
+            echo -e "${YELLOW}Stale uvicorn.pid found: $stale_pid${NC}"
+        fi
+    fi
 }
 
 check_dependencies() {
@@ -155,6 +195,13 @@ main() {
     local port=$DEFAULT_PORT
     local use_docker=false
 
+    if [[ $# -eq 0 ]]; then
+        show_status
+        echo ""
+        usage
+        exit 0
+    fi
+
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -184,6 +231,10 @@ main() {
                 ;;
             --stop)
                 stop_server
+                exit 0
+                ;;
+            status)
+                show_status
                 exit 0
                 ;;
             *)
