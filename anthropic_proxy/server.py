@@ -26,7 +26,6 @@ from .client import (
     CUSTOM_OPENAI_MODELS,
     create_claude_client,
     create_openai_client,
-    determine_model_by_router,
     initialize_custom_models,
     is_direct_mode_model,
 )
@@ -114,10 +113,10 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-async def hook_streaming_response(response_generator, request, routed_model):
+async def hook_streaming_response(response_generator, request, model_id):
     """Wraps a streaming response generator to apply response hooks to each event."""
     async for event_str in convert_openai_streaming_response_to_anthropic(
-        response_generator, request, routed_model
+        response_generator, request, model_id
     ):
         try:
             # The event string is like "event: <type>\ndata: <json>\n\n"
@@ -192,10 +191,8 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
 
 async def handle_direct_claude_request(
     request: ClaudeMessagesRequest,
-    routed_model: str,
+    model_id: str,
     model_config: dict,
-    original_model: str,
-    display_model: str,
     raw_request: Request
 ):
     """Handle direct Claude API requests without OpenAI conversion."""
@@ -204,13 +201,13 @@ async def handle_direct_claude_request(
         api_key = extract_api_key(raw_request)
 
         # Create Claude client with the extracted API key
-        claude_client = create_claude_client(routed_model, api_key)
+        claude_client = create_claude_client(model_id, api_key)
 
         # Prepare request payload - use original Claude format
         claude_request_data = request.model_dump(exclude_none=True)
 
         # Update model name to the actual model name for the API call
-        claude_request_data["model"] = model_config.get("model_name", routed_model)
+        claude_request_data["model"] = model_config.get("model_name", model_id)
 
         # Handle max_tokens limits
         max_tokens = min(model_config.get("max_tokens", 8192), request.max_tokens)
@@ -221,7 +218,7 @@ async def handle_direct_claude_request(
         log_request_beautifully(
             "POST",
             raw_request.url.path,
-            f"{original_model} → {display_model} (DIRECT)",
+            f"{model_id} (DIRECT)",
             claude_request_data.get("model"),
             len(claude_request_data["messages"]),
             num_tools,
@@ -230,7 +227,7 @@ async def handle_direct_claude_request(
 
         # Handle streaming mode
         if request.stream:
-            logger.info(f"🔗 DIRECT STREAMING: Starting for {routed_model}")
+            logger.info(f"🔗 DIRECT STREAMING: Starting for {model_id}")
 
             async def direct_streaming_generator():
                 try:
@@ -303,7 +300,7 @@ async def handle_direct_claude_request(
             )
         else:
             # Non-streaming mode
-            logger.info(f"🔗 DIRECT REQUEST: Starting for {routed_model}")
+            logger.info(f"🔗 DIRECT REQUEST: Starting for {model_id}")
             start_time = time.time()
 
             try:
@@ -331,7 +328,7 @@ async def handle_direct_claude_request(
                 if "usage" in hooked_response_data:
                     from .types import ClaudeUsage
                     usage = ClaudeUsage(**hooked_response_data["usage"])
-                    update_global_usage_stats(usage, routed_model, "Direct Mode")
+                    update_global_usage_stats(usage, model_id, "Direct Mode")
 
                 return JSONResponse(content=hooked_response_data)
 
@@ -341,8 +338,7 @@ async def handle_direct_claude_request(
 
                 # Log detailed error information for debugging
                 debug_info = {
-                    "original_model": original_model,
-                    "routed_model": routed_model,
+                    "model_id": model_id,
                     "api_base": model_config.get("api_base", "unknown"),
                     "status_code": error_details["status_code"],
                     "error_type": error_details["error_type"],
@@ -417,10 +413,7 @@ async def create_message(raw_request: Request):
         # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
         request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
-        original_model = request.model
-
-        # Calculate token count for routing decisions
-        token_count = request.calculate_tokens()
+        model_id = request.model
 
         # Check if thinking is enabled
         has_thinking = False
@@ -431,59 +424,24 @@ async def create_message(raw_request: Request):
             )
         logger.info(f"🧠 Final thinking decision: has_thinking={has_thinking}")
 
-        # Use router to determine the actual model to use
-        routed_model = determine_model_by_router(
-            original_model, token_count, has_thinking
-        )
+        if model_id not in CUSTOM_OPENAI_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown model '{model_id}'. Check models.yaml for available models.",
+            )
 
-        # Final routing check: if the token count exceeds the model's max_input_tokens,
-        # switch to the long context model as a fallback.
-        if routed_model in CUSTOM_OPENAI_MODELS:
-            model_config_check = CUSTOM_OPENAI_MODELS[routed_model]
-            max_input_for_model = model_config_check.get("max_input_tokens", 0)
-
-            if token_count > max_input_for_model:
-                long_context_model = config.router_config["long_context"]
-                logger.info(
-                    f" ROUTING: Token count {token_count} exceeds max input {max_input_for_model} for '{routed_model}'. "
-                    f"Switching to long context model: '{long_context_model}'."
-                )
-                routed_model = long_context_model
-            else:
-                logger.info(
-                    f" ROUTING: Token count {token_count} is within max input {max_input_for_model} for '{routed_model}'. "
-                    f"No change needed."
-                )
-        else:
-            # Fallback for models not in custom config (e.g., standard Anthropic models)
-            # using the global threshold.
-            if token_count > config.long_context_threshold:
-                long_context_model = config.router_config["long_context"]
-                logger.info(
-                    f" ROUTING: Token count {token_count} exceeds global threshold {config.long_context_threshold}. "
-                    f"Switching to long context model: '{long_context_model}'."
-                )
-                routed_model = long_context_model
-
-        # Most of time it would be default model
-        model_config = CUSTOM_OPENAI_MODELS[routed_model]
-        logger.debug(f"routed model config: {model_config}")
-
-        if model_config is None:
-            raise Exception(f"model {routed_model} not defined")
-
-        # Get the display name for logging, just the model name without provider prefix
-        display_model = routed_model
+        model_config = CUSTOM_OPENAI_MODELS[model_id]
+        logger.debug(f"model config: {model_config}")
 
         logger.info(
-            f"📊 PROCESSING REQUEST: Original={original_model} → Routed={routed_model}, Tokens={token_count},Stream={model_config.get("can_stream")}"
+            f"📊 PROCESSING REQUEST: Model={model_id}, Stream={model_config.get('can_stream')}"
         )
 
         # Check if this model should use direct Claude API mode
-        if is_direct_mode_model(routed_model):
-            logger.info(f"🔗 DIRECT MODE: Using direct Claude API for {routed_model}")
+        if is_direct_mode_model(model_id):
+            logger.info(f"🔗 DIRECT MODE: Using direct Claude API for {model_id}")
             return await handle_direct_claude_request(
-                request, routed_model, model_config, original_model, display_model, raw_request
+                request, model_id, model_config, raw_request
             )
 
         # Convert Anthropic request to OpenAI format
@@ -504,7 +462,7 @@ async def create_message(raw_request: Request):
         openai_request = hook_manager.trigger_request_hooks(openai_request)
 
         # Create OpenAI client for the model with the extracted API key
-        client = create_openai_client(routed_model, api_key)
+        client = create_openai_client(model_id, api_key)
         openai_request["model"] = model_config.get("model_name")
 
         # Add extra headers if defined in model config
@@ -530,7 +488,7 @@ async def create_message(raw_request: Request):
             #     disabled: Forcefully disables deep thinking capability; the model does not output chain-of-thought (CoT) content.
             #     enabled: Forcefully enables deep thinking capability; the model is required to output chain-of-thought (CoT) content.
             #     auto: The model automatically determines whether deep thinking is necessary.
-            if "doubao" in routed_model.lower() and model_config["extra_body"].get("thinking") and isinstance(
+            if "doubao" in model_id.lower() and model_config["extra_body"].get("thinking") and isinstance(
                 model_config["extra_body"].get("thinking"), dict
             ):
                 # Doubao
@@ -585,7 +543,7 @@ async def create_message(raw_request: Request):
         log_request_beautifully(
             "POST",
             raw_request.url.path,
-            f"{original_model} → {display_model}",
+            model_id,
             openai_request.get("model"),
             len(openai_request["messages"]),
             num_tools,
@@ -615,7 +573,7 @@ async def create_message(raw_request: Request):
 
                 # Wrap the generator to apply response hooks
                 hooked_generator = hook_streaming_response(
-                    response_generator, request, routed_model
+                    response_generator, request, model_id
                 )
                 return StreamingResponse(
                     hooked_generator,
@@ -745,11 +703,9 @@ async def create_message(raw_request: Request):
                             logger.debug(f"🔧 TOOL_DEBUG: Tool call {i}: {tc}")
 
             except Exception as e:
-                # Add specific context for debugging routing and API issues
+                # Add specific context for debugging model and API issues
                 error_context = {
-                    "original_model": original_model,
-                    "routed_model": routed_model,
-                    "display_model": display_model,
+                    "model_id": model_id,
                     "request_model": openai_request.get("model"),
                     "api_base": str(getattr(client, "base_url", "unknown")),
                     "error_type": type(e).__name__,
@@ -803,7 +759,7 @@ async def create_message(raw_request: Request):
 
             # Update global usage statistics and log usage information
             update_global_usage_stats(
-                anthropic_response.usage, routed_model, "Non-streaming"
+                anthropic_response.usage, model_id, "Non-streaming"
             )
 
             return JSONResponse(content=hooked_response_dict)
@@ -819,50 +775,32 @@ async def create_message(raw_request: Request):
 
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(raw_request: Request):
+    fallback_response = ClaudeTokenCountResponse(input_tokens=1000)
     try:
         # Use Pydantic's optimized JSON validation directly from raw bytes
         body = await raw_request.body()
         request = ClaudeTokenCountRequest.model_validate_json(body, strict=False)
-        # Log the incoming token count request
-        original_model = request.model
-
-        # Get the display name for logging, just the model name without provider prefix
-        display_model = original_model
-        if "/" in display_model:
-            display_model = display_model.split("/")[-1]
-        # Use the local tiktoken-based function for counting
-        try:
-            # Log the request beautifully
-            num_tools = len(request.tools) if request.tools else 0
-            log_request_beautifully(
-                "POST",
-                raw_request.url.path,
-                display_model,
-                request.model,
-                len(request.messages),
-                num_tools,
-                200,  # Assuming success at this point
-            )
-
-            # Count tokens using the local tiktoken-based function
-            token_count = request.calculate_tokens()
-
-            # Return Anthropic-style response
-            return ClaudeTokenCountResponse(input_tokens=token_count)
-
-        except Exception as e:
-            logger.error(f"Error in local token counting: {e}")
-            # Fallback to a simple approximation
-            return ClaudeTokenCountResponse(input_tokens=1000)  # Default fallback
-
     except Exception as e:
-        import traceback
+        logger.warning(f"Token count request parsing failed; returning fallback: {e}")
+        return fallback_response
 
-        error_traceback = traceback.format_exc()
-        logger.error(f"Error counting tokens: {str(e)}\n{error_traceback}")
-        raise HTTPException(
-            status_code=500, detail=f"Error counting tokens: {str(e)}"
-        ) from e
+    # Log the incoming token count request
+    display_model = request.model
+    if "/" in display_model:
+        display_model = display_model.split("/")[-1]
+
+    num_tools = len(request.tools) if request.tools else 0
+    log_request_beautifully(
+        "POST",
+        raw_request.url.path,
+        display_model,
+        request.model,
+        len(request.messages),
+        num_tools,
+        200,  # Always return fallback
+    )
+
+    return fallback_response
 
 
 @app.get("/v1/stats")
@@ -874,10 +812,10 @@ async def get_stats():
 @app.post("/v1/messages/test_conversion")
 async def test_message_conversion(raw_request: Request):
     """
-    Test endpoint for direct message format conversion without routing.
+    Test endpoint for direct message format conversion.
 
     This endpoint converts Anthropic format to OpenAI format and sends the request
-    directly to the specified model without going through the intelligent routing system.
+    directly to the specified model without any server-side model switching.
     Useful for testing specific model integrations and message format conversion.
     """
     try:
@@ -1065,10 +1003,7 @@ if __name__ == "__main__":
     setup_logging()
 
     # Print initial configuration status
-    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
-    print(
-        f"🔀 Router Config: Default={config.router_config['default']} Background={config.router_config['background']}, Think={config.router_config['think']}, LongContext={config.router_config['long_context']}"
-    )
+    print("✅ Configuration loaded")
 
     # Run the Server
     uvicorn.run(

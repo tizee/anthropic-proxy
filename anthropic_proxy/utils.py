@@ -1,66 +1,21 @@
 """
 Utility functions for the anthropic_proxy package.
-This module contains token counting, validation, debugging and other utility functions.
+This module contains validation, debugging, and usage tracking helpers.
 """
 
-import json
 import logging
 from typing import Any
-
-import tiktoken
 
 from .types import ClaudeUsage, global_usage_stats
 
 logger = logging.getLogger(__name__)
 
 
-def count_tokens_in_response(
-    response_content: str = "",
-    thinking_content: str = "",
-    tool_calls: list | None = None,
-) -> int:
-    if tool_calls is None:
-        tool_calls = []
-    """Count tokens in response content using tiktoken"""
-    try:
-        # Get encoding (using cl100k_base as default)
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception as e:
-        logger.warning(f"Failed to get encoding, using fallback: {e}")
-        encoding = tiktoken.get_encoding("p50k_base")
-
-    # Combine all content for token counting
-    content = response_content + thinking_content
-    if tool_calls:
-        content += json.dumps(tool_calls)
-
-    # Count tokens
-    return len(encoding.encode(content))
-
-
-def count_tokens_in_messages(messages: list, model: str) -> int:
-    """Count tokens in messages using tiktoken"""
-    try:
-        # Get encoding (using cl100k_base as default)
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception as e:
-        logger.warning(f"Failed to get encoding, using fallback: {e}")
-        encoding = tiktoken.get_encoding("p50k_base")
-
-    total_tokens = 0
-    for message in messages:
-        # Convert message to string representation
-        message_str = json.dumps(message.model_dump())
-        total_tokens += len(encoding.encode(message_str))
-
-    return total_tokens
-
-
 def add_session_stats(
     model: str,
     input_tokens: int,
     output_tokens: int,
-    routed_model: str = "",
+    model_id: str = "",
 ):
     """Add usage statistics to session tracking (cost calculation removed)."""
     try:
@@ -72,7 +27,7 @@ def add_session_stats(
         update_global_usage_stats(
             usage=usage,
             model=model,
-            context=f"session_stats_{routed_model or model}",
+            context=f"session_stats_{model_id or model}",
         )
         logger.debug(
             f"Added session stats: {model}, input={input_tokens}, output={output_tokens}"

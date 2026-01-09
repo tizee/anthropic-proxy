@@ -4,7 +4,7 @@ This document explains how to run the tests for the proxy.
 
 ## Unit Tests
 
-The unit tests cover the core functionality of the proxy, including request/response conversion, routing, and streaming. To run the unit tests, use the following command:
+The unit tests cover the core functionality of the proxy, including request/response conversion, model mapping, and streaming. To run the unit tests, use the following command:
 
 ```bash
 make test

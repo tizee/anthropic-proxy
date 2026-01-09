@@ -34,13 +34,7 @@ def main():
     setup_logging()
 
     # Print initial configuration status
-    print(f"✅ Configuration loaded: Providers={config.validate_api_keys()}")
-    print(
-        f"🔀 Router Config: Default={config.router_config['default']} "
-        f"Background={config.router_config['background']}, "
-        f"Think={config.router_config['think']}, "
-        f"LongContext={config.router_config['long_context']}"
-    )
+    print("✅ Configuration loaded")
 
     # Run the Server
     uvicorn.run(

@@ -175,56 +175,6 @@ def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
     return client
 
 
-def determine_model_by_router(
-    original_model: str, token_count: int, has_thinking: bool
-) -> str:
-    """Determine which model to use based on routing logic"""
-
-    logger.debug(
-        f"🔀 Router input: model={original_model}, tokens={token_count}, thinking={has_thinking}"
-    )
-
-    # If has thinking enabled, use think model (second priority)
-    if has_thinking:
-        result = config.router_config["think"]
-        logger.info(
-            f"🔀 Router: Using think model for thinking request, result: {result}"
-        )
-        return result
-
-    # If the model is claude-3-5-haiku, use background model
-    if "haiku" in original_model.lower():
-        result = config.router_config["background"]
-        logger.info(
-            f"🔀 Router: Using background model for {original_model}, result: {result}"
-        )
-        return result
-
-    # If the model is sonnet, use default router
-    if "sonnet" in original_model.lower():
-        result = config.router_config["default"]
-        logger.info(
-            f"🔀 Router: Using default model for {original_model}, result: {result}"
-        )
-        return result
-
-    # Check if token count exceeds long context threshold
-    if token_count > ModelDefaults.LONG_CONTEXT_THRESHOLD:
-        if "long_context" in config.router_config:
-            result = config.router_config["long_context"]
-            logger.info(f"🔀 Router: Using long context model for large input ({token_count} tokens), result: {result}")
-            return result
-        logger.warning(f"🔀 Router: Long context needed ({token_count} tokens) but no long_context router configured")
-
-    # Default model
-    result = config.router_config["default"]
-    logger.debug(f"🔀 Router: Using default model for {original_model}")
-    logger.info(f"🔀 Router final result: {result}")
-
-    # should be model id
-    return result
-
-
 def get_model_config(model_id: str) -> dict:
     """Get model configuration for a given model ID."""
     if model_id in CUSTOM_OPENAI_MODELS:

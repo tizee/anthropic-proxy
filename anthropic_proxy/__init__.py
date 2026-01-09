@@ -1,7 +1,7 @@
 """
 Anthropic Proxy - A proxy server that translates between Anthropic API and OpenAI-compatible models.
 
-This package provides intelligent routing and format conversion between different AI model APIs.
+This package provides format conversion between different AI model APIs.
 """
 
 __version__ = "0.1.2"

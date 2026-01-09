@@ -46,7 +46,7 @@ class AnthropicStreamingConverter:
 
         # Response state
         self.has_sent_stop_reason = False
-        self.input_tokens = original_request.calculate_tokens()
+        self.input_tokens = 0
         self.completion_tokens = 0
         self.output_tokens = 0
         self.openai_chunks_received = 0
@@ -894,7 +894,7 @@ def _calculate_accurate_output_tokens(
 async def convert_openai_streaming_response_to_anthropic(
     response_generator: AsyncStream[ChatCompletionChunk],
     original_request: ClaudeMessagesRequest,
-    routed_model: str = "",
+    model_id: str = "",
 ):
     """Handle streaming responses from OpenAI SDK and convert to Anthropic format.
 
@@ -1075,7 +1075,7 @@ async def convert_openai_streaming_response_to_anthropic(
                 if "function" in str(streaming_error).lower() or "tool" in str(streaming_error).lower():
                     logger.error("🔧 TOOL_DEBUG: This appears to be a tool call related error")
                     logger.error(f"🔧 TOOL_DEBUG: Original request model: {original_request.model}")
-                    logger.error(f"🔧 TOOL_DEBUG: Routed model: {routed_model}")
+                    logger.error(f"🔧 TOOL_DEBUG: Model ID: {model_id}")
                     if original_request.tools:
                         logger.error(f"🔧 TOOL_DEBUG: Number of tools in request: {len(original_request.tools)}")
                         for i, tool in enumerate(original_request.tools):
@@ -1139,13 +1139,13 @@ async def convert_openai_streaming_response_to_anthropic(
 
     finally:
         # Log streaming completion
-        _log_streaming_completion(converter, original_request, routed_model)
+        _log_streaming_completion(converter, original_request, model_id)
 
 
 def _log_streaming_completion(
     converter: AnthropicStreamingConverter,
     original_request: ClaudeMessagesRequest,
-    routed_model: str = "",
+    model_id: str = "",
 ):
     """Log a detailed summary of the streaming completion."""
     try:
