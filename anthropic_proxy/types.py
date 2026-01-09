@@ -643,9 +643,14 @@ class ClaudeTokenCountRequest(BaseModel):
         return v
 
     def calculate_tokens(self) -> int:
-        from .utils import count_tokens_in_messages
+        from .utils import count_tokens_in_messages, count_tokens_in_payload
 
-        return count_tokens_in_messages(self.messages, self.model)
+        total_tokens = count_tokens_in_messages(self.messages, self.model)
+        total_tokens += count_tokens_in_payload(self.system)
+        total_tokens += count_tokens_in_payload(self.tools)
+        total_tokens += count_tokens_in_payload(self.thinking)
+        total_tokens += count_tokens_in_payload(self.tool_choice)
+        return total_tokens
 
 
 class ClaudeTokenCountResponse(BaseModel):
