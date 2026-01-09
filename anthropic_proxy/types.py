@@ -427,6 +427,33 @@ class ClaudeThinkingConfigDisabled(BaseModel):
     type: Literal["disabled"] = "disabled"  # Configuration type identifier
 
 
+def parse_thinking_config(v):
+    """Parse thinking configuration from dict to typed config objects.
+
+    Used by field validators in ClaudeTokenCountRequest and ClaudeMessagesRequest.
+    """
+    if not isinstance(v, dict):
+        return v
+
+    # Check for enabled: true/false format
+    if v.get("enabled") is True:
+        return ClaudeThinkingConfigEnabled(
+            type="enabled", budget_tokens=v.get("budget_tokens")
+        )
+    if v.get("enabled") is False:
+        return ClaudeThinkingConfigDisabled(type="disabled")
+
+    # Check for type: enabled/disabled format
+    if v.get("type") == "enabled":
+        return ClaudeThinkingConfigEnabled(
+            type="enabled", budget_tokens=v.get("budget_tokens")
+        )
+    if v.get("type") == "disabled":
+        return ClaudeThinkingConfigDisabled(type="disabled")
+
+    return v
+
+
 # === Usage and Token Classes ===
 class CompletionTokensDetails(BaseModel):
     """Detailed breakdown of completion token usage."""
@@ -627,20 +654,7 @@ class ClaudeTokenCountRequest(BaseModel):
     @field_validator("thinking")
     @classmethod
     def validate_thinking_field(cls, v):
-        if isinstance(v, dict):
-            if v.get("enabled") is True:
-                return ClaudeThinkingConfigEnabled(
-                    type="enabled", budget_tokens=v.get("budget_tokens")
-                )
-            elif v.get("enabled") is False:
-                return ClaudeThinkingConfigDisabled(type="disabled")
-            elif v.get("type") == "enabled":
-                return ClaudeThinkingConfigEnabled(
-                    type="enabled", budget_tokens=v.get("budget_tokens")
-                )
-            elif v.get("type") == "disabled":
-                return ClaudeThinkingConfigDisabled(type="disabled")
-        return v
+        return parse_thinking_config(v)
 
     def calculate_tokens(self) -> int:
         from .utils import count_tokens_in_messages, count_tokens_in_payload
@@ -887,20 +901,7 @@ class ClaudeMessagesRequest(BaseModel):
     @field_validator("thinking")
     @classmethod
     def validate_thinking_field(cls, v):
-        if isinstance(v, dict):
-            if v.get("enabled") is True:
-                return ClaudeThinkingConfigEnabled(
-                    type="enabled", budget_tokens=v.get("budget_tokens")
-                )
-            elif v.get("enabled") is False:
-                return ClaudeThinkingConfigDisabled(type="disabled")
-            elif v.get("type") == "enabled":
-                return ClaudeThinkingConfigEnabled(
-                    type="enabled", budget_tokens=v.get("budget_tokens")
-                )
-            elif v.get("type") == "disabled":
-                return ClaudeThinkingConfigDisabled(type="disabled")
-        return v
+        return parse_thinking_config(v)
 
     def extract_system_content(self) -> str:
         """Extract system content from various formats."""

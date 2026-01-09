@@ -148,8 +148,9 @@ def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
         raise ValueError(f"No API key provided for model: {model_id}")
 
     # Ensure base_url ends with /v1 for Claude API
-    if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):
-        base_url = base_url + "v1" if base_url.endswith("/") else base_url + "/v1"
+    base_url = base_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
 
     headers = {
         "x-api-key": api_key,
@@ -177,10 +178,9 @@ def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
 
 def get_model_config(model_id: str) -> dict:
     """Get model configuration for a given model ID."""
-    if model_id in CUSTOM_OPENAI_MODELS:
-        return CUSTOM_OPENAI_MODELS[model_id]
-    else:
+    if model_id not in CUSTOM_OPENAI_MODELS:
         raise ValueError(f"Model {model_id} not found in custom models")
+    return CUSTOM_OPENAI_MODELS[model_id]
 
 
 def list_available_models() -> list:

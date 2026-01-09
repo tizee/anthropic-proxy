@@ -15,6 +15,7 @@ from .types import (
     ClaudeMessagesRequest,
     generate_unique_id,
 )
+from .utils import log_openai_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -946,155 +947,17 @@ async def convert_openai_streaming_response_to_anthropic(
                         break
                     continue
         except Exception as streaming_error:
-            logger.error(f"🔧 TOOL_DEBUG: Streaming iteration error: {streaming_error}")
-            logger.error(f"🔧 TOOL_DEBUG: Error type: {type(streaming_error)}")
-            logger.error(f"🔧 TOOL_DEBUG: Chunks processed before error: {chunk_count}")
+            logger.error(f"TOOL_DEBUG: Streaming iteration error after {chunk_count} chunks: {streaming_error}")
+            log_openai_api_error(streaming_error, "streaming_iteration")
 
-            # Try to extract detailed error information using proper OpenAI error handling
-            try:
-                import openai
+            # Log tool-related context if applicable
+            error_str = str(streaming_error).lower()
+            if "function" in error_str or "tool" in error_str:
+                logger.error(f"TOOL_DEBUG: Tool-related error for model {original_request.model}")
+                if original_request.tools:
+                    tool_names = [tool.name for tool in original_request.tools]
+                    logger.error(f"TOOL_DEBUG: Tools in request: {tool_names}")
 
-                # Check if this is an OpenAI APIStatusError (4xx/5xx responses)
-                if isinstance(streaming_error, openai.APIStatusError):
-                    logger.error("🔧 TOOL_DEBUG: This is an APIStatusError")
-                    logger.error(f"🔧 TOOL_DEBUG: Status code: {streaming_error.status_code}")
-                    logger.error(f"🔧 TOOL_DEBUG: Response: {streaming_error.response}")
-
-                    # Try to get response body
-                    try:
-                        response_text = streaming_error.response.text
-                        logger.error(f"🔧 TOOL_DEBUG: Response body: {response_text}")
-
-                        # Try to parse as JSON to get failed_generation
-                        import json
-                        try:
-                            response_json = json.loads(response_text)
-                            logger.error(f"🔧 TOOL_DEBUG: Response JSON: {json.dumps(response_json, indent=2)}")
-
-                            # Look for failed_generation specifically
-                            if 'failed_generation' in response_json:
-                                logger.error(f"🔧 TOOL_DEBUG: failed_generation: {response_json['failed_generation']}")
-                            if 'error' in response_json:
-                                logger.error(f"🔧 TOOL_DEBUG: error details: {response_json['error']}")
-                        except json.JSONDecodeError:
-                            logger.error("🔧 TOOL_DEBUG: Response is not valid JSON")
-                    except Exception as body_error:
-                        logger.error(f"🔧 TOOL_DEBUG: Could not read response body: {body_error}")
-
-                # Check if this is an OpenAI APIConnectionError (network issues)
-                elif isinstance(streaming_error, openai.APIConnectionError):
-                    logger.error("🔧 TOOL_DEBUG: This is an APIConnectionError")
-                    logger.error(f"🔧 TOOL_DEBUG: Underlying cause: {streaming_error.__cause__}")
-
-                # Check if this is a general OpenAI APIError
-                elif isinstance(streaming_error, openai.APIError):
-                    logger.error("🔧 TOOL_DEBUG: This is a general APIError")
-
-                    # Print the complete error object
-                    import json
-                    try:
-                        # Try to convert the error object to a dictionary
-                        error_dict = {}
-                        for attr in dir(streaming_error):
-                            if not attr.startswith('_') and not callable(getattr(streaming_error, attr)):
-                                try:
-                                    value = getattr(streaming_error, attr)
-                                    # Convert to string if it's not JSON serializable
-                                    if isinstance(value, (str, int, float, bool, type(None))):
-                                        error_dict[attr] = value
-                                    else:
-                                        error_dict[attr] = str(value)
-                                except:
-                                    error_dict[attr] = f"<could not access {attr}>"
-
-                        logger.error(f"🔧 TOOL_DEBUG: Complete error object: {json.dumps(error_dict, indent=2)}")
-                    except Exception as e:
-                        logger.error(f"🔧 TOOL_DEBUG: Could not serialize error object: {e}")
-
-                    # Also try to access specific attributes we know might have the data
-                    for attr_name in ['body', 'message', 'code', 'type', 'param', 'request']:
-                        if hasattr(streaming_error, attr_name):
-                            try:
-                                attr_value = getattr(streaming_error, attr_name)
-                                logger.error(f"🔧 TOOL_DEBUG: {attr_name}: {attr_value}")
-
-                                # If it's the body and it's a string, try to parse as JSON
-                                if attr_name == 'body' and isinstance(attr_value, str):
-                                    try:
-                                        body_json = json.loads(attr_value)
-                                        logger.error(f"🔧 TOOL_DEBUG: Body JSON: {json.dumps(body_json, indent=2)}")
-
-                                        # Look for failed_generation specifically
-                                        if 'failed_generation' in body_json:
-                                            logger.error(f"🔧 TOOL_DEBUG: failed_generation: {body_json['failed_generation']}")
-                                        if 'error' in body_json:
-                                            logger.error(f"🔧 TOOL_DEBUG: error details: {body_json['error']}")
-                                    except json.JSONDecodeError:
-                                        logger.error("🔧 TOOL_DEBUG: Body is not valid JSON")
-                            except Exception as attr_error:
-                                logger.error(f"🔧 TOOL_DEBUG: Could not access {attr_name}: {attr_error}")
-
-                # For other types of errors, try to extract what we can
-                else:
-                    logger.error("🔧 TOOL_DEBUG: This is not an OpenAI APIError subclass")
-
-                    # Print the complete error object
-                    import json
-                    try:
-                        # Try to convert the error object to a dictionary
-                        error_dict = {}
-                        for attr in dir(streaming_error):
-                            if not attr.startswith('_') and not callable(getattr(streaming_error, attr)):
-                                try:
-                                    value = getattr(streaming_error, attr)
-                                    # Convert to string if it's not JSON serializable
-                                    if isinstance(value, (str, int, float, bool, type(None))):
-                                        error_dict[attr] = value
-                                    else:
-                                        error_dict[attr] = str(value)
-                                except:
-                                    error_dict[attr] = f"<could not access {attr}>"
-
-                        logger.error(f"🔧 TOOL_DEBUG: Complete error object: {json.dumps(error_dict, indent=2)}")
-                    except Exception as e:
-                        logger.error(f"🔧 TOOL_DEBUG: Could not serialize error object: {e}")
-
-                    # Try to get the raw error message and parse it
-                    error_str = str(streaming_error)
-                    logger.error(f"🔧 TOOL_DEBUG: Full error string: {error_str}")
-
-                    # Try to extract JSON from the error message itself
-                    if 'failed_generation' in error_str:
-                        logger.error("🔧 TOOL_DEBUG: Error message contains 'failed_generation'")
-                        # Try to find JSON in the error message
-                        import re
-                        json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
-                        if json_match:
-                            try:
-                                import json
-                                error_json = json.loads(json_match.group())
-                                logger.error(f"🔧 TOOL_DEBUG: Extracted JSON from error: {json.dumps(error_json, indent=2)}")
-                                if 'failed_generation' in error_json:
-                                    logger.error(f"🔧 TOOL_DEBUG: failed_generation: {error_json['failed_generation']}")
-                            except json.JSONDecodeError:
-                                logger.error("🔧 TOOL_DEBUG: Could not parse JSON from error message")
-
-                # Check if this is a tool call related error
-                if "function" in str(streaming_error).lower() or "tool" in str(streaming_error).lower():
-                    logger.error("🔧 TOOL_DEBUG: This appears to be a tool call related error")
-                    logger.error(f"🔧 TOOL_DEBUG: Original request model: {original_request.model}")
-                    logger.error(f"🔧 TOOL_DEBUG: Model ID: {model_id}")
-                    if original_request.tools:
-                        logger.error(f"🔧 TOOL_DEBUG: Number of tools in request: {len(original_request.tools)}")
-                        for i, tool in enumerate(original_request.tools):
-                            logger.error(f"🔧 TOOL_DEBUG: Tool {i}: {tool.name}")
-
-            except Exception as debug_error:
-                logger.error(f"🔧 TOOL_DEBUG: Error while debugging: {debug_error}")
-                import traceback
-                logger.error(f"🔧 TOOL_DEBUG: Debug error traceback: {traceback.format_exc()}")
-
-            # Re-raise to maintain existing error handling
             raise streaming_error
 
         # Handle stream completion - ensure proper cleanup regardless of how stream ended

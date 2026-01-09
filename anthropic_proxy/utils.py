@@ -434,3 +434,69 @@ def _format_error_message(e: Exception, error_details: dict[str, Any]) -> str:
     if "response" in error_details and error_details["response"]:
         error_message += f"\nResponse: {error_details['response']}"
     return error_message
+
+
+def log_openai_api_error(e: Exception, context: str = "") -> None:
+    """Log detailed OpenAI API error information for debugging.
+
+    Handles various OpenAI error types and extracts useful debugging information.
+
+    Args:
+        e: The exception to log
+        context: Additional context string for the log messages
+    """
+    import re
+
+    try:
+        import openai
+    except ImportError:
+        logger.error(f"TOOL_DEBUG: {context} Error: {e}")
+        return
+
+    prefix = f"TOOL_DEBUG: {context}" if context else "TOOL_DEBUG:"
+
+    if isinstance(e, openai.APIStatusError):
+        logger.error(f"{prefix} APIStatusError - Status: {e.status_code}")
+        _log_response_body(e.response, prefix)
+    elif isinstance(e, openai.APIConnectionError):
+        logger.error(f"{prefix} APIConnectionError - Cause: {e.__cause__}")
+    elif isinstance(e, openai.APIError):
+        logger.error(f"{prefix} APIError")
+        if hasattr(e, 'response') and e.response:
+            _log_response_body(e.response, prefix)
+    else:
+        logger.error(f"{prefix} Non-OpenAI error: {type(e).__name__}")
+        error_str = str(e)
+        if 'failed_generation' in error_str:
+            _extract_json_from_error_string(error_str, prefix)
+
+
+def _log_response_body(response, prefix: str) -> None:
+    """Extract and log response body, attempting JSON parsing."""
+    try:
+        response_text = response.text
+        logger.error(f"{prefix} Response body: {response_text}")
+        try:
+            response_json = json.loads(response_text)
+            if 'failed_generation' in response_json:
+                logger.error(f"{prefix} failed_generation: {response_json['failed_generation']}")
+            if 'error' in response_json:
+                logger.error(f"{prefix} error details: {response_json['error']}")
+        except json.JSONDecodeError:
+            pass
+    except Exception as body_error:
+        logger.error(f"{prefix} Could not read response body: {body_error}")
+
+
+def _extract_json_from_error_string(error_str: str, prefix: str) -> None:
+    """Try to extract JSON from an error message string."""
+    import re
+
+    json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
+    if json_match:
+        try:
+            error_json = json.loads(json_match.group())
+            if 'failed_generation' in error_json:
+                logger.error(f"{prefix} failed_generation: {error_json['failed_generation']}")
+        except json.JSONDecodeError:
+            pass
