@@ -78,25 +78,9 @@ def parse_token_value(value, default_value=None):
 
 
 class Config:
-    """Universal proxy server configuration with intelligent routing"""
+    """Universal proxy server configuration"""
 
     def __init__(self):
-        # Router configuration for intelligent model selection
-        self.router_config = {
-            "background": os.environ.get("ROUTER_BACKGROUND", "deepseek-v3"),
-            "think": os.environ.get("ROUTER_THINK", "deepseek-r1"),
-            "long_context": os.environ.get("ROUTER_LONG_CONTEXT", "gemini-2.5-pro"),
-            "default": os.environ.get("ROUTER_DEFAULT", "deepseek-v3"),
-        }
-
-        # Token thresholds
-        self.long_context_threshold = parse_token_value(
-            os.environ.get(
-                "LONG_CONTEXT_THRESHOLD", str(ModelDefaults.LONG_CONTEXT_THRESHOLD)
-            ),
-            ModelDefaults.LONG_CONTEXT_THRESHOLD,
-        )
-
         # Server configuration
         self.host = os.environ.get("HOST", ModelDefaults.DEFAULT_HOST)
         self.port = int(os.environ.get("PORT", str(ModelDefaults.DEFAULT_PORT)))

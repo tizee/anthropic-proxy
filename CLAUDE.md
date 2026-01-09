@@ -14,7 +14,7 @@ To understand the available commands and project dependencies, please refer to t
 This project includes a `docs/` directory with detailed information about the architecture, features, and testing. When you need to understand the project, please refer to these documents first:
 
 - **`docs/architecture.md`**: Provides a high-level overview of the proxy's architecture, including the core components and the request flow.
-- **`docs/features.md`**: Describes the key features of the proxy, such as intelligent routing, streaming support, and custom model integration.
+- **`docs/features.md`**: Describes the key features of the proxy, such as model mapping, streaming support, and custom model integration.
 - **`docs/testing.md`**: Explains how to run the unit and performance tests.
 
 By using these documents, you can quickly get up to speed on the project without having to read through all the code.
@@ -33,8 +33,8 @@ When refactoring or modifying the codebase, follow these established design prin
 - **Function Length**: Keep functions short and focused (ideally under 50 lines following Code Complete 2 guidelines).
 
 ### Codebase Patterns
-- **Configuration Management (`config.py`)**: Centralized configuration handling using a `Config` class that loads from `.env` files. Includes dynamic reloading and API key validation.
-- **Model & Client Management (`client.py`)**: Handles loading custom model definitions from `models.yaml`, creating provider-specific `AsyncOpenAI` clients (`create_openai_client`), and implementing the intelligent model routing logic (`determine_model_by_router`).
+- **Configuration Management (`config.py`)**: Centralized configuration handling using a `Config` class that loads from `.env` files.
+- **Model & Client Management (`client.py`)**: Handles loading custom model definitions from `models.yaml` and creating provider-specific `AsyncOpenAI` clients (`create_openai_client`).
 - **Request/Response Conversion (`converter.py`)**: Contains the core logic for converting message formats between Anthropic and OpenAI. Key functions include `ClaudeMessagesRequest.to_openai_request()` for outgoing requests and `convert_openai_response_to_anthropic()` for incoming responses.
 - **Streaming Logic (`streaming.py`)**: All streaming-related processing is encapsulated in the `AnthropicStreamingConverter` class. This class manages the state of the streaming connection and converts OpenAI's `ChatCompletionChunk` events into the appropriate Anthropic streaming format.
 - **Error Handling (`utils.py`)**: Utility functions like `_extract_error_details` and `_format_error_message` provide a consistent way to process and format exceptions throughout the application.

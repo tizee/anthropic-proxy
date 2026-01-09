@@ -27,15 +27,11 @@ restart: stop
 	@echo "Restarting server..."
 	@$(MAKE) -s run-stable
 
-.PHONY:start stop restart run run-stable dev-stable test test-unittest lint format
+.PHONY:start stop restart run run-stable dev-stable test lint format
 
 # Modern pytest framework (recommended)
 test-pytest:
 	-uv run pytest tests/ -v
-
-# Modern unittest framework
-test-unittest:
-	-uv run pytest tests/test_unittest.py -v
 
 # Test Coverage
 test-cov:
@@ -49,29 +45,6 @@ test-routing:
 
 # Default test command (pytest)
 test: test-pytest
-
-# Quick test commands for development
-test-basic:
-	-uv run pytest tests/test_unittest.py::TestBasicRequests -v
-
-test-tools:
-	-uv run pytest tests/test_unittest.py::TestToolRequests -v
-
-test-custom:
-	-uv run pytest tests/test_unittest.py::TestCustomModels -v
-
-test-comparison:
-	-uv run pytest tests/test_unittest.py::TestAnthropicComparison -v
-
-# Specific tool tests
-test-gemini:
-	-uv run pytest tests/test_unittest.py::TestCustomModels::test_gemini_tool_conversion -v
-
-test-calculator:
-	-uv run pytest tests/test_unittest.py::TestToolRequests::test_calculator_tool -v
-
-test-complex:
-	-uv run pytest tests/test_unittest.py::TestComplexScenarios -v
 
 test-conversion:
 	-uv run pytest tests/test_conversions.py -v
@@ -95,20 +68,12 @@ help:
 	@echo "  make dev-stable       - Start foreground server without auto-reload"
 	@echo "  make test             - Run pytest suite (recommended)"
 	@echo "  make test-pytest      - Run pytest suite"
-	@echo "  make test-unittest    - Run unittest suite"
 	@echo "  make test-cov         - Generate terminal test coverage report"
 	@echo "  make test-cov-html    - Generate HTML test coverage report"
 	@echo "  make test-routing     - Run routing-specific tests"
 	@echo "  make test-hooks       - Run hook-specific tests"
 	@echo "  make test-conversion  - Run conversion-specific tests"
 	@echo ""
-	@echo "  make test-basic       - Quick basic request tests"
-	@echo "  make test-tools       - Tool usage tests"
-	@echo "  make test-custom      - Custom model tests"
-	@echo "  make test-complex     - Complex tests"
-	@echo "  make test-comparison  - Proxy vs Anthropic API comparison"
-	@echo "  make test-gemini      - Gemini model conversion test"
-	@echo "  make test-calculator  - Calculator tool test"
 	@echo "  make lint             - Check code quality with ruff"
 	@echo "  make format           - Format code with ruff"
 	@echo "  make stop             - Stop the running server"

@@ -119,10 +119,9 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 - **Simplified configuration**: `models.yaml` only defines model-to-URL mappings
 - **Unified key management**: Use ccproxy's `cc-proxy.json` config for all provider keys
 
-### 🧠 Intelligent Routing
-- Automatic model selection based on request characteristics (token count, thinking mode, etc.)
-- Configurable fallback to long-context models when token limits are exceeded
-- Support for both direct and OpenAI-compatible models in routing configuration
+### 🎯 Model Selection
+- Model choice comes from the incoming request (ccproxy controls this)
+- Support for both direct and OpenAI-compatible models in `models.yaml`
 
 ### 🔧 Enhanced Error Handling
 - Structured error parsing for both OpenAI and Claude API responses
@@ -132,7 +131,7 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 
 ### 📊 Advanced Features
 - Streaming support for both modes with proper error handling
-- Token counting and usage statistics tracking
+- Usage statistics tracking (from provider-reported usage)
 - Custom model configuration with per-model settings
 - Support for thinking mode and reasoning effort parameters
 
@@ -276,4 +275,4 @@ claude-proxy --help
 
 ## Credit & Acknowledgment
 
-This project is forked from and based on [claude-code-proxy](https://github.com/1rgs/claude-code-proxy) by [@1rgs](https://github.com/1rgs). The intelligent routing feature was inspired by [claude-code-router](https://github.com/musistudio/claude-code-router).
+This project is forked from and based on [claude-code-proxy](https://github.com/1rgs/claude-code-proxy) by [@1rgs](https://github.com/1rgs).

@@ -4,7 +4,7 @@ This document provides a high-level overview of the proxy's architecture.
 
 ## Core Components
 
-The proxy is composed of several key components that work together to process and route API requests.
+The proxy is composed of several key components that work together to process API requests.
 
 - **Proxy Server (`anthropic_proxy/server.py`)**: The main entry point of the application. It uses FastAPI to create a web server that listens for incoming Anthropic API requests. It handles request validation, sets up API keys, and delegates processing to other components.
 
@@ -14,9 +14,9 @@ The proxy is composed of several key components that work together to process an
 
 - **Streaming (`anthropic_proxy/streaming.py`)**: Handles the complexities of streaming responses. It processes Server-Sent Events (SSE) from the target API and transforms them into the format expected by the Anthropic client.
 
-- **Configuration (`anthropic_proxy/config.py`)**: Manages the application's configuration, including server settings, model mappings, and routing rules. It loads settings from environment variables and `models.yaml`. Note: API keys are no longer stored in config - they're passed via request headers from ccproxy.
+- **Configuration (`anthropic_proxy/config.py`)**: Manages the application's configuration, including server settings and model mappings. It loads settings from environment variables and `models.yaml`. Note: API keys are no longer stored in config - they're passed via request headers from ccproxy.
 
-- **Utilities (`anthropic_proxy/utils.py`)**: A collection of helper functions used across the application, such as token counting and error handling.
+- **Utilities (`anthropic_proxy/utils.py`)**: A collection of helper functions used across the application, such as error handling and usage tracking.
 
 - **Types (`anthropic_proxy/types.py`)**: Defines the data structures and types used throughout the application, ensuring type safety and clarity.
 
@@ -29,14 +29,14 @@ ccproxy (sets ANTHROPIC_BASE_URL=localhost:8082, passes API key via Authorizatio
     ↓
 Claude Code (sends Anthropic-format requests with model name + auth header)
     ↓
-claude-code-proxy (extracts key from header, routes model to API URL, converts format)
+claude-code-proxy (extracts key from header, maps model to API URL, converts format)
     ↓
 Provider API (receives OpenAI-format request with API key)
 ```
 
 **Key design decisions:**
 - API keys are extracted from the `Authorization: Bearer <key>` header on each request
-- Model-to-URL routing is defined in `models.yaml` without storing any API keys
+- Model-to-URL mapping is defined in `models.yaml` without storing any API keys
 - This allows unified key management through ccproxy's configuration
 
 ## Request Flow
@@ -55,7 +55,7 @@ sequenceDiagram
     C-)P: Anthropic API Request
     activate P
 
-    P-)P: Validate & Route Request
+    P-)P: Validate & Map Request
     P-)Conv: Translate to Target Format
     activate Conv
     Conv--)P: Converted Request
@@ -89,7 +89,7 @@ sequenceDiagram
 **Lifecycle Steps:**
 
 1.  **Request Initiation**: A **Client** sends an Anthropic-formatted API request to the **Proxy Server**.
-2.  **Internal Processing**: The server validates the request, applies routing rules, and uses the **Converter** to translate it into the format expected by the **Target Model**.
+2.  **Internal Processing**: The server validates the request, maps the model to a provider configuration, and uses the **Converter** to translate it into the format expected by the **Target Model**.
 3.  **Model Communication**: The **LLM Client** sends the converted request to the target model's API and receives a response.
 4.  **Response Handling**:
     - For **streaming** responses, the **Streaming** component processes the Server-Sent Events (SSE) stream.

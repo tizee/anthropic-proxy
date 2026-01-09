@@ -603,8 +603,8 @@ class ClaudeTokenCountRequest(BaseModel):
     """
     Request model for token counting endpoint.
 
-    Used to estimate token usage for a given request without actually
-    sending it to Claude. Helpful for cost estimation and request planning.
+    Maintained for client compatibility. The proxy returns a fallback
+    token count instead of performing local token estimation.
     """
 
     model_config = ConfigDict(
@@ -642,16 +642,11 @@ class ClaudeTokenCountRequest(BaseModel):
                 return ClaudeThinkingConfigDisabled(type="disabled")
         return v
 
-    def calculate_tokens(self) -> int:
-        from .utils import count_tokens_in_messages
-
-        return count_tokens_in_messages(self.messages, self.model)
-
 
 class ClaudeTokenCountResponse(BaseModel):
     """Response model for token counting endpoint."""
 
-    input_tokens: int  # Estimated number of input tokens for the request
+    input_tokens: int  # Fallback token count returned by the proxy
 
 
 class ClaudeMessage(BaseModel):
@@ -1037,12 +1032,6 @@ class ClaudeMessagesRequest(BaseModel):
         _compare_request_data(self, request_params)
 
         return request_params
-
-    def calculate_tokens(self) -> int:
-        from .utils import count_tokens_in_messages
-
-        return count_tokens_in_messages(self.messages, self.model)
-
 
 class ClaudeMessagesResponse(BaseModel):
     """
