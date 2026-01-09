@@ -139,8 +139,8 @@ def _repair_json_formatting(content: str) -> str:
     # Remove trailing commas before closing brackets/braces
     repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
 
-    # Ensure proper array wrapping
-    if not repaired.startswith('[') and not repaired.startswith('{') or repaired.startswith('{') and not repaired.startswith('['):
+    # Ensure proper array wrapping if content starts with object but not array
+    if repaired.startswith('{') and not repaired.startswith('['):
         repaired = f"[{repaired}]"
 
     return repaired
@@ -398,7 +398,7 @@ def convert_openai_response_to_anthropic(
         # Map finish reason to Anthropic format
         if finish_reason == "length":
             stop_reason = Constants.STOP_MAX_TOKENS
-        elif finish_reason == "tool_calls" or finish_reason is None and tool_calls:
+        elif finish_reason == "tool_calls" or (finish_reason is None and tool_calls):
             stop_reason = Constants.STOP_TOOL_USE
         else:
             stop_reason = Constants.STOP_END_TURN
