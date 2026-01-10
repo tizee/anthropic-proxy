@@ -6,10 +6,13 @@ This allows the package to be run as: uv run anthropic-proxy
 
 import argparse
 import sys
+import logging
 
 import uvicorn
 
 from .config import config, setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -24,17 +27,17 @@ def main():
 
     # Check for .env file existence
     if not config.check_env_file_exists():
-        print("🔴 ERROR: No .env file found in the project root directory!")
-        print(f"Expected location: {config.get_env_file_path()}")
-        print("Please create a .env file with your API keys and configuration.")
-        print("You can reference .env.example for the required format.")
+        logger.error("No .env file found in the project root directory!")
+        logger.error(f"Expected location: {config.get_env_file_path()}")
+        logger.error("Please create a .env file with your API keys and configuration.")
+        logger.error("You can reference .env.example for the required format.")
         sys.exit(1)
 
     # Setup logging for the main process
     setup_logging()
 
     # Print initial configuration status
-    print("✅ Configuration loaded")
+    logger.info("✅ Configuration loaded")
 
     # Run the Server
     uvicorn.run(

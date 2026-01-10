@@ -1,7 +1,10 @@
 import importlib
+import logging
 import pkgutil
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Define hook specifications
 request_hook_spec = "request_hook"
@@ -16,7 +19,7 @@ class HookManager:
     def load_plugins(self, package):
         """Loads plugins from the given package."""
         if not hasattr(package, "__path__"):
-            print(f"Package {package.__name__} does not have a __path__.")
+            logger.warning(f"Package {package.__name__} does not have a __path__.")
             return
 
         for _, name, _ in pkgutil.iter_modules(package.__path__):
@@ -24,7 +27,7 @@ class HookManager:
                 module = importlib.import_module(f"{package.__name__}.{name}")
                 self.register_hooks(module)
             except Exception as e:
-                print(f"Failed to load plugin {name}: {e}")
+                logger.warning(f"Failed to load plugin {name}: {e}")
 
     def register_hooks(self, module):
         """Registers hooks from a loaded module."""
