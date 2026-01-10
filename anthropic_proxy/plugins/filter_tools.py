@@ -1,3 +1,8 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def request_hook(payload):
     """
     Filters out specified tools from the list of available tools in the request payload.
@@ -34,9 +39,9 @@ def request_hook(payload):
         ]
         remaining_tools = [get_tool_name(tool) for tool in filtered_tools]
 
-        print(f"🔧 TOOL_FILTER: Original tools: {original_tool_names}")
-        print(f"🔧 TOOL_FILTER: Removed tools: {removed_tools}")
-        print(f"🔧 TOOL_FILTER: Remaining tools: {remaining_tools}")
+        logger.debug(f"TOOL_FILTER: Original tools: {original_tool_names}")
+        logger.debug(f"TOOL_FILTER: Removed tools: {removed_tools}")
+        logger.debug(f"TOOL_FILTER: Remaining tools: {remaining_tools}")
 
         payload["tools"] = filtered_tools
     return payload

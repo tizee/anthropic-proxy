@@ -133,10 +133,21 @@ class MessageFilter(logging.Filter):
             "cost_calculator",
         ]
 
+        # Check raw message
         if hasattr(record, "msg") and isinstance(record.msg, str):
             for phrase in blocked_phrases:
                 if phrase in record.msg:
                     return False
+
+        # Also check the formatted message (for messages with placeholders)
+        try:
+            formatted_msg = record.getMessage()
+            for phrase in blocked_phrases:
+                if phrase in formatted_msg:
+                    return False
+        except:
+            pass
+
         return True
 
 
@@ -158,16 +169,38 @@ class ColorizedFormatter(logging.Formatter):
         return super().format(record)
 
 
-
-
-
-
 def setup_logging():
     """Setup logging configuration to be idempotent."""
-    # This function is designed to be safe to call multiple times.
-    # It ensures that logging handlers are only added once to the root logger,
-    # preventing duplicate log entries in multi-process environments (like uvicorn workers).
+    # Configure root logger and uvicorn logs
     root_logger = logging.getLogger()
+    log_level = getattr(logging, config.log_level.upper())
+
+    # Set root log level
+    root_logger.setLevel(log_level)
+
+    # Configure uvicorn log levels
+    logging.getLogger("uvicorn").setLevel(log_level)
+    logging.getLogger("uvicorn.error").setLevel(log_level)
+
+    # For access logs, only enable them at DEBUG or INFO levels
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    if log_level <= logging.INFO:
+        uvicorn_access_logger.setLevel(logging.INFO)
+        uvicorn_access_logger.propagate = True  # Ensure access logs reach root handlers
+    else:
+        uvicorn_access_logger.setLevel(logging.WARNING)
+        uvicorn_access_logger.propagate = False  # Disable access logs for higher log levels
+
+    # Configure openai and httpx log levels to reduce noise
+    if config.log_level.lower() == "debug":
+        logging.getLogger("openai").setLevel(logging.INFO)
+        logging.getLogger("httpx").setLevel(logging.INFO)
+    else:
+        logging.getLogger("openai").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # This function is designed to be safe to call multiple times.
+    # Only add handlers if they don't exist yet
     if root_logger.hasHandlers():
         return
 
@@ -181,8 +214,15 @@ def setup_logging():
         root_logger.setLevel(getattr(logging, config.log_level.upper()))
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-        # Add file handler
-        file_handler = logging.FileHandler(config.log_file_path, mode="a")
+        # Add rotating file handler with 2MB max size and 1 backup log
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(
+            config.log_file_path,
+            mode="a",
+            maxBytes=2 * 1024 * 1024,  # 2MB
+            backupCount=1,
+            encoding="utf-8"
+        )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
@@ -196,18 +236,14 @@ def setup_logging():
         # Add custom message filter
         root_logger.addFilter(MessageFilter())
 
-        # Configure uvicorn log levels. Handlers are inherited from the root logger.
-        logging.getLogger("uvicorn").setLevel(logging.INFO)
-        logging.getLogger("uvicorn.error").setLevel(logging.INFO)
-        uvicorn_access_logger = logging.getLogger("uvicorn.access")
-        uvicorn_access_logger.setLevel(logging.INFO)
-        uvicorn_access_logger.propagate = True  # Ensure access logs reach root handlers
-        if config.log_level.lower() == "debug":
-            logging.getLogger("openai").setLevel(logging.INFO)
-            logging.getLogger("httpx").setLevel(logging.INFO)
+        # Additional third-party library log configuration
+        if config.log_level.lower() != "debug":
+            # Disable verbose debug logging from libraries when not in debug mode
+            logging.getLogger("openai").setLevel(logging.WARNING)
+            logging.getLogger("httpx").setLevel(logging.WARNING)
 
         logger.info("✅ Logging configured for server.")
 
     except Exception as e:
-        print(f"🔴 Error setting up logging: {e}")
+        logger.critical(f"Error setting up logging: {e}")
         sys.exit(1)

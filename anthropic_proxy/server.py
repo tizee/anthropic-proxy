@@ -87,8 +87,6 @@ def extract_api_key(request: Request) -> str:
 async def lifespan(app: FastAPI):
     """Application lifespan event handler."""
     # Startup
-    # Note: Logging is not configured at this point
-    # It will be configured only when running the script directly.
     initialize_custom_models()
     load_all_plugins()
 
@@ -228,7 +226,9 @@ async def handle_direct_claude_request(
 
         # Handle streaming mode
         if request.stream:
-            logger.info(f"🔗 DIRECT STREAMING: Starting for {model_id}")
+            # Determine message type for consistent logging
+            message_type = determine_message_type(request)
+            logger.info(f"🔗 DIRECT STREAMING: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
 
             async def direct_streaming_generator():
                 try:
@@ -301,7 +301,9 @@ async def handle_direct_claude_request(
             )
         else:
             # Non-streaming mode
-            logger.info(f"🔗 DIRECT REQUEST: Starting for {model_id}")
+            # Determine message type for consistent logging
+            message_type = determine_message_type(request)
+            logger.info(f"🔗 DIRECT REQUEST: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
             start_time = time.time()
 
             try:
@@ -420,7 +422,7 @@ async def create_message(raw_request: Request):
             logger.debug(
                 f"🧠 Thinking type check: {request.thinking.type}, enabled: {has_thinking}"
             )
-        logger.info(f"🧠 Final thinking decision: has_thinking={has_thinking}")
+        logger.debug(f"🧠 Final thinking decision: has_thinking={has_thinking}")
 
         if model_id not in CUSTOM_OPENAI_MODELS:
             raise HTTPException(
@@ -431,13 +433,16 @@ async def create_message(raw_request: Request):
         model_config = CUSTOM_OPENAI_MODELS[model_id]
         logger.debug(f"model config: {model_config}")
 
+        # Determine message type based on content
+        message_type = determine_message_type(request)
+
         logger.info(
-            f"📊 PROCESSING REQUEST: Model={model_id}, Stream={model_config.get('can_stream')}"
+            f"📊 REQUEST: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}, Stream={model_config.get('can_stream')}"
         )
 
         # Check if this model should use direct Claude API mode
         if is_direct_mode_model(model_id):
-            logger.info(f"🔗 DIRECT MODE: Using direct Claude API for {model_id}")
+            logger.info(f"🔗 DIRECT MODE: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
             return await handle_direct_claude_request(
                 request, model_id, model_config, raw_request
             )
@@ -820,9 +825,6 @@ def log_request_beautifully(
     method, path, claude_model, openai_model, num_messages, num_tools, status_code
 ):
     """Log requests in a beautiful, twitter-friendly format showing Claude to OpenAI mapping."""
-    # Format the Claude model name nicely
-    claude_display = f"{Colors.CYAN}{claude_model}{Colors.RESET}"
-
     # Extract endpoint name
     endpoint = path
     if "?" in endpoint:
@@ -832,27 +834,40 @@ def log_request_beautifully(
     openai_display = openai_model
     if "/" in openai_display:
         openai_display = openai_display.split("/")[-1]
-    openai_display = f"{Colors.GREEN}{openai_display}{Colors.RESET}"
-
-    # Format tools and messages
-    tools_str = f"{Colors.MAGENTA}{num_tools} tools{Colors.RESET}"
-    messages_str = f"{Colors.BLUE}{num_messages} messages{Colors.RESET}"
 
     # Format status code
     status_str = (
-        f"{Colors.GREEN}✓ {status_code} OK{Colors.RESET}"
+        f"✓ {status_code} OK"
         if status_code == 200
-        else f"{Colors.RED}✗ {status_code}{Colors.RESET}"
+        else f"✗ {status_code}"
     )
 
     # Put it all together in a clear, beautiful format
-    log_line = f"{Colors.BOLD}{method} {endpoint}{Colors.RESET} {status_str}"
-    model_line = f"{claude_display} → {openai_display} {tools_str} {messages_str}"
+    log_line = f"{method} {endpoint} {status_str}"
+    model_line = f"{claude_model} → {openai_display} {num_tools} tools {num_messages} messages"
 
-    # Print to console
-    print(log_line)
-    print(model_line)
-    sys.stdout.flush()
+    # Use logger instead of print to maintain consistency with log levels
+    # This will only show up when log level is INFO or lower
+    logger.info(log_line)
+    logger.info(model_line)
+
+
+def determine_message_type(request):
+    """Determine message type based on request content."""
+    message_type = "text"
+    if hasattr(request, 'tools') and request.tools:
+        message_type = "tool_call"
+    elif hasattr(request, 'images') and request.images:
+        message_type = "multimodal"
+    elif hasattr(request, 'messages'):
+        last_message = request.messages[-1].content if request.messages else ""
+        if isinstance(last_message, list):
+            # Check if any content item is not text
+            for item in last_message:
+                if hasattr(item, 'type') and item.type != 'text':
+                    message_type = "multimodal"
+                    break
+    return message_type
 
 
 if __name__ == "__main__":
@@ -870,7 +885,7 @@ if __name__ == "__main__":
     setup_logging()
 
     # Print initial configuration status
-    print("✅ Configuration loaded")
+    logger.info("✅ Configuration loaded")
 
     # Run the Server
     uvicorn.run(
