@@ -23,6 +23,7 @@ Key points:
 - `anthropic_proxy/streaming.py`: Streaming conversion logic.
 - `anthropic_proxy/types.py`: Pydantic models and API schemas.
 - `anthropic_proxy/utils.py`: Usage tracking and error helpers.
+- `docs/api-response-formats.md`: Reference documentation for API response formats used by different providers (Claude, OpenAI, DeepSeek, VolcEngine).
 
 ## Testing
 - `make test` runs the current unit/conversion suite.
