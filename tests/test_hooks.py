@@ -68,15 +68,15 @@ class TestHookManager(unittest.TestCase):
         mock_import_module.assert_called_once_with("fake_plugins.test_plugin")
         self.assertEqual(len(self.hook_manager.request_hooks), 1)
 
-    @patch("builtins.print")
-    def test_load_plugins_package_without_path(self, mock_print):
+    @patch("anthropic_proxy.hook.logger")
+    def test_load_plugins_package_without_path(self, mock_logger):
         """Test that load_plugins handles packages without a __path__ attribute."""
         mock_package = Mock(spec=["__name__"])
         mock_package.__name__ = "no_path_package"
 
         self.hook_manager.load_plugins(mock_package)
 
-        mock_print.assert_called_once_with(
+        mock_logger.warning.assert_called_once_with(
             "Package no_path_package does not have a __path__."
         )
 

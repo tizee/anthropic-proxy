@@ -852,7 +852,13 @@ class AnthropicStreamingConverter:
                     yield event
 
             # Handle text content
-            if chunk_data["delta_content"] and not self.is_tool_use:
+            # Note: We removed `not self.is_tool_use` condition here because:
+            # 1. _handle_text_delta internally handles the is_tool_use state correctly
+            #    (it closes tool blocks before processing text)
+            # 2. The old condition caused text to be DROPPED when is_tool_use=True,
+            #    which broke Insight text and other content arriving after tool calls
+            # See: test_insight_conversion.py::TestProcessChunkTextLoss
+            if chunk_data["delta_content"]:
                 async for event in self._handle_text_delta(chunk_data["delta_content"]):
                     yield event
 
