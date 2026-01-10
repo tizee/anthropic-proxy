@@ -34,27 +34,7 @@ Use this proxy in the following scenarios:
 
 | Version | Status | Notes |
 |---------|--------|-------|
-| 1.0.51 | ✅ Tested | Current supported version |
-| 1.0.x   | ⚠️ Likely Compatible | Earlier versions may work but are untested |
-
-## Tested Models
-
-### OpenAI-Compatible Mode
-| Provider | Model | Format | Status | Notes |
-|----------|-------|--------|--------|-------|
-| **DeepSeek** | deepseek-v3 | OpenAI | ✅ Fully Tested | Recommended for background tasks |
-| **DeepSeek** | deepseek-r1 | OpenAI | ✅ Fully Tested | Optimized for thinking/reasoning |
-| **OpenRouter** | claude models | OpenAI | ✅ Fully Tested | Claude via OpenAI format |
-| **ByteDance** | doubao-seed-1.6 | OpenAI | ✅ Fully Tested | Doubao model support |
-| **OpenRouter** | Gemini-2.5-pro | OpenAI | ✅ Fully Tested | Google Gemini via OpenRouter |
-| **OpenRouter** | gemini-2.5-flash-lite-preview-06-17 | OpenAI | ✅ Fully Tested | Gemini preview via OpenRouter |
-
-### Direct Claude API Mode
-| Provider | Model | Format | Status | Notes |
-|----------|-------|--------|--------|-------|
-| **Anthropic** | claude-3-5-sonnet-20241022 | Direct | ✅ Fully Tested | Official Claude API |
-| **Anthropic** | claude-3-5-haiku-20241022 | Direct | ✅ Fully Tested | Official Claude API |
-| **Anthropic** | claude-3-opus-20240229 | Direct | ✅ Fully Tested | Official Claude API |
+| 2.1.3 | ✅ Tested | Current latest version (as of January 2026) |
 
 ## Third-Party Providers Supporting Anthropic Format
 
@@ -81,31 +61,6 @@ For providers with native Anthropic support, configure as direct mode:
   max_tokens: 16k
   max_input_tokens: 200k
 ```
-
-## Known Issues
-
-### Provider-Specific Issues
-
-**⚠️ Groq Provider - Tool Call Limitations (as of January 2025)**
-
-The Groq provider has known issues with tool call functionality:
-- **Multiple tool calls fail**: When Claude Code requests multiple tools in a single interaction, Groq may not handle them correctly
-- **Tool call generation instability**: Even single tool calls may fail intermittently
-- **Confirmed across implementations**: This issue affects both JavaScript and Python implementations, confirming it's a provider-side problem
-
-**Root Cause**: This is acknowledged by the Kimi model team on Twitter, where they mentioned bugs in the Kimi-K2-Instruct model's tool call handling, specifically for multi-turn tool calls.
-
-**Discussion Links**:
-- **GitHub Issue**: [sst/opencode#1018](https://github.com/sst/opencode/issues/1018#issuecomment-3075860647) - Contains detailed discussion about tool use errors with Groq's Kimi K2
-- **Groq Community**: [Tool call issues discussion](https://community.groq.com/discussion-forum-7/groq-kimi-k2-tool-call-issues-213) - Official Groq community thread on Kimi K2 tool call problems
-
-**Workaround**: Use alternative providers like:
-- **Moonshot AI** (kimi-k2-0711-preview via direct API)
-- **Google Gemini** (via OpenRouter)
-- **DeepSeek** models
-- **OpenRouter** with other models
-
-**Future**: This issue may be resolved by Groq in future updates, but currently requires using alternative providers for reliable tool call functionality.
 
 ## Key Features
 
@@ -161,6 +116,54 @@ Then select the variant by setting `model` in your ccproxy provider config (or s
 - Usage statistics tracking (from provider-reported usage)
 - Custom model configuration with per-model settings
 - Support for thinking mode and reasoning effort parameters
+
+### 🔌 Plugin System (Extensibility)
+The proxy includes a plugin system that allows you to modify request and response payloads. Plugins are automatically loaded from the `anthropic_proxy/plugins/` directory.
+
+#### Built-in Plugins
+- **`filter_tools.py`**: Filters out specific tools from requests before they're sent to providers. This is useful for removing tools that certain providers don't support or that you want to disable for specific use cases.
+
+**Current filter configuration** (in `filter_tools.py`):
+```python
+filtered_tool_names = ["WebSearch", "NotebookEdit", "NotebookRead"]
+```
+
+**Behavior**:
+- Removes `WebSearch`, `NotebookEdit`, and `NotebookRead` tools from all requests
+- Works with both Claude format (`{"name": "ToolName"}`) and OpenAI format (`{"function": {"name": "ToolName"}}`)
+- Logs removed and remaining tools for debugging
+- Applied before requests are sent to upstream providers
+
+**Use cases**:
+1. **Provider compatibility**: Some providers may not support certain tools
+2. **Security/control**: Disable specific tools for certain deployments
+3. **Testing**: Isolate tool-related issues
+
+**To modify the filter**:
+1. Edit `anthropic_proxy/plugins/filter_tools.py`
+2. Update the `filtered_tool_names` list
+3. Restart the proxy server
+
+**To disable the plugin**:
+1. Rename or remove `filter_tools.py` from the plugins directory
+2. Restart the proxy server
+
+#### Creating Custom Plugins
+Create a new `.py` file in the `anthropic_proxy/plugins/` directory with one or both of these functions:
+
+```python
+def request_hook(payload):
+    """Modify request payload before sending to provider."""
+    # Your modification logic here
+    return payload
+
+def response_hook(payload):
+    """Modify response payload before returning to client."""
+    # Your modification logic here
+    return payload
+```
+
+Plugins are loaded automatically at server startup. Both request and response hooks are optional - include only what you need.
 
 ## Quick Start
 
@@ -271,6 +274,7 @@ For detailed information on the architecture, features, and testing of this proj
 - **[Architecture](./docs/architecture.md)**: A high-level overview of the proxy's architecture.
 - **[Features](./docs/features.md)**: A description of the key features of the proxy.
 - **[Testing](./docs/testing.md)**: Instructions on how to run the unit and performance tests.
+- **[API Response Formats](./docs/api-response-formats.md)**: Reference documentation for API response formats used by different providers.
 
 Additionally, the `CLAUDE.md` file provides guidance for both developers and AI assistants working with this project:
 
@@ -293,7 +297,7 @@ Example usage:
 ./install.sh
 
 # Usage
-claude-proxy -d    # Development mode
+claude-proxy start
 claude-proxy --help
 
 # Removal

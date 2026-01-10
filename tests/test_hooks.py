@@ -166,7 +166,6 @@ class TestFilterToolsPlugin(unittest.TestCase):
         initial_payload = {
             "tools": [
                 {"name": "WebSearch"},
-                {"name": "WebFetch"},
                 {"name": "SomeOtherTool"},
             ]
         }

@@ -475,22 +475,20 @@ async def create_message(raw_request: Request):
         if reasoning_effort in ["minimal", "low", "medium", "high"]:
             openai_request["reasoning_effort"] = reasoning_effort
 
-        # 2. Custom `thinkingConfig` in `extra_body`
-        if model_config.get("extra_body"):
-            # For Gemini-style thinking
-            if "thinkingConfig" in model_config["extra_body"]:
-                # doc https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig#ThinkingConfig
-                # Start with the base thinking configuration from the model
-                thinking_params = model_config["extra_body"]["thinkingConfig"].copy()
-                if has_thinking:
-                    # If thinking is enabled but no budget is specified, default to dynamic.
-                    if "thinkingBudget" not in thinking_params:
-                        thinking_params["thinkingBudget"] = -1
-                else:
-                    # To disable thinking for Gemini, set the budget to 0.
-                    thinking_params["thinkingBudget"] = 0
+        # 2. Custom `thinkingConfig` in `extra_body` for Gemini-style thinking
+        if model_config.get("extra_body") and "thinkingConfig" in model_config["extra_body"]:
+            # doc https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig#ThinkingConfig
+            # Start with the base thinking configuration from the model
+            thinking_params = model_config["extra_body"]["thinkingConfig"].copy()
+            if has_thinking:
+                # If thinking is enabled but no budget is specified, default to dynamic.
+                if "thinkingBudget" not in thinking_params:
+                    thinking_params["thinkingBudget"] = -1
+            else:
+                # To disable thinking for Gemini, set the budget to 0.
+                thinking_params["thinkingBudget"] = 0
 
-                openai_request["extra_body"]["thinkingConfig"] = thinking_params
+            openai_request["extra_body"]["thinkingConfig"] = thinking_params
 
         # Intelligent tool_choice adjustment for better model consistency
         # Based on test findings from claude_code_interruption_test:

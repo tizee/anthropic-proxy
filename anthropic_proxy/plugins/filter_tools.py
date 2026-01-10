@@ -4,7 +4,7 @@ def request_hook(payload):
     Handles both Claude format ({"name": "ToolName"}) and OpenAI format ({"function": {"name": "ToolName"}}).
     """
     if "tools" in payload:
-        filtered_tool_names = ["WebSearch", "WebFetch", "NotebookEdit", "NotebookRead"]
+        filtered_tool_names = ["WebSearch", "NotebookEdit", "NotebookRead"]
         original_tools = payload["tools"]
 
         def get_tool_name(tool):
