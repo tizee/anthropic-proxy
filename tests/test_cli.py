@@ -3,8 +3,8 @@ Unit tests for CLI functionality.
 
 Tests cover:
 - Argument parsing and subcommands
-- Utility functions (redact_api_keys, print_config, init_config)
-- Command handlers (start, stop, restart, status)
+- Utility functions (redact_api_keys, print_config)
+- Command handlers (init, start, stop, restart, status)
 """
 
 import argparse
@@ -18,11 +18,11 @@ from unittest.mock import MagicMock, Mock, patch
 from anthropic_proxy.cli import (
     _get_host_port,
     build_parser,
+    cmd_init,
     cmd_restart,
     cmd_start,
     cmd_status,
     cmd_stop,
-    init_config,
     parse_args,
     print_config,
     redact_api_keys,
@@ -182,17 +182,23 @@ class TestBuildParser(unittest.TestCase):
         args = parser.parse_args(["--config", "/path/to/config.json"])
         self.assertEqual(args.config, Path("/path/to/config.json"))
 
-        # Test that --init option exists
-        args = parser.parse_args(["--init"])
-        self.assertTrue(args.init)
-
-        # Test that --init-force option exists
-        args = parser.parse_args(["--init-force"])
-        self.assertTrue(args.init_force)
-
         # Test that --print-config option exists
         args = parser.parse_args(["--print-config"])
         self.assertTrue(args.print_config)
+
+    def test_build_parser_has_init_subcommand(self):
+        """Test build_parser has init subcommand with --force option."""
+        parser = build_parser()
+
+        # Test init subcommand
+        args = parser.parse_args(["init"])
+        self.assertEqual(args.command, "init")
+        self.assertFalse(args.force)
+
+        # Test init --force
+        args = parser.parse_args(["init", "--force"])
+        self.assertEqual(args.command, "init")
+        self.assertTrue(args.force)
 
     def test_build_parser_has_start_subcommand(self):
         """Test build_parser has start subcommand with options."""
@@ -399,53 +405,71 @@ class TestCmdStatus(unittest.TestCase):
         self.assertEqual(cm.exception.code, 0)
 
 
-class TestInitConfig(unittest.TestCase):
-    """Test cases for init_config function."""
+class TestCmdInit(unittest.TestCase):
+    """Test cases for cmd_init function."""
 
-    @patch("anthropic_proxy.cli.initialize_config")
+    def _make_args(self, force=False):
+        """Create args namespace for cmd_init."""
+        args = argparse.Namespace()
+        args.force = force
+        return args
+
+    @patch("anthropic_proxy.config_manager.ensure_log_dir")
+    @patch("anthropic_proxy.config_manager.create_default_config_file")
+    @patch("anthropic_proxy.config_manager.create_default_models_file")
     @patch("anthropic_proxy.cli.DEFAULT_MODELS_FILE")
     @patch("anthropic_proxy.cli.DEFAULT_CONFIG_FILE")
-    def test_init_config_creates_files_when_not_exist(
-        self, mock_config, mock_models, mock_init
+    def test_cmd_init_creates_files_when_not_exist(
+        self, mock_config_file, mock_models_file, mock_create_models, mock_create_config, mock_log_dir
     ):
-        """Test init_config creates files when they don't exist."""
-        mock_models.exists.return_value = False
-        mock_config.exists.return_value = False
-        mock_init.return_value = (mock_models, mock_config)
+        """Test cmd_init creates files when they don't exist."""
+        mock_models_file.exists.return_value = False
+        mock_config_file.exists.return_value = False
 
         with patch("builtins.print"):
-            init_config(force=False)
+            cmd_init(self._make_args(force=False))
 
-        mock_init.assert_called_once_with(force=False)
+        mock_create_models.assert_called_once_with(force=False)
+        mock_create_config.assert_called_once_with(force=False)
 
-    @patch("anthropic_proxy.cli.initialize_config")
+    @patch("anthropic_proxy.config_manager.ensure_log_dir")
+    @patch("anthropic_proxy.config_manager.create_default_config_file")
+    @patch("anthropic_proxy.config_manager.create_default_models_file")
     @patch("anthropic_proxy.cli.DEFAULT_MODELS_FILE")
     @patch("anthropic_proxy.cli.DEFAULT_CONFIG_FILE")
-    def test_init_config_skips_when_files_exist(
-        self, mock_config, mock_models, mock_init
+    def test_cmd_init_skips_when_files_exist(
+        self, mock_config_file, mock_models_file, mock_create_models, mock_create_config, mock_log_dir
     ):
-        """Test init_config skips creation when files exist."""
-        mock_models.exists.return_value = True
-        mock_config.exists.return_value = True
+        """Test cmd_init skips creation when files exist and no force."""
+        mock_models_file.exists.return_value = True
+        mock_config_file.exists.return_value = True
 
         with patch("builtins.print"):
-            init_config(force=False)
+            cmd_init(self._make_args(force=False))
 
-        mock_init.assert_not_called()
+        # Neither file should be created when both exist
+        mock_create_models.assert_not_called()
+        mock_create_config.assert_not_called()
 
-    @patch("anthropic_proxy.cli.initialize_config")
+    @patch("anthropic_proxy.config_manager.ensure_log_dir")
+    @patch("anthropic_proxy.config_manager.create_default_config_file")
+    @patch("anthropic_proxy.config_manager.create_default_models_file")
     @patch("anthropic_proxy.cli.DEFAULT_MODELS_FILE")
     @patch("anthropic_proxy.cli.DEFAULT_CONFIG_FILE")
-    def test_init_config_forces_overwrite(self, mock_config, mock_models, mock_init):
-        """Test init_config forces overwrite when force=True."""
-        mock_models.exists.return_value = True
-        mock_config.exists.return_value = True
-        mock_init.return_value = (mock_models, mock_config)
+    def test_cmd_init_force_only_resets_config(
+        self, mock_config_file, mock_models_file, mock_create_models, mock_create_config, mock_log_dir
+    ):
+        """Test cmd_init --force only resets config.json, never models.yaml."""
+        mock_models_file.exists.return_value = True
+        mock_config_file.exists.return_value = True
 
         with patch("builtins.print"):
-            init_config(force=True)
+            cmd_init(self._make_args(force=True))
 
-        mock_init.assert_called_once_with(force=True)
+        # Models file is NEVER overwritten (even with force)
+        mock_create_models.assert_not_called()
+        # Config file is reset with force
+        mock_create_config.assert_called_once_with(force=True)
 
 
 class TestPrintConfig(unittest.TestCase):
@@ -477,15 +501,21 @@ class TestParseArgs(unittest.TestCase):
 
     def test_parse_args_returns_namespace(self):
         """Test parse_args returns argparse.Namespace."""
-        with patch("sys.argv", ["anthropic-proxy", "--init"]):
+        with patch("sys.argv", ["anthropic-proxy", "init"]):
             args = parse_args()
             self.assertIsInstance(args, argparse.Namespace)
 
-    def test_parse_args_parses_init_flag(self):
-        """Test parse_args correctly parses --init flag."""
-        with patch("sys.argv", ["anthropic-proxy", "--init"]):
+    def test_parse_args_parses_init_subcommand(self):
+        """Test parse_args correctly parses init subcommand."""
+        with patch("sys.argv", ["anthropic-proxy", "init"]):
             args = parse_args()
-            self.assertTrue(args.init)
+            self.assertEqual(args.command, "init")
+            self.assertFalse(args.force)
+
+        with patch("sys.argv", ["anthropic-proxy", "init", "--force"]):
+            args = parse_args()
+            self.assertEqual(args.command, "init")
+            self.assertTrue(args.force)
 
     def test_parse_args_parses_start_command(self):
         """Test parse_args correctly parses start subcommand."""
