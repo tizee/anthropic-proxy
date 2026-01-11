@@ -235,8 +235,19 @@ Configuration files are stored in `~/.config/anthropic-proxy/`:
 └── config.json      # Server settings (log level, port, env vars)
 
 ~/.anthropic-proxy/
-└── server.log       # Log files
+├── anthropic-proxy.pid  # PID file for tracking running daemon
+├── daemon.log           # Daemon stdout/stderr output
+└── server.log           # Application logs (configured in config.json)
 ```
+
+**Log Files:**
+- **`daemon.log`**: Captures all stdout/stderr output from the daemon process, including:
+  - Server startup messages
+  - Configuration loading status
+  - Python exceptions and tracebacks
+  - Uvicorn server output
+  - FastAPI access logs (request/response)
+- **`server.log`**: Application-level logs configured by `log_level` in `config.json` (default: WARNING)
 
 **First Run**: On first run, config files are auto-created with default values. Use `--init` to reinitialize (skips if files exist):
 
@@ -352,6 +363,86 @@ tail -f ~/.anthropic-proxy/daemon.log
 
 ```bash
 ANTHROPIC_BASE_URL=http://localhost:8082 claude
+```
+
+## Debugging & Logging
+
+### Log Files Overview
+
+The proxy uses two separate log files for different purposes:
+
+| File | Location | Purpose | Content |
+|------|----------|---------|---------|
+| **daemon.log** | `~/.anthropic-proxy/daemon.log` | Daemon process output | Server startup, configuration, exceptions, uvicorn/fastapi logs |
+| **server.log** | `~/.anthropic-proxy/server.log` | Application logs | Configured by `log_level` in config.json (default: WARNING) |
+
+### Viewing Logs
+
+```bash
+# Follow daemon log in real-time (recommended for debugging)
+tail -f ~/.anthropic-proxy/daemon.log
+
+# View last 50 lines of daemon log
+tail -n 50 ~/.anthropic-proxy/daemon.log
+
+# Search for errors in daemon log
+grep -i "error\|exception\|traceback" ~/.anthropic-proxy/daemon.log
+
+# View server log (application-level)
+cat ~/.anthropic-proxy/server.log
+```
+
+### Common Debugging Scenarios
+
+**Server won't start:**
+```bash
+# Check daemon log for startup errors
+cat ~/.anthropic-proxy/daemon.log
+
+# Verify no other process is using the port
+lsof -i :8082
+
+# Check if daemon is already running
+anthropic-proxy status
+```
+
+**Requests failing:**
+```bash
+# Follow daemon log to see request/response flow
+tail -f ~/.anthropic-proxy/daemon.log
+
+# Increase log verbosity in config.json:
+# "log_level": "DEBUG"
+```
+
+**Configuration issues:**
+```bash
+# View current configuration
+anthropic-proxy --print-config
+
+# Reinitialize config files
+anthropic-proxy --init-force
+```
+
+### Log Level Configuration
+
+Adjust logging verbosity in `~/.config/anthropic-proxy/config.json`:
+
+```json
+{
+  "log_level": "DEBUG"   // Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+}
+```
+
+- **DEBUG**: Detailed information for diagnosing problems
+- **INFO**: General informational messages
+- **WARNING**: Something unexpected happened (default)
+- **ERROR**: Serious problem occurred
+- **CRITICAL**: Critical error, program may not continue
+
+After changing `log_level`, restart the server:
+```bash
+anthropic-proxy restart
 ```
 
 ## Development
