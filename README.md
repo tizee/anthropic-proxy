@@ -10,6 +10,8 @@ A proxy server that enables Claude Code to work with multiple model providers th
 
 - kimi official supports Anthropic API https://api.moonshot.cn/anthropic
 - deepseek supports Anthropic https://api-docs.deepseek.com/guides/anthropic_api
+- Zhipu GLM supports Anthropic API https://open.bigmodel.cn/api/anthropic
+- MiniMax supports Anthropic API https://api.minimax.io/anthropic
 
 This allows you to use Claude Code with both OpenAI-compatible models and native Claude API endpoints. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
@@ -40,14 +42,13 @@ Use this proxy in the following scenarios:
 
 The following providers offer native Anthropic API compatibility, allowing direct usage without format conversion:
 
-| Provider | API Endpoint | Supported Models | Status | Notes |
-|----------|-------------|------------------|---------|-------|
-| **Moonshot AI (Kimi)** | `https://api.moonshot.cn/anthropic` | kimi-k2-0711-preview, kimi-k2-0711-chat | ✅ Tested | Native Anthropic API compatibility |
-| **DeepSeek** | `https://api.deepseek.com/anthropic` | deepseek-chat, deepseek-reasoner | ✅ Tested | Full Anthropic API compatibility |
+| Provider | API Endpoint | Supported Models |
+|----------|-------------|------------------|
+| **Moonshot AI (Kimi)** | `https://api.moonshot.cn/anthropic` | kimi-k2-0711-preview, kimi-k2-0711-chat |
+| **DeepSeek** | `https://api.deepseek.com/anthropic` | deepseek-chat, deepseek-reasoner |
+| **Zhipu AI (GLM)** | `https://open.bigmodel.cn/api/anthropic` | glm-4.7, glm-4.6 |
+| **MiniMax** | `https://api.minimax.io/anthropic` | MiniMax-M2.1 |
 
-### Usage Notes
-
-- **✅ Tested**: Provider has been tested and confirmed to work with Anthropic API compatibility
 
 ### Configuration Example
 

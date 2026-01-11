@@ -51,7 +51,7 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
-def extract_api_key(request: Request) -> str:
+def extract_api_key(request: Request) -> str | None:
     """Extract API key from request Authorization header.
 
     Claude Code sends the API key via Authorization header when ANTHROPIC_AUTH_TOKEN is set.
@@ -61,18 +61,13 @@ def extract_api_key(request: Request) -> str:
         request: FastAPI Request object
 
     Returns:
-        The API key extracted from the Authorization header
-
-    Raises:
-        HTTPException: If no Authorization header is present
+        The API key extracted from the Authorization header, or None if not found.
+        When None is returned, the caller should check if the model has its own API key.
     """
     auth_header = request.headers.get("Authorization") or request.headers.get("x-api-key")
 
     if not auth_header:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing Authorization header. API key should be provided via ccproxy."
-        )
+        return None
 
     # Handle "Bearer <token>" format
     if auth_header.startswith("Bearer "):
@@ -196,10 +191,10 @@ async def handle_direct_claude_request(
 ):
     """Handle direct Claude API requests without OpenAI conversion."""
     try:
-        # Extract API key from request header (passed by ccproxy)
+        # Extract API key from request header (may be None if model has its own key)
         api_key = extract_api_key(raw_request)
 
-        # Create Claude client with the extracted API key
+        # Create Claude client - uses model-specific key if available, otherwise header key
         claude_client = create_claude_client(model_id, api_key)
 
         # Prepare request payload - use original Claude format
@@ -432,6 +427,15 @@ async def create_message(raw_request: Request):
 
         model_config = CUSTOM_OPENAI_MODELS[model_id]
         logger.debug(f"model config: {model_config}")
+
+        # Check if we have an API key (either from header or model config)
+        if model_config.get("api_key"):
+            logger.debug(f"Using model-specific API key for {model_id}")
+        elif not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+            )
 
         # Determine message type based on content
         message_type = determine_message_type(request)
@@ -687,7 +691,7 @@ async def test_message_conversion(raw_request: Request):
     Useful for testing specific model integrations and message format conversion.
     """
     try:
-        # Extract API key from request header (passed by ccproxy)
+        # Extract API key from request header (may be None if model has its own key)
         api_key = extract_api_key(raw_request)
 
         # Use Pydantic's optimized JSON validation directly from raw bytes
@@ -695,13 +699,21 @@ async def test_message_conversion(raw_request: Request):
         request = ClaudeMessagesRequest.model_validate_json(body, strict=False)
         original_model = request.model
 
+        # Check if we have an API key (either from header or model config)
+        model_config = CUSTOM_OPENAI_MODELS.get(original_model, {})
+        if not model_config.get("api_key") and not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+            )
+
         logger.info(f"🧪 TEST CONVERSION: Direct test for model {original_model}")
 
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
         openai_request['store'] = False
 
-        # Create OpenAI client for the model with the extracted API key
+        # Create OpenAI client - uses model-specific key if available, otherwise header key
         client = create_openai_client(original_model, api_key)
         # model_id -> model_name in CUSTOM_OPENAI_MODELS configs
         openai_request["model"] = CUSTOM_OPENAI_MODELS[request.model]["model_name"]
