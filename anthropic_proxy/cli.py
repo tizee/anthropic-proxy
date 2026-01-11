@@ -16,6 +16,7 @@ from .config_manager import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_LOG_DIR,
     DEFAULT_MODELS_FILE,
+    get_default_log_file_path,
     initialize_config,
     load_config_file,
 )
@@ -23,6 +24,17 @@ from .config import config
 from . import daemon
 
 logger = logging.getLogger(__name__)
+
+
+# ANSI color codes for terminal output
+class Colors:
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
 
 
 def redact_api_keys(models_data: list, show_keys: bool = False) -> list:
@@ -99,42 +111,52 @@ def print_config(models_path: Path, config_path: Path, show_api_keys: bool = Fal
     print("=" * 60 + "\n")
 
 
-def init_config(force: bool = False):
+def cmd_init(args: argparse.Namespace) -> None:
     """Initialize config directory with default files.
 
     Args:
-        force: If True, overwrite existing files
+        args: Parsed command-line arguments (with force flag)
     """
-    print("\n" + "=" * 60)
-    print("Initializing Anthropic Proxy Configuration")
-    print("=" * 60)
+    c = Colors
+    force_config = getattr(args, "force", False)
+
+    print(f"\n{c.BOLD}Initializing Anthropic Proxy Configuration{c.RESET}")
+    print("=" * 50)
 
     # Check if files already exist
     models_exists = DEFAULT_MODELS_FILE.exists()
     config_exists = DEFAULT_CONFIG_FILE.exists()
 
-    if models_exists and config_exists and not force:
-        print(f"\nConfig files already exist:")
-        print(f"  - {DEFAULT_MODELS_FILE}")
-        print(f"  - {DEFAULT_CONFIG_FILE}")
-        print("\nUse --init-force to overwrite existing files.")
-        print("=" * 60 + "\n")
-        return
+    # Models file: never overwrite (user's custom configurations)
+    if not models_exists:
+        from .config_manager import create_default_models_file
+        create_default_models_file(force=False)
+        print(f"  {c.GREEN}Created:{c.RESET}  {DEFAULT_MODELS_FILE}")
+    else:
+        print(f"  {c.CYAN}Exists:{c.RESET}   {DEFAULT_MODELS_FILE}")
 
-    models_file, config_file = initialize_config(force=force)
+    # Config file: overwrite only with --force
+    if not config_exists or force_config:
+        from .config_manager import create_default_config_file
+        create_default_config_file(force=force_config)
+        action = "Reset" if force_config and config_exists else "Created"
+        print(f"  {c.GREEN}{action}:{c.RESET}  {DEFAULT_CONFIG_FILE}")
+    else:
+        print(f"  {c.CYAN}Exists:{c.RESET}   {DEFAULT_CONFIG_FILE}")
 
-    print(f"\nConfig directory: {DEFAULT_CONFIG_DIR}")
-    print(f"Log directory: {DEFAULT_LOG_DIR}")
-    print(f"\n{'Created' if force or not models_exists else 'Verified'}:")
-    print(f"  - {models_file}")
-    print(f"  - {config_file}")
+    # Ensure log directory exists
+    from .config_manager import ensure_log_dir
+    ensure_log_dir()
 
-    print("\nNext steps:")
-    print("  1. Edit models.yaml to add your model configurations")
-    print("  2. Edit config.json to customize server settings")
-    print("  3. Run: anthropic-proxy start")
+    print(f"\n{c.DIM}Directories:{c.RESET}")
+    print(f"  {c.CYAN}Config:{c.RESET} {DEFAULT_CONFIG_DIR}")
+    print(f"  {c.CYAN}Logs:{c.RESET}   {DEFAULT_LOG_DIR}")
 
-    print("=" * 60 + "\n")
+    print(f"\n{c.DIM}Next steps:{c.RESET}")
+    print(f"  1. Edit {c.BOLD}models.yaml{c.RESET} to add your model configurations")
+    print(f"  2. Edit {c.BOLD}config.json{c.RESET} to customize server settings")
+    print(f"  3. Run: {c.BOLD}anthropic-proxy start{c.RESET}")
+    print()
 
 
 def _get_host_port(args: argparse.Namespace) -> tuple[str, int]:
@@ -167,15 +189,18 @@ def cmd_start(args: argparse.Namespace) -> None:
     Args:
         args: Parsed command-line arguments
     """
+    c = Colors
+
     # Check if already running
     status = daemon.get_daemon_status()
     if status is not None:
-        print(f"Server is already running (PID: {status.pid})")
+        print(f"{c.YELLOW}Server is already running{c.RESET}")
+        print(f"  {c.CYAN}PID:{c.RESET}    {c.BOLD}{status.pid}{c.RESET}")
         if status.port:
-            print(f"  Port: {status.port}")
+            print(f"  {c.CYAN}Port:{c.RESET}   {c.BOLD}{status.port}{c.RESET}")
         if status.uptime:
-            print(f"  Uptime: {status.uptime}")
-        print("\nUse 'anthropic-proxy stop' to stop the server first.")
+            print(f"  {c.CYAN}Uptime:{c.RESET} {status.uptime}")
+        print(f"\n{c.DIM}Use 'anthropic-proxy stop' to stop the server first.{c.RESET}")
         sys.exit(1)
 
     # Get host and port
@@ -191,13 +216,15 @@ def cmd_start(args: argparse.Namespace) -> None:
             models_path=models_path,
             config_path=config_path,
         )
-        print(f"Server started successfully (PID: {pid})")
-        print(f"  Host: {host}")
-        print(f"  Port: {port}")
-        print(f"  Log file: {daemon.DAEMON_LOG_FILE}")
-        print("\nUse 'anthropic-proxy status' to check status.")
+        print(f"{c.GREEN}{c.BOLD}Server started successfully{c.RESET}")
+        print(f"  {c.CYAN}PID:{c.RESET}  {c.BOLD}{pid}{c.RESET}")
+        print(f"  {c.CYAN}Host:{c.RESET} {host}")
+        print(f"  {c.CYAN}Port:{c.RESET} {c.BOLD}{port}{c.RESET}")
+        print(f"\n{c.DIM}Logs:{c.RESET}")
+        print(f"  {c.CYAN}Server:{c.RESET} {get_default_log_file_path()}")
+        print(f"  {c.CYAN}Daemon:{c.RESET} {daemon.DAEMON_LOG_FILE}")
     except RuntimeError as e:
-        print(f"Error starting server: {e}", file=sys.stderr)
+        print(f"{c.RED}Error starting server:{c.RESET} {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -207,16 +234,18 @@ def cmd_stop(args: argparse.Namespace) -> None:
     Args:
         args: Parsed command-line arguments
     """
+    c = Colors
     status = daemon.get_daemon_status()
+
     if status is None:
-        print("Server is not running.")
+        print(f"{c.DIM}Server is not running.{c.RESET}")
         sys.exit(0)
 
-    print(f"Stopping server (PID: {status.pid})...")
+    print(f"Stopping server {c.DIM}(PID: {status.pid}){c.RESET}...")
     if daemon.stop_daemon():
-        print("Server stopped successfully.")
+        print(f"{c.GREEN}{c.BOLD}Server stopped successfully.{c.RESET}")
     else:
-        print("Error stopping server.", file=sys.stderr)
+        print(f"{c.RED}Error stopping server.{c.RESET}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -226,16 +255,17 @@ def cmd_restart(args: argparse.Namespace) -> None:
     Args:
         args: Parsed command-line arguments
     """
+    c = Colors
     status = daemon.get_daemon_status()
 
     if status is not None:
-        print(f"Stopping server (PID: {status.pid})...")
+        print(f"Stopping server {c.DIM}(PID: {status.pid}){c.RESET}...")
         if not daemon.stop_daemon():
-            print("Error stopping server.", file=sys.stderr)
+            print(f"{c.RED}Error stopping server.{c.RESET}", file=sys.stderr)
             sys.exit(1)
-        print("Server stopped.")
+        print(f"{c.GREEN}Server stopped.{c.RESET}")
     else:
-        print("Server was not running.")
+        print(f"{c.DIM}Server was not running.{c.RESET}")
 
     # Start again
     cmd_start(args)
@@ -248,18 +278,21 @@ def cmd_status(args: argparse.Namespace) -> None:
         args: Parsed command-line arguments
     """
     status = daemon.get_daemon_status()
+    c = Colors
 
     if status is None:
-        print("Server Status: STOPPED")
+        print(f"Server Status: {c.RED}{c.BOLD}STOPPED{c.RESET}")
         sys.exit(0)
 
-    print("Server Status: RUNNING")
-    print(f"  PID: {status.pid}")
+    print(f"Server Status: {c.GREEN}{c.BOLD}RUNNING{c.RESET}")
+    print(f"  {c.CYAN}PID:{c.RESET}    {c.BOLD}{status.pid}{c.RESET}")
     if status.port:
-        print(f"  Port: {status.port}")
+        print(f"  {c.CYAN}Port:{c.RESET}   {c.BOLD}{status.port}{c.RESET}")
     if status.uptime:
-        print(f"  Uptime: {status.uptime}")
-    print(f"  Log file: {daemon.DAEMON_LOG_FILE}")
+        print(f"  {c.CYAN}Uptime:{c.RESET} {status.uptime}")
+    print(f"\n{c.DIM}Logs:{c.RESET}")
+    print(f"  {c.CYAN}Server:{c.RESET} {get_default_log_file_path()}")
+    print(f"  {c.CYAN}Daemon:{c.RESET} {daemon.DAEMON_LOG_FILE}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -274,13 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  anthropic-proxy init               Initialize config files
   anthropic-proxy start              Start server in background
   anthropic-proxy start --port 8080  Start on custom port
   anthropic-proxy status             Show server status
   anthropic-proxy stop               Stop server
-
-For configuration:
-  anthropic-proxy --init             Initialize config files
   anthropic-proxy --print-config     View current configuration
 
 For more information, see: https://github.com/tizee/anthropic-proxy
@@ -301,16 +332,6 @@ For more information, see: https://github.com/tizee/anthropic-proxy
         default=None,
         metavar="PATH",
         help="Path to config.json configuration file",
-    )
-    parser.add_argument(
-        "--init",
-        action="store_true",
-        help="Initialize config directory with default files (skips if files exist)",
-    )
-    parser.add_argument(
-        "--init-force",
-        action="store_true",
-        help="Force reinitialize config directory, overwriting existing files",
     )
     parser.add_argument(
         "--print-config",
@@ -402,6 +423,24 @@ Examples:
     )
     status_parser.set_defaults(func=cmd_status)
 
+    # init subcommand
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize config files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  anthropic-proxy init               Initialize config files (skip if exist)
+  anthropic-proxy init --force       Reset config.json to defaults (keeps models.yaml)
+        """,
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Reset config.json to defaults (models.yaml is never overwritten)",
+    )
+    init_parser.set_defaults(func=cmd_init)
+
     return parser
 
 
@@ -418,14 +457,6 @@ def parse_args() -> argparse.Namespace:
 def main():
     """Main CLI entry point."""
     args = parse_args()
-
-    # Handle --init and --init-force
-    if args.init_force:
-        init_config(force=True)
-        return
-    elif args.init:
-        init_config(force=False)
-        return
 
     # Handle --print-config
     if args.print_config:
