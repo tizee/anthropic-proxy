@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 CUSTOM_OPENAI_MODELS = {}
 
 
-def load_custom_models(config_file=None):
+def load_models_config(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file.
 
     API keys can be configured per-model in this file, or passed via request
@@ -97,7 +97,7 @@ def initialize_custom_models():
     API keys can be configured per-model in models.yaml, or passed via
     request headers from ccproxy. Model-specific keys take precedence.
     """
-    load_custom_models()
+    load_models_config()
 
 
 def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
