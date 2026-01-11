@@ -18,6 +18,11 @@ Key points:
 - **models.yaml** defines model → API URL mappings and per-model options (no `api_key_name`, no pricing fields).
 - **/v1/messages/count_tokens** returns a local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice.
 
+### Dual-Mode Operation
+The proxy operates in two distinct modes based on the `direct` flag in models.yaml:
+- **Direct mode** (`direct: true`): Routes to Anthropic-compatible APIs without format conversion. Providers include Moonshot AI (Kimi), DeepSeek, Zhipu GLM, MiniMax. Uses httpx client.
+- **OpenAI-compatible mode** (`direct: false`): Converts Anthropic format to OpenAI format for third-party providers. Uses AsyncOpenAI SDK client.
+
 ## Architecture Reference
 
 ### Core Modules
@@ -37,6 +42,16 @@ Key points:
 
 ### Documentation
 - `docs/api-response-formats.md`: Reference documentation for API response formats used by different providers (Claude, OpenAI, DeepSeek, VolcEngine).
+
+### Plugin System
+- `anthropic_proxy/hook.py`: `HookManager` class that dynamically loads plugins from `anthropic_proxy/plugins/`
+- `anthropic_proxy/plugins/filter_tools.py`: Built-in plugin that filters WebSearch, NotebookEdit, NotebookRead tools
+- Plugins can define `request_hook(payload)` and/or `response_hook(payload)` functions to modify payloads
+
+### Streaming Architecture
+- `AnthropicStreamingConverter` (in `streaming.py`) manages a state machine for SSE chunk conversion
+- Handles content blocks, tool calls, thinking blocks during streaming
+- Tracks token counts from provider responses (not local estimation)
 
 ## Running the Server
 
@@ -87,8 +102,33 @@ Located in `~/.config/anthropic-proxy/`:
 
 Runtime files in `~/.anthropic-proxy/`:
 - `anthropic-proxy.pid`: PID file for tracking running daemon
-- `daemon.log`: Server output logs (stdout/stderr from daemon process)
-- `server.log`: Application logs (configured in config.json)
+- `daemon.log`: All stdout/stderr from daemon process (server startup, configuration, exceptions, uvicorn/fastapi logs)
+- `server.log`: Application logs configured by `log_level` in config.json (default: WARNING)
+
+**Log file distinction**: `daemon.log` captures everything including startup errors and FastAPI access logs. `server.log` only contains application-level logs at the configured severity.
+
+## Model Selection
+
+### model_id vs model_name
+- `model_id`: Unique key used in incoming requests (what ccproxy specifies as `model`)
+- `model_name`: Actual provider model name sent to upstream API
+- Multiple `model_id` entries can map to the same `model_name` with different settings
+
+### reasoning_effort
+Controls thinking mode behavior. Supports: `minimal`, `low`, `medium`, `high`
+- `minimal`: No thinking (thinking block disabled)
+- `low`/`medium`/`high`: Progressive thinking intensity
+
+This allows creating "reasoning level" variants of the same base model:
+```yaml
+- model_id: doubao-nothinking
+  model_name: doubao-1-8
+  reasoning_effort: minimal
+
+- model_id: doubao-high
+  model_name: doubao-1-8
+  reasoning_effort: high
+```
 
 ## CLI Commands Reference
 
@@ -105,7 +145,13 @@ Runtime files in `~/.anthropic-proxy/`:
 ## Testing
 - `make test` runs the full test suite.
 - `make test-cov` generates coverage report.
+- `make test-cov-html` generates HTML coverage report.
+- Single test suites: `make test-routing`, `make test-hooks`, `make test-conversion`
 - Integration tests that require a live proxy server are intentionally removed.
+
+### Code Quality
+- `make lint` checks and fixes code with ruff.
+- `make format` formats code with ruff.
 
 ### Test Structure
 - `tests/test_conversions.py`: Request/response conversion tests
