@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Guidance for working on this repository.
 
@@ -23,7 +23,38 @@ Key points:
 - `anthropic_proxy/streaming.py`: Streaming conversion logic.
 - `anthropic_proxy/types.py`: Pydantic models and API schemas.
 - `anthropic_proxy/utils.py`: Usage tracking and error helpers.
+- `anthropic_proxy/daemon.py`: Background daemon management (PID file, process control).
+- `anthropic_proxy/cli.py`: Command-line interface with subcommands (start/stop/restart/status).
 - `docs/api-response-formats.md`: Reference documentation for API response formats used by different providers (Claude, OpenAI, DeepSeek, VolcEngine).
+
+## Running the Server
+
+The server runs as a background daemon. All output is logged to `~/.anthropic-proxy/daemon.log`.
+
+```bash
+# Start server
+anthropic-proxy start
+
+# Check status
+anthropic-proxy status
+
+# Stop server
+anthropic-proxy stop
+
+# View logs for debugging
+tail -f ~/.anthropic-proxy/daemon.log
+```
+
+## Configuration Files
+
+Located in `~/.config/anthropic-proxy/`:
+- `models.yaml`: Model configurations (model_id, api_base, direct mode, etc.)
+- `config.json`: Server settings (log_level, log_file_path, host, port, env)
+
+Runtime files in `~/.anthropic-proxy/`:
+- `anthropic-proxy.pid`: PID file for tracking running daemon
+- `daemon.log`: Server output logs
+- `server.log`: Application logs (configured in config.json)
 
 ## Testing
 - `make test` runs the current unit/conversion suite.

@@ -78,7 +78,7 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 ### 🎯 Model Selection
 - Model choice comes from the incoming request (ccproxy controls this)
 - Support for both direct and OpenAI-compatible models in `models.yaml`
-- Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose “reasoning level” variants. `reasoning_effort` supports `minimal|low|medium|high` (where `minimal` means no thinking).
+- Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose "reasoning level" variants. `reasoning_effort` supports `minimal|low|medium|high` (where `minimal` means no thinking).
 
 Example:
 
@@ -110,7 +110,7 @@ Then select the variant by setting `model` in your ccproxy provider config (or s
 - Structured error parsing for both OpenAI and Claude API responses
 - Detailed logging and debugging information for API failures
 - Graceful handling of connection timeouts and rate limits
-- Enhanced client reliability with automatic retry mechanisms. Configure via `MAX_RETRIES` environment variable (default: 2 retries)
+- Enhanced client reliability with automatic retry mechanisms
 
 ### 📊 Advanced Features
 - Streaming support for both modes with proper error handling
@@ -169,101 +169,187 @@ Plugins are loaded automatically at server startup. Both request and response ho
 ## Quick Start
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - [uv](https://github.com/astral-sh/uv) (recommended)
-- [make](https://www.gnu.org/software/make/) (optional but recommended)
 - API keys for desired providers
 
 ### Installation
 
-#### Option 1: Global Installation (Recommended)
-Install once and use from any directory:
+#### Option 1: UV Tool Installation (Recommended)
+
+Install as a global tool using `uv`:
 
 ```bash
-git clone https://github.com/tizee/claude-code-proxy.git
-cd claude-code-proxy
-./install.sh
+git clone https://github.com/tizee/anthropic-proxy.git
+cd anthropic-proxy
+uv tool install .
 ```
 
-After installation, you can run the proxy from anywhere:
+After installation, the `anthropic-proxy` command is available globally:
+
 ```bash
-claude-proxy        # Production mode
-claude-proxy -d     # Development mode
-claude-proxy -p 8080  # Custom port
+anthropic-proxy                    # Start with default config
+anthropic-proxy --help             # Show all options
+anthropic-proxy --print-config     # View current configuration
+```
+
+**Uninstall:**
+
+```bash
+uv tool uninstall anthropic-proxy
+```
+
+**Upgrade:**
+
+```bash
+cd anthropic-proxy
+git pull
+uv tool install anthropic-proxy --reinstall
 ```
 
 #### Option 2: Local Installation
-Traditional local installation:
+
+Traditional local installation using the existing scripts:
 
 ```bash
-git clone https://github.com/tizee/claude-code-proxy.git
-cd claude-code-proxy
+git clone https://github.com/tizee/anthropic-proxy.git
+cd anthropic-proxy
+./install.sh
+```
+
+Or use `uv run` for development:
+
+```bash
+cd anthropic-proxy
 uv install
+make run
 ```
 
 ### Configuration
 
-#### ccproxy Integration Mode (Recommended)
+Configuration files are stored in `~/.config/anthropic-proxy/`:
 
-When using with ccproxy, API keys are passed via request headers automatically:
+```
+~/.config/anthropic-proxy/
+├── models.yaml      # Model configurations
+└── config.json      # Server settings (log level, port, env vars)
 
-1. Configure models in `models.yaml` - only URL mappings needed, no API keys
-2. Configure your API keys in ccproxy's `~/.config/llm/cc-proxy.json`
-3. ccproxy sets `ANTHROPIC_BASE_URL` to point to this proxy and passes keys via headers
+~/.anthropic-proxy/
+└── server.log       # Log files
+```
+
+**First Run**: On first run, config files are auto-created with default values. Use `--init` to reinitialize (skips if files exist):
+
+```bash
+anthropic-proxy --init           # Initialize (skips if files exist)
+anthropic-proxy --init-force     # Force reinitialize (overwrites existing files)
+```
+
+#### models.yaml
+
+Configure your models in `~/.config/anthropic-proxy/models.yaml`:
 
 ```yaml
-# models.yaml - simplified configuration (no api_key_name needed)
+# Required fields: model_id, api_base
+# Optional fields: model_name, api_key, can_stream, max_tokens, max_input_tokens,
+#                  context, extra_headers, extra_body, direct, reasoning_effort, temperature
+#
+# API Key Configuration:
+# - api_key: Optional per-model API key. If set, it takes precedence over request headers.
+# - If api_key is not set, the key from the Authorization header (via ccproxy) is used.
+# - API keys stored here are in plain text - use caution in shared environments.
+#
+# reasoning_effort supports: minimal, low, medium, high (minimal = no thinking)
+# direct: true for Anthropic-compatible APIs, false for OpenAI-compatible
+
 - model_id: deepseek-chat
   model_name: deepseek-chat
   api_base: https://api.deepseek.com/v1
+  direct: false
   can_stream: true
-  max_tokens: 8k
-  context: 64k
+  max_tokens: 8K
+  context: 128K
 
-- model_id: claude-sonnet-4
-  model_name: anthropic/claude-sonnet-4
-  api_base: https://openrouter.ai/api/v1
-  can_stream: true
-  max_tokens: 64000
-  context: 200k
-```
-
-#### Direct Claude API Mode Configuration
-To use official Claude API or compatible endpoints directly:
-
-```yaml
 - model_id: claude-3-5-sonnet-direct
   model_name: claude-3-5-sonnet-20241022
   api_base: https://api.anthropic.com
-  direct: true  # Enable direct Claude API mode
-  max_tokens: 8k   # Supports shorthand: 8k, 16k, 32k, etc.
-  max_input_tokens: 200k
+  direct: true
+  can_stream: true
+  max_tokens: 8K
+  max_input_tokens: 200K
 ```
 
-#### OpenAI-Compatible Mode Configuration
-For OpenAI-compatible endpoints:
+#### config.json
 
-```yaml
-- model_id: deepseek-v3
-  model_name: deepseek-chat
-  api_base: https://api.deepseek.com/v1
-  direct: false  # Use OpenAI-compatible mode (default)
-  max_tokens: 8k   # Supports shorthand notation
-  max_input_tokens: 128k
+Server settings in `~/.config/anthropic-proxy/config.json`:
+
+```json
+{
+  "log_level": "WARNING",
+  "log_file_path": "~/.anthropic-proxy/server.log",
+  "host": "0.0.0.0",
+  "port": 8082
+}
 ```
 
-**Note**: Token limits support both numeric values (e.g., `8192`) and shorthand notation (e.g., `8k`, `16K`, `32k`, `128K`, `200k`). The shorthand format is case-insensitive.
+### CLI Options
+
+#### Server Control Commands
+
+```bash
+anthropic-proxy start               # Start server in background
+anthropic-proxy start --port 8080   # Start on custom port
+anthropic-proxy stop                # Stop running server
+anthropic-proxy restart             # Restart server
+anthropic-proxy status              # Show server status (PID, port, uptime)
+```
+
+#### Utility Commands
+
+```bash
+anthropic-proxy --print-config                # View configuration (API keys redacted)
+anthropic-proxy --print-config --show-api-keys  # View with API keys visible
+anthropic-proxy --init                         # Initialize config (skips if files exist)
+anthropic-proxy --init-force                   # Force reinitialize (overwrites existing files)
+anthropic-proxy --models PATH                  # Use custom models file
+anthropic-proxy --config PATH                  # Use custom config file
+```
+
+#### Global Options
+
+Global options like `--models` and `--config` can be combined with server control commands:
+
+```bash
+anthropic-proxy start --models ./my-models.yaml --port 8080
+anthropic-proxy restart --config ./my-config.json
+```
 
 ### Running the Server
+
+The server runs as a background daemon. All output is logged to `~/.anthropic-proxy/daemon.log`.
+
 ```bash
-make run
-```
-To run in development mode with auto-reload:
-```bash
-make dev
+# Start with default config
+anthropic-proxy start
+
+# Start on custom port
+anthropic-proxy start --port 8080
+
+# Check status (shows PID, port, uptime, log file location)
+anthropic-proxy status
+
+# Stop the server
+anthropic-proxy stop
+
+# Restart the server
+anthropic-proxy restart
+
+# View logs for debugging
+tail -f ~/.anthropic-proxy/daemon.log
 ```
 
 ### Connecting Claude Code
+
 ```bash
 ANTHROPIC_BASE_URL=http://localhost:8082 claude
 ```
@@ -283,27 +369,6 @@ Additionally, the `CLAUDE.md` file provides guidance for both developers and AI 
 - **For AI Assistants**: Contains specific instructions to help AI tools effectively navigate and modify the codebase.
 
 Reading both the documentation in `docs/` and `CLAUDE.md` will give you a comprehensive understanding of the project.
-
-## Scripts
-
-This repository includes convenient installation and management scripts:
-
-- **`./install.sh`**: Installs the proxy globally so you can run `claude-proxy` from any directory
-- **`./uninstall.sh`**: Removes the global installation
-- **`claude-proxy`**: Global command after installation (see [Installation](#installation))
-
-Example usage:
-```bash
-# Installation
-./install.sh
-
-# Usage
-claude-proxy start
-claude-proxy --help
-
-# Removal
-./uninstall.sh
-```
 
 ## Credit & Acknowledgment
 

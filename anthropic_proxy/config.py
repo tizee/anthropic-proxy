@@ -3,22 +3,23 @@ Configuration management for the anthropic_proxy package.
 This module handles all configuration loading, validation, and management.
 """
 
+import json
 import logging
 import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
+from .config_manager import (
+    DEFAULT_CONFIG_DIR,
+    DEFAULT_CONFIG_FILE,
+    DEFAULT_LOG_DIR,
+    DEFAULT_MODELS_FILE,
+    get_default_log_file_path,
+    load_config_file,
+)
 from .types import ModelDefaults
 
-# Load environment variables from .env file
-load_dotenv()
-
 logger = logging.getLogger(__name__)
-
-
-
 
 
 def parse_token_value(value, default_value=None):
@@ -77,46 +78,58 @@ def parse_token_value(value, default_value=None):
     return default_value
 
 
+def load_config_from_file(config_path: Path | None = None) -> dict:
+    """Load configuration from config.json file and merge with environment.
+
+    Args:
+        config_path: Path to config.json file. If None, uses default location.
+
+    Returns:
+        Merged configuration dictionary
+    """
+    config_data = load_config_file(config_path)
+
+    if config_data and "env" in config_data:
+        # Apply env vars from config.json to os.environ
+        # Only set if not already in environment (CLI/env vars take precedence)
+        for key, value in config_data["env"].items():
+            if key not in os.environ:
+                os.environ[key] = str(value)
+
+    return config_data or {}
+
+
 class Config:
     """Universal proxy server configuration"""
 
-    def __init__(self):
-        # Server configuration
-        self.host = os.environ.get("HOST", ModelDefaults.DEFAULT_HOST)
-        self.port = int(os.environ.get("PORT", str(ModelDefaults.DEFAULT_PORT)))
-        self.log_level = os.environ.get("LOG_LEVEL", ModelDefaults.DEFAULT_LOG_LEVEL)
-        self.log_file_path = os.environ.get(
-            "LOG_FILE_PATH",
-            Path(__file__).resolve().parent / "server.log",
-        )
+    def __init__(self, config_path: Path | None = None):
+        # Load config.json first to get defaults
+        file_config = load_config_from_file(config_path)
 
-        # Request limits and timeouts
-        self.max_tokens_limit = int(
-            os.environ.get("MAX_TOKENS_LIMIT", str(ModelDefaults.MAX_TOKENS_LIMIT))
-        )
-        self.max_retries = int(
-            os.environ.get("MAX_RETRIES", str(ModelDefaults.DEFAULT_MAX_RETRIES))
-        )
+        # Server configuration
+        # Priority: env var > config.json > default
+        self.host = os.environ.get("HOST", file_config.get("host", ModelDefaults.DEFAULT_HOST))
+        self.port = int(os.environ.get("PORT", str(file_config.get("port", ModelDefaults.DEFAULT_PORT))))
+
+        # Expand ~ in log file path
+        log_path_str = file_config.get("log_file_path", str(get_default_log_file_path()))
+        self.log_file_path = os.environ.get("LOG_FILE_PATH", Path(log_path_str).expanduser())
+
+        self.log_level = os.environ.get("LOG_LEVEL", file_config.get("log_level", ModelDefaults.DEFAULT_LOG_LEVEL))
 
         # Custom models configuration file
-        self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", "models.yaml")
+        # Priority: CUSTOM_MODELS_FILE env var > default location
+        self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", str(DEFAULT_MODELS_FILE))
 
-        # Set the project root path for .env file checking
-        self.project_root = self._get_project_root()
+        # Config file locations (for reference)
+        self.config_dir = DEFAULT_CONFIG_DIR
+        self.config_file = config_path or DEFAULT_CONFIG_FILE
 
     def _get_project_root(self) -> str:
         """Get the project root directory (parent of the package directory)"""
         package_dir = Path(__file__).resolve().parent
         return str(Path(package_dir).parent)
 
-    def check_env_file_exists(self) -> bool:
-        """Check if .env file exists in the project root"""
-        env_file_path = Path(self.project_root) / ".env"
-        return Path(env_file_path).exists()
-
-    def get_env_file_path(self) -> str:
-        """Get the full path to the .env file"""
-        return str(Path(self.project_root) / ".env")
 
 # Global configuration instance
 config = Config()
@@ -173,7 +186,12 @@ def setup_logging():
     """Setup logging configuration to be idempotent."""
     # Configure root logger and uvicorn logs
     root_logger = logging.getLogger()
-    log_level = getattr(logging, config.log_level.upper())
+    log_level_str = config.log_level.upper()
+    try:
+        log_level = getattr(logging, log_level_str)
+    except AttributeError:
+        logger.warning(f"Invalid log level: {log_level_str}, using INFO")
+        log_level = logging.INFO
 
     # Set root log level
     root_logger.setLevel(log_level)
@@ -211,7 +229,7 @@ def setup_logging():
             log_dir.mkdir(parents=True, exist_ok=True)
 
         # Configure the root logger
-        root_logger.setLevel(getattr(logging, config.log_level.upper()))
+        root_logger.setLevel(log_level)
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
         # Add rotating file handler with 2MB max size and 1 backup log

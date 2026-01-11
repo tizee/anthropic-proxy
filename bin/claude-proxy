@@ -54,7 +54,8 @@ ${GREEN}Examples:${NC}
   claude-proxy status          # Show server status
 
 ${YELLOW}Configuration:${NC}
-  Configure server settings in .env file (API keys are supplied by ccproxy)
+  Run 'claude-proxy --init' to create ~/.config/anthropic-proxy/
+  API keys are supplied by ccproxy via request headers
   Project directory: $PROJECT_DIR
 
 ${YELLOW}Connect Claude Code:${NC}
@@ -132,18 +133,6 @@ start_dev_server() {
     echo -e "${YELLOW}Mode: Development (auto-reload)${NC}"
 
     cd "$PROJECT_DIR"
-
-    if [[ ! -f ".env" ]]; then
-        echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
-        if [[ -f ".env.example" ]]; then
-            cp .env.example .env
-            echo -e "${GREEN}✅ Created .env file - please configure server settings${NC}"
-        else
-            echo -e "${RED}Error: .env.example file not found${NC}"
-            exit 1
-        fi
-    fi
-
     make dev
 }
 
@@ -153,18 +142,6 @@ start_production_server() {
     echo -e "${YELLOW}Port: ${port}${NC}"
 
     cd "$PROJECT_DIR"
-
-    if [[ ! -f ".env" ]]; then
-        echo -e "${YELLOW}⚠️  Missing .env file detected${NC}"
-        if [[ -f ".env.example" ]]; then
-            cp .env.example .env
-            echo -e "${GREEN}✅ Created .env file - please configure server settings${NC}"
-        else
-            echo -e "${RED}Error: .env.example file not found${NC}"
-            exit 1
-        fi
-    fi
-
     export PORT=$port
     make restart
 }
@@ -186,7 +163,7 @@ start_docker() {
     fi
 
     docker build -t claude-code-proxy . && \
-    docker run -p "$port:$port" -e PORT=$port --env-file .env claude-code-proxy
+    docker run -p "$port:$port" -e PORT=$port claude-code-proxy
 }
 
 # Main script logic

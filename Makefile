@@ -1,18 +1,14 @@
 dev:
-	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	uv run anthropic-proxy --reload --host 0.0.0.0 --port 8082
 
 dev-stable:
-	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	uv run anthropic-proxy --host 0.0.0.0 --port 8082
 
 run:
-	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	@echo "Starting server with auto-reload..."
 	@uv run anthropic-proxy --reload & (sleep 2 && pgrep -f "anthropic-proxy" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
 run-stable:
-	@if [ ! -f .env ]; then echo "🔴 ERROR: .env file not found! Please create .env file from .env.example"; exit 1; fi
 	@echo "Starting server..."
 	@uv run anthropic-proxy & (sleep 2 && pgrep -f "anthropic-proxy" | head -n 1 > uvicorn.pid && echo "Server started with PID $$(cat uvicorn.pid).")
 
@@ -58,7 +54,6 @@ format:
 # Help command
 help:
 	@echo "Available commands:"
-	@echo "IMPORTANT: Make sure you have a .env file (copy from .env.example) before running server commands!"
 	@echo ""
 	@echo "  make run              - Start development server with auto-reload"
 	@echo "  make run-stable       - Start server without auto-reload (for editing server code)"
