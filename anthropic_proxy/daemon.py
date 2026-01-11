@@ -217,25 +217,23 @@ def start_daemon(
     # Ensure log directory exists
     DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Build command to run in background
+    # Build command to run server module directly
     cmd = [
         sys.executable,
         "-m",
-        "anthropic_proxy",
+        "anthropic_proxy.server",
         "--host",
         str(host),
         "--port",
         str(port),
+        "--models",
+        str(models_path),
+        "--config",
+        str(config_path),
     ]
-
-    if models_path:
-        cmd.extend(["--models", str(models_path)])
-    if config_path:
-        cmd.extend(["--config", str(config_path)])
 
     # Build environment with config paths
     env = os.environ.copy()
-    env["CUSTOM_MODELS_FILE"] = str(models_path)
 
     # Open log file for daemon output
     log_file = open(DAEMON_LOG_FILE, "a", encoding="utf-8")

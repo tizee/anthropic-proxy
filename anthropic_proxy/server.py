@@ -886,18 +886,46 @@ if __name__ == "__main__":
     # This block is only executed when the script is run directly,
     # not when it's imported by another script.
     import argparse
+    from pathlib import Path
 
     parser = argparse.ArgumentParser(description="Run the Claude Code Proxy Server.")
+    parser.add_argument("--host", default=None, help="Host to bind to")
+    parser.add_argument("--port", type=int, default=None, help="Port to bind to")
     parser.add_argument(
-        "--reload", action="store_true", help="Enable auto-reload on code changes."
+        "--models", type=Path, default=None, help="Path to models.yaml"
+    )
+    parser.add_argument(
+        "--config", type=Path, default=None, help="Path to config.json"
     )
     args = parser.parse_args()
 
-    # Re-initialize logging for the main process, especially for reload scenario
+    # Override config from command line
+    if args.host:
+        config.host = args.host
+    if args.port:
+        config.port = args.port
+
+    # Load custom config file if specified
+    if args.config:
+        from .config_manager import load_config_file
+
+        config_data = load_config_file(args.config)
+        if config_data:
+            for key, value in config_data.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+
+    # Load custom models file if specified
+    if args.models:
+        from .client import load_models_config
+
+        load_models_config(args.models)
+
+    # Re-initialize logging
     setup_logging()
 
     # Print initial configuration status
-    logger.info("✅ Configuration loaded")
+    logger.info("Configuration loaded")
 
     # Run the Server
     uvicorn.run(
@@ -905,5 +933,5 @@ if __name__ == "__main__":
         host=config.host,
         port=config.port,
         log_config=None,
-        reload=args.reload,
+        reload=False,
     )
