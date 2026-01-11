@@ -133,10 +133,11 @@ install_script() {
     echo "  • View help: $SCRIPT_NAME --help"
     echo ""
     echo -e "${YELLOW}Configuration tips:${NC}"
-    echo "  1. Edit .env file in project directory to configure server settings"
-    echo "  2. Modify models.yaml for model settings"
-    echo "  3. API keys are supplied by ccproxy via request headers"
-    echo "  4. Project directory: $PROJECT_DIR"
+    echo "  1. Run: $SCRIPT_NAME --init (creates ~/.config/anthropic-proxy/)"
+    echo "  2. Edit ~/.config/anthropic-proxy/models.yaml for model settings"
+    echo "  3. Edit ~/.config/anthropic-proxy/config.json for server settings"
+    echo "  4. API keys are supplied by ccproxy via request headers"
+    echo "  5. Project directory: $PROJECT_DIR"
 }
 
 # Main installation process
