@@ -22,8 +22,8 @@ CUSTOM_OPENAI_MODELS = {}
 def load_custom_models(config_file=None):
     """Load custom OpenAI-compatible model configurations from YAML file.
 
-    Note: API keys and pricing are no longer handled here.
-    API keys come from request headers (via ccproxy).
+    API keys can be configured per-model in this file, or passed via request
+    headers from ccproxy. Model-specific keys take precedence over header keys.
     Pricing should be tracked via provider billing dashboards.
     """
     global CUSTOM_OPENAI_MODELS
@@ -60,6 +60,7 @@ def load_custom_models(config_file=None):
                 "model_id": model_id,
                 "model_name": model_name,
                 "api_base": model["api_base"],
+                "api_key": model.get("api_key"),  # Optional model-specific API key
                 "can_stream": model.get("can_stream", True),
                 "max_tokens": parse_token_value(
                     model.get("max_tokens"), ModelDefaults.DEFAULT_MAX_TOKENS
@@ -93,21 +94,24 @@ def load_custom_models(config_file=None):
 def initialize_custom_models():
     """Initialize custom models. Called when running as main.
 
-    Note: API keys are now passed via request headers from ccproxy,
-    so we no longer load them from environment variables.
+    API keys can be configured per-model in models.yaml, or passed via
+    request headers from ccproxy. Model-specific keys take precedence.
     """
     load_custom_models()
 
 
-def create_openai_client(model_id: str, api_key: str) -> AsyncOpenAI:
+def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
     """Create OpenAI client for the given model.
 
     Args:
         model_id: The model identifier from models.yaml
-        api_key: The API key passed from request headers (via ccproxy)
+        api_key: The API key passed from request headers (via ccproxy), or None
 
     Returns:
         AsyncOpenAI client configured for the model's API base URL
+
+    Note:
+        Model-specific API keys (from models.yaml) take precedence over header keys.
     """
     if model_id not in CUSTOM_OPENAI_MODELS:
         raise ValueError(f"Unknown custom model: {model_id}")
@@ -115,11 +119,14 @@ def create_openai_client(model_id: str, api_key: str) -> AsyncOpenAI:
     model_config = CUSTOM_OPENAI_MODELS[model_id]
     base_url = model_config["api_base"]
 
-    if not api_key:
+    # Use model-specific API key if available, otherwise use the provided one
+    client_api_key = model_config.get("api_key") or api_key
+
+    if not client_api_key:
         raise ValueError(f"No API key provided for model: {model_id}")
 
     # Create client without retry transport (it causes 404 errors with some APIs)
-    client_kwargs = {"api_key": api_key}
+    client_kwargs = {"api_key": client_api_key}
     if base_url:
         client_kwargs["base_url"] = base_url
 
@@ -128,15 +135,18 @@ def create_openai_client(model_id: str, api_key: str) -> AsyncOpenAI:
     return client
 
 
-def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
+def create_claude_client(model_id: str, api_key: str | None) -> httpx.AsyncClient:
     """Create direct Claude API client for the given model.
 
     Args:
         model_id: The model identifier from models.yaml
-        api_key: The API key passed from request headers (via ccproxy)
+        api_key: The API key passed from request headers (via ccproxy), or None
 
     Returns:
         httpx.AsyncClient configured for direct Claude API calls
+
+    Note:
+        Model-specific API keys (from models.yaml) take precedence over header keys.
     """
     if model_id not in CUSTOM_OPENAI_MODELS:
         raise ValueError(f"Unknown model: {model_id}")
@@ -144,7 +154,10 @@ def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
     model_config = CUSTOM_OPENAI_MODELS[model_id]
     base_url = model_config["api_base"]
 
-    if not api_key:
+    # Use model-specific API key if available, otherwise use the provided one
+    client_api_key = model_config.get("api_key") or api_key
+
+    if not client_api_key:
         raise ValueError(f"No API key provided for model: {model_id}")
 
     # Ensure base_url ends with /v1 for Claude API
@@ -153,7 +166,7 @@ def create_claude_client(model_id: str, api_key: str) -> httpx.AsyncClient:
         base_url = f"{base_url}/v1"
 
     headers = {
-        "x-api-key": api_key,
+        "x-api-key": client_api_key,
         "content-type": "application/json",
         "anthropic-version": "2023-06-01"
     }
