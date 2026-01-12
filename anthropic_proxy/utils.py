@@ -3,8 +3,10 @@ Utility functions for the anthropic_proxy package.
 This module contains token counting, validation, debugging, and usage tracking helpers.
 """
 
+import base64
 import json
 import logging
+import struct
 from typing import Any
 
 import tiktoken
@@ -12,6 +14,193 @@ import tiktoken
 from .types import ClaudeUsage, global_usage_stats
 
 logger = logging.getLogger(__name__)
+
+
+# Default token estimate for images when dimensions cannot be determined
+DEFAULT_IMAGE_TOKENS = 1500
+
+# Anthropic's approximate formula: tokens = (width * height) / 750
+ANTHROPIC_IMAGE_TOKEN_DIVISOR = 750
+
+
+def get_image_dimensions_from_base64(base64_data: str, media_type: str) -> tuple[int, int] | None:
+    """
+    Extract image dimensions from base64-encoded image data without external dependencies.
+
+    Parses image headers directly to avoid loading full image into memory.
+    Supports JPEG, PNG, GIF, and WebP formats.
+
+    Args:
+        base64_data: Base64-encoded image data
+        media_type: MIME type (image/jpeg, image/png, image/gif, image/webp)
+
+    Returns:
+        Tuple of (width, height) or None if dimensions cannot be determined
+    """
+    try:
+        # Decode just enough bytes to read the header
+        # Most image headers are within first 32 bytes, but PNG/JPEG may need more
+        header_bytes = base64.b64decode(base64_data[:1024])
+
+        if media_type == "image/png":
+            return _get_png_dimensions(header_bytes)
+        elif media_type == "image/jpeg":
+            return _get_jpeg_dimensions(base64_data)
+        elif media_type == "image/gif":
+            return _get_gif_dimensions(header_bytes)
+        elif media_type == "image/webp":
+            return _get_webp_dimensions(header_bytes)
+        else:
+            logger.debug(f"Unsupported image media type: {media_type}")
+            return None
+    except Exception as e:
+        logger.debug(f"Failed to extract image dimensions: {e}")
+        return None
+
+
+def _get_png_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Extract dimensions from PNG header (IHDR chunk)."""
+    # PNG signature: 89 50 4E 47 0D 0A 1A 0A
+    # IHDR chunk starts at byte 8, contains width (4 bytes) and height (4 bytes)
+    if len(data) < 24 or data[:8] != b'\x89PNG\r\n\x1a\n':
+        return None
+    width = struct.unpack('>I', data[16:20])[0]
+    height = struct.unpack('>I', data[20:24])[0]
+    return (width, height)
+
+
+def _get_jpeg_dimensions(base64_data: str) -> tuple[int, int] | None:
+    """Extract dimensions from JPEG by scanning for SOF markers."""
+    try:
+        # JPEG dimensions are in SOF (Start of Frame) markers
+        # Need to scan through the file to find them
+        data = base64.b64decode(base64_data[:65536])  # Decode more for JPEG
+
+        if len(data) < 2 or data[0:2] != b'\xff\xd8':
+            return None
+
+        offset = 2
+        while offset < len(data) - 8:
+            if data[offset] != 0xff:
+                offset += 1
+                continue
+
+            marker = data[offset + 1]
+
+            # SOF markers (Start of Frame) contain dimensions
+            # SOF0 (0xC0) through SOF3 (0xC3), SOF5-SOF7, SOF9-SOF11, SOF13-SOF15
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                          0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                # SOF structure: FF Cx LL LL PP HH HH WW WW
+                # LL LL = length, PP = precision, HH HH = height, WW WW = width
+                height = struct.unpack('>H', data[offset + 5:offset + 7])[0]
+                width = struct.unpack('>H', data[offset + 7:offset + 9])[0]
+                return (width, height)
+
+            # Skip to next marker
+            if marker == 0xD8 or marker == 0xD9:  # SOI or EOI
+                offset += 2
+            elif marker == 0x00:  # Stuffed byte
+                offset += 1
+            else:
+                # Read segment length and skip
+                if offset + 4 > len(data):
+                    break
+                segment_len = struct.unpack('>H', data[offset + 2:offset + 4])[0]
+                offset += 2 + segment_len
+
+        return None
+    except Exception:
+        return None
+
+
+def _get_gif_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Extract dimensions from GIF header."""
+    # GIF header: GIF87a or GIF89a, then 2 bytes width, 2 bytes height (little-endian)
+    if len(data) < 10 or data[:3] != b'GIF':
+        return None
+    width = struct.unpack('<H', data[6:8])[0]
+    height = struct.unpack('<H', data[8:10])[0]
+    return (width, height)
+
+
+def _get_webp_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Extract dimensions from WebP header."""
+    # WebP: RIFF....WEBP, then VP8/VP8L/VP8X chunk
+    if len(data) < 30 or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+        return None
+
+    chunk_type = data[12:16]
+
+    if chunk_type == b'VP8 ':
+        # Lossy WebP: dimensions at bytes 26-30
+        if len(data) < 30:
+            return None
+        # VP8 bitstream: skip to frame header
+        width = struct.unpack('<H', data[26:28])[0] & 0x3FFF
+        height = struct.unpack('<H', data[28:30])[0] & 0x3FFF
+        return (width, height)
+    elif chunk_type == b'VP8L':
+        # Lossless WebP: signature byte + packed width/height
+        if len(data) < 25:
+            return None
+        # Bits: 14 bits width-1, 14 bits height-1
+        b1, b2, b3, b4 = data[21:25]
+        width = ((b2 & 0x3F) << 8 | b1) + 1
+        height = ((b4 & 0x0F) << 10 | b3 << 2 | (b2 >> 6)) + 1
+        return (width, height)
+    elif chunk_type == b'VP8X':
+        # Extended WebP: canvas size at bytes 24-30
+        if len(data) < 30:
+            return None
+        width = struct.unpack('<I', data[24:27] + b'\x00')[0] + 1
+        height = struct.unpack('<I', data[27:30] + b'\x00')[0] + 1
+        return (width, height)
+
+    return None
+
+
+def estimate_image_tokens(width: int | None = None, height: int | None = None) -> int:
+    """
+    Estimate token count for an image based on dimensions.
+
+    Uses Anthropic's approximate formula: tokens = (width * height) / 750
+
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+
+    Returns:
+        Estimated token count
+    """
+    if width is None or height is None or width <= 0 or height <= 0:
+        return DEFAULT_IMAGE_TOKENS
+
+    tokens = (width * height) // ANTHROPIC_IMAGE_TOKEN_DIVISOR
+    # Ensure minimum token count
+    return max(tokens, 85)
+
+
+def estimate_image_tokens_from_base64(base64_data: str, media_type: str) -> int:
+    """
+    Estimate token count for a base64-encoded image.
+
+    Args:
+        base64_data: Base64-encoded image data
+        media_type: MIME type of the image
+
+    Returns:
+        Estimated token count
+    """
+    dimensions = get_image_dimensions_from_base64(base64_data, media_type)
+    if dimensions:
+        width, height = dimensions
+        tokens = estimate_image_tokens(width, height)
+        logger.debug(f"Image {width}x{height} estimated at {tokens} tokens")
+        return tokens
+
+    logger.debug(f"Could not determine image dimensions, using default {DEFAULT_IMAGE_TOKENS} tokens")
+    return DEFAULT_IMAGE_TOKENS
 
 
 def _get_tiktoken_encoding():
@@ -29,7 +218,7 @@ def _normalize_payload(payload: Any) -> Any:
         return payload.model_dump()
     if isinstance(payload, dict):
         return {key: _normalize_payload(value) for key, value in payload.items()}
-    if isinstance(payload, (list, tuple)):
+    if isinstance(payload, list | tuple):
         return [_normalize_payload(value) for value in payload]
     return payload
 
@@ -59,13 +248,99 @@ def count_tokens_in_response(
     return len(encoding.encode(content))
 
 
+def _count_tokens_for_content_block(block: Any, encoding) -> int:
+    """
+    Count tokens for a single content block, with special handling for images.
+
+    For image blocks, uses dimension-based estimation instead of tiktoken
+    to avoid counting the base64 data as text tokens.
+    """
+    if not isinstance(block, dict):
+        # Pydantic model - convert to dict
+        if hasattr(block, "model_dump"):
+            block = block.model_dump()
+        else:
+            return _count_tokens_for_payload(block, encoding)
+
+    block_type = block.get("type")
+
+    if block_type == "image":
+        # Image block - estimate tokens based on dimensions, not base64 string length
+        source = block.get("source", {})
+        if isinstance(source, dict):
+            source_type = source.get("type")
+            if source_type == "base64":
+                media_type = source.get("media_type", "image/jpeg")
+                base64_data = source.get("data", "")
+                if base64_data:
+                    return estimate_image_tokens_from_base64(base64_data, media_type)
+            elif source_type == "url":
+                # URL-based image - can't determine dimensions, use default
+                return DEFAULT_IMAGE_TOKENS
+
+        # Fallback for unknown image format
+        return DEFAULT_IMAGE_TOKENS
+
+    # Non-image block - use normal tiktoken counting
+    return _count_tokens_for_payload(block, encoding)
+
+
+def _count_tokens_for_message(message: Any, encoding) -> int:
+    """
+    Count tokens for a single message, handling both string and structured content.
+
+    For messages with image content blocks, uses dimension-based estimation
+    for images instead of counting base64 data as text.
+    """
+    if not isinstance(message, dict):
+        # Pydantic model - convert to dict
+        if hasattr(message, "model_dump"):
+            message = message.model_dump()
+        else:
+            return _count_tokens_for_payload(message, encoding)
+
+    content = message.get("content")
+
+    # Simple string content - count directly
+    if isinstance(content, str):
+        return _count_tokens_for_payload(message, encoding)
+
+    # Array of content blocks - count each block appropriately
+    if isinstance(content, list):
+        total = 0
+        # Count role and other message metadata
+        message_without_content = {k: v for k, v in message.items() if k != "content"}
+        total += _count_tokens_for_payload(message_without_content, encoding)
+
+        # Count each content block
+        for block in content:
+            total += _count_tokens_for_content_block(block, encoding)
+
+        return total
+
+    # Other content types - use default counting
+    return _count_tokens_for_payload(message, encoding)
+
+
 def count_tokens_in_messages(messages: list, model: str) -> int:
-    """Count tokens in messages using tiktoken."""
+    """
+    Count tokens in messages using tiktoken, with special handling for images.
+
+    For image content blocks, uses dimension-based estimation (Anthropic's formula:
+    tokens = width * height / 750) instead of counting base64 data as text tokens.
+
+    Args:
+        messages: List of messages (Claude or dict format)
+        model: Model name (currently unused but kept for API compatibility)
+
+    Returns:
+        Estimated token count
+    """
     encoding = _get_tiktoken_encoding()
 
     total_tokens = 0
     for message in messages:
-        total_tokens += _count_tokens_for_payload(message, encoding)
+        total_tokens += _count_tokens_for_message(message, encoding)
 
     return total_tokens
 
@@ -445,7 +720,6 @@ def log_openai_api_error(e: Exception, context: str = "") -> None:
         e: The exception to log
         context: Additional context string for the log messages
     """
-    import re
 
     try:
         import openai

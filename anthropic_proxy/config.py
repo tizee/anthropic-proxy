@@ -3,7 +3,6 @@ Configuration management for the anthropic_proxy package.
 This module handles all configuration loading, validation, and management.
 """
 
-import json
 import logging
 import os
 import sys
@@ -12,7 +11,6 @@ from pathlib import Path
 from .config_manager import (
     DEFAULT_CONFIG_DIR,
     DEFAULT_CONFIG_FILE,
-    DEFAULT_LOG_DIR,
     DEFAULT_MODELS_FILE,
     get_default_log_file_path,
     load_config_file,
