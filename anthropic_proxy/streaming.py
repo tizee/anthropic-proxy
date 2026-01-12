@@ -161,7 +161,7 @@ class AnthropicStreamingConverter:
         }
         event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
         logger.debug(
-            f"STREAMING_EVENT: message_stop"
+            "STREAMING_EVENT: message_stop"
         )
         return event_str
 

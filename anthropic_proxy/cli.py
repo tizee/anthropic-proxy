@@ -5,12 +5,13 @@ Command-line interface for anthropic-proxy.
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
 import yaml
 
+from . import daemon
+from .config import config
 from .config_manager import (
     DEFAULT_CONFIG_DIR,
     DEFAULT_CONFIG_FILE,
@@ -20,8 +21,6 @@ from .config_manager import (
     initialize_config,
     load_config_file,
 )
-from .config import config
-from . import daemon
 
 logger = logging.getLogger(__name__)
 

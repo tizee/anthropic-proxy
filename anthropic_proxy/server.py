@@ -5,7 +5,6 @@ This module contains the FastAPI application and API endpoints.
 
 import json
 import logging
-import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime

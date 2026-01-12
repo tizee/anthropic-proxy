@@ -55,7 +55,7 @@ def read_pid() -> int | None:
     try:
         pid_text = pid_file.read_text(encoding="utf-8").strip()
         return int(pid_text) if pid_text else None
-    except (ValueError, IOError) as e:
+    except (OSError, ValueError) as e:
         logger.warning(f"Failed to read PID file {pid_file}: {e}")
         return None
 
@@ -71,7 +71,7 @@ def write_pid(pid: int) -> None:
         # Ensure log directory exists
         pid_file.parent.mkdir(parents=True, exist_ok=True)
         pid_file.write_text(str(pid), encoding="utf-8")
-    except IOError as e:
+    except OSError as e:
         logger.error(f"Failed to write PID file {pid_file}: {e}")
         raise
 
@@ -82,7 +82,7 @@ def remove_pid_file() -> None:
     try:
         if pid_file.exists():
             pid_file.unlink()
-    except IOError as e:
+    except OSError as e:
         logger.warning(f"Failed to remove PID file {pid_file}: {e}")
 
 

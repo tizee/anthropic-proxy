@@ -725,7 +725,7 @@ class ClaudeMessage(BaseModel):
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
         Handles complex logic including tool_result splitting, content block ordering, etc.
         Returns a list of OpenAI messages (can be multiple due to tool_result splitting).
-        
+
         Args:
             tool_name_mapping: Optional mapping from tool_use_id to tool_name for tool_result messages
         """
