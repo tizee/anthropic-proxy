@@ -79,6 +79,7 @@ async def stream_gemini_sdk_request(
     base_url: str,
     extra_headers: dict[str, str],
     is_antigravity: bool,
+    use_vertexai: bool = False,
     system_prefix: str | None = None,
     request_envelope_extra: dict[str, Any] | None = None,
     use_request_envelope: bool = True,
@@ -115,7 +116,7 @@ async def stream_gemini_sdk_request(
         api_version=api_version,
     )
 
-    client = genai.Client(http_options=http_options)
+    client = genai.Client(vertexai=use_vertexai, http_options=http_options)
     aclient = client.aio
 
     try:

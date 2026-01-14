@@ -7,7 +7,12 @@ import time
 # Add the parent directory to the sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from anthropic_proxy.gemini import GeminiAuth, GEMINI_CODE_ASSIST_ENDPOINT
+from anthropic_proxy.gemini import (
+    GeminiAuth,
+    GEMINI_CODE_ASSIST_ENDPOINT,
+    handle_gemini_request,
+)
+from anthropic_proxy.types import ClaudeMessagesRequest
 
 
 class TestGeminiAuth(unittest.IsolatedAsyncioTestCase):
@@ -179,6 +184,31 @@ class TestGeminiAuth(unittest.IsolatedAsyncioTestCase):
         mock_server.assert_called_with(("localhost", 8085), unittest.mock.ANY)
         mock_thread.assert_called()
         mock_thread.return_value.start.assert_called()
+
+    @patch("anthropic_proxy.gemini.stream_gemini_sdk_request")
+    @patch("anthropic_proxy.gemini.gemini_auth.get_project_id")
+    @patch("anthropic_proxy.gemini.gemini_auth.get_access_token", new_callable=AsyncMock)
+    async def test_handle_gemini_request_uses_vertexai(
+        self, mock_get_access, mock_get_project, mock_stream
+    ):
+        mock_get_access.return_value = "access-token"
+        mock_get_project.return_value = "project-123"
+
+        async def fake_stream(*args, **kwargs):
+            yield {"chunk": "ok"}
+
+        mock_stream.side_effect = fake_stream
+
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        chunks = [chunk async for chunk in handle_gemini_request(request, "gemini-2.5-pro")]
+        self.assertEqual(chunks, [{"chunk": "ok"}])
+        self.assertTrue(mock_stream.called)
+        self.assertTrue(mock_stream.call_args.kwargs["use_vertexai"])
 
 
 if __name__ == "__main__":

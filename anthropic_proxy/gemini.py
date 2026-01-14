@@ -212,5 +212,6 @@ async def handle_gemini_request(
         base_url=GEMINI_CODE_ASSIST_ENDPOINT,
         extra_headers=CODE_ASSIST_HEADERS,
         is_antigravity=False,
+        use_vertexai=True,
     ):
         yield chunk
