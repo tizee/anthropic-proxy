@@ -7,6 +7,10 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from anthropic_proxy.client import is_gemini_model, load_gemini_models, CUSTOM_OPENAI_MODELS
+from anthropic_proxy.converter import clean_gemini_schema
+from anthropic_proxy.gemini_converter import anthropic_to_gemini_sdk_params
+from anthropic_proxy.gemini_sdk import _build_http_options, stream_gemini_sdk_request
+from google.genai import types as genai_types
 from anthropic_proxy.gemini import handle_gemini_request, GeminiAuth
 from anthropic_proxy.types import ClaudeMessagesRequest
 from anthropic_proxy.cli import cmd_login, parse_args
@@ -84,10 +88,119 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
         with patch("sys.argv", ["anthropic-proxy", "login", "--gemini"]):
             args = parse_args()
             self.assertTrue(args.gemini)
-            
+
             with patch("anthropic_proxy.gemini.gemini_auth.login") as mock_login:
                 cmd_login(args)
                 mock_login.assert_called_once()
+
+    def test_gemini_sdk_params_flatten_generation_config(self):
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=123,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        _, config, _ = anthropic_to_gemini_sdk_params(request, "gemini-2.5-pro")
+
+        self.assertNotIn("generation_config", config)
+        self.assertIn("temperature", config)
+        self.assertIn("top_p", config)
+        self.assertIn("top_k", config)
+        self.assertEqual(config["max_output_tokens"], 123)
+
+    def test_gemini_http_options_embed_api_version(self):
+        http_options = _build_http_options(
+            base_url="https://cloudcode-pa.googleapis.com",
+            headers={"Authorization": "Bearer token"},
+            extra_body=None,
+            api_version="v1internal",
+            base_url_resource_scope=genai_types.ResourceScope.COLLECTION,
+            embed_api_version_in_base_url=True,
+        )
+
+        self.assertEqual(
+            http_options.base_url, "https://cloudcode-pa.googleapis.com/v1internal"
+        )
+        self.assertIsNone(http_options.api_version)
+        self.assertEqual(
+            http_options.base_url_resource_scope, genai_types.ResourceScope.COLLECTION
+        )
+
+    @patch("anthropic_proxy.gemini_sdk.httpx.AsyncClient")
+    async def test_gemini_code_assist_stream_unwraps_response(self, mock_client):
+        class DummyResponse:
+            status_code = 200
+            reason_phrase = "OK"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                yield 'data: {"response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}'
+                yield "data: [DONE]"
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            def stream(self, method, url, **kwargs):
+                self.method = method
+                self.url = url
+                self.kwargs = kwargs
+                return DummyResponse()
+
+        mock_client.return_value = DummyClient()
+
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        chunks = []
+        async for chunk in stream_gemini_sdk_request(
+            request=request,
+            model_id="gemini-2.5-pro",
+            access_token="token",
+            project_id="project-123",
+            base_url="https://cloudcode-pa.googleapis.com",
+            extra_headers={},
+            is_antigravity=False,
+            use_code_assist=True,
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(mock_client.return_value.method, "POST")
+        self.assertIn("v1internal:streamGenerateContent", mock_client.return_value.url)
+        self.assertTrue(chunks)
+        self.assertEqual(
+            chunks[0]["candidates"][0]["content"]["parts"][0]["text"], "hi"
+        )
+
+    def test_clean_gemini_schema_strips_code_assist_unsupported_keys(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number", "exclusiveMinimum": 0},
+                "name": {"type": "string"},
+            },
+            "propertyNames": {"pattern": "^[a-z]+$"},
+        }
+
+        cleaned = clean_gemini_schema(schema)
+
+        self.assertNotIn("exclusiveMinimum", cleaned["properties"]["value"])
+        self.assertNotIn("propertyNames", cleaned)
+        self.assertIn("exclusiveMinimum: 0", cleaned["properties"]["value"]["description"])
 
 if __name__ == "__main__":
     unittest.main()

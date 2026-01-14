@@ -13,6 +13,7 @@ from .openai_converter import (
     parse_function_calls_from_thinking,
 )
 from .types import ClaudeUsage
+from .gemini_schema_sanitizer import clean_gemini_schema
 
 
 def extract_usage_from_claude_response(
@@ -65,69 +66,6 @@ def extract_usage_from_claude_response(
     )
 
 
-def clean_gemini_schema(schema: Any) -> Any:
-    """
-    Recursively clean and validate JSON schema for Gemini OpenAI API compatibility.
-    """
-    if schema is None:
-        return None
-
-    if isinstance(schema, dict):
-        schema_type = schema.get("type")
-        cleaned_schema = {}
-        for key, value in schema.items():
-            # Skip unsupported keywords
-            if key in [
-                "$schema",
-                "$id",
-                "$ref",
-                "$defs",
-                "default",  # Can cause validation issues
-                "examples",  # Not supported
-                "definitions",  # Complex references not supported
-                "title",  # Can cause issues in nested objects
-            ]:
-                continue
-            if key == "enum" and schema_type in {"integer", "number"}:
-                cleaned_schema["enum"] = [str(item) for item in value] if value else []
-                cleaned_schema["type"] = "string"
-                continue
-
-            # Clean nested schemas
-            if isinstance(value, dict):
-                cleaned_schema[key] = clean_gemini_schema(value)
-            elif isinstance(value, list):
-                cleaned_list = []
-                for item in value:
-                    if isinstance(item, dict):
-                        cleaned_list.append(clean_gemini_schema(item))
-                    else:
-                        cleaned_list.append(item)
-                cleaned_schema[key] = cleaned_list
-            else:
-                cleaned_schema[key] = value
-
-        if schema_type == "array" and "items" not in cleaned_schema:
-            cleaned_schema["items"] = {}
-
-        if "required" in cleaned_schema and "properties" in cleaned_schema:
-            required = cleaned_schema.get("required")
-            properties = cleaned_schema.get("properties", {})
-            if isinstance(required, list) and isinstance(properties, dict):
-                cleaned_schema["required"] = [item for item in required if item in properties]
-
-        return cleaned_schema
-
-    if isinstance(schema, list):
-        cleaned_list = []
-        for item in schema:
-            if isinstance(item, dict):
-                cleaned_list.append(clean_gemini_schema(item))
-            else:
-                cleaned_list.append(item)
-        return cleaned_list
-
-    return schema
 
 
 def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
@@ -157,6 +95,19 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
             "default",
             "examples",
             "definitions",
+            "const",
+            "additionalProperties",
+            "propertyNames",
+            "title",
+            "$comment",
+            "minLength",
+            "maxLength",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "pattern",
+            "minItems",
+            "maxItems",
+            "format",
         ]
 
         def check_nested_object(obj, path=""):

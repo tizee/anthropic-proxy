@@ -61,6 +61,10 @@ DEFAULT_GEMINI_MODELS = {
     },
 }
 
+MODEL_FALLBACKS = {
+    "gemini-2.5-flash-image": "gemini-2.5-flash",
+}
+
 class GeminiAuth(OAuthPKCEAuth):
     """Manages Gemini authentication tokens."""
 
@@ -203,6 +207,7 @@ async def handle_gemini_request(
              raise HTTPException(status_code=400, detail="Gemini Project ID could not be resolved. Try re-login.")
 
     target_model = model_name or model_id
+    target_model = MODEL_FALLBACKS.get(target_model, target_model)
 
     async for chunk in stream_gemini_sdk_request(
         request=request,
@@ -212,6 +217,6 @@ async def handle_gemini_request(
         base_url=GEMINI_CODE_ASSIST_ENDPOINT,
         extra_headers=CODE_ASSIST_HEADERS,
         is_antigravity=False,
-        use_vertexai=True,
+        use_code_assist=True,
     ):
         yield chunk

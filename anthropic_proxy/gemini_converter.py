@@ -432,7 +432,7 @@ def anthropic_to_gemini_sdk_params(
 
     generation_config = body.get("generationConfig")
     if generation_config:
-        config["generation_config"] = _convert_keys_to_snake(generation_config)
+        config.update(_convert_keys_to_snake(generation_config))
 
     tools = _build_sdk_tools(request)
     if tools:

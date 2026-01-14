@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, AsyncGenerator
 
+import httpx
 from fastapi import HTTPException
 from google import genai
 from google.genai import types
@@ -21,10 +23,18 @@ def _build_http_options(
     headers: dict[str, str] | None,
     extra_body: dict[str, Any] | None,
     api_version: str | None,
+    base_url_resource_scope: types.ResourceScope | None = None,
+    embed_api_version_in_base_url: bool = False,
 ) -> Any:
     options: dict[str, Any] = {}
     if base_url:
-        options["base_url"] = base_url
+        if embed_api_version_in_base_url and api_version:
+            options["base_url"] = f"{base_url.rstrip('/')}/{api_version}"
+            api_version = None
+        else:
+            options["base_url"] = base_url
+    if base_url_resource_scope:
+        options["base_url_resource_scope"] = base_url_resource_scope
     if headers:
         options["headers"] = headers
     if extra_body:
@@ -70,6 +80,21 @@ def _coerce_chunk_dict(chunk: Any) -> dict[str, Any]:
     return {"text": getattr(chunk, "text", "")}
 
 
+def _decode_response_body(body: Any) -> dict[str, Any] | None:
+    if body is None:
+        return None
+    if isinstance(body, dict):
+        return body
+    if isinstance(body, str):
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 async def stream_gemini_sdk_request(
     *,
     request: ClaudeMessagesRequest,
@@ -80,6 +105,7 @@ async def stream_gemini_sdk_request(
     extra_headers: dict[str, str],
     is_antigravity: bool,
     use_vertexai: bool = False,
+    use_code_assist: bool = False,
     system_prefix: str | None = None,
     request_envelope_extra: dict[str, Any] | None = None,
     use_request_envelope: bool = True,
@@ -109,11 +135,84 @@ async def stream_gemini_sdk_request(
         extra_body = envelope
 
     headers = {"Authorization": f"Bearer {access_token}", **extra_headers}
+
+    if use_code_assist:
+        headers.setdefault("Accept", "text/event-stream")
+        headers.setdefault("Content-Type", "application/json")
+
+        envelope: dict[str, Any] = {"request": raw_body}
+        if project_id:
+            envelope["project"] = project_id
+        if model_id:
+            envelope["model"] = model_id
+        if request_envelope_extra:
+            envelope.update(request_envelope_extra)
+
+        url = f"{base_url.rstrip('/')}/v1internal:streamGenerateContent"
+        try:
+            async with httpx.AsyncClient() as http_client:
+                async with http_client.stream(
+                    "POST",
+                    url,
+                    headers=headers,
+                    params={"alt": "sse"},
+                    json=envelope,
+                    timeout=60.0,
+                ) as response:
+                    if response.is_error:
+                        body_bytes = await response.aread()
+                        body_text = body_bytes.decode("utf-8", errors="replace")
+                        logger.error(
+                            "Gemini Code Assist error %s: %s",
+                            response.status_code,
+                            body_text[:1000],
+                        )
+                        detail = f"{response.status_code} {response.reason_phrase}"
+                        if body_text:
+                            detail = f"{detail}: {body_text[:1000]}"
+                        raise HTTPException(
+                            status_code=502, detail=f"Gemini SDK error: {detail}"
+                        )
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        if line.startswith("data:"):
+                            data = line[len("data:") :].strip()
+                        else:
+                            data = line.strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        try:
+                            payload = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload, dict) and "response" in payload:
+                            payload = payload["response"]
+                        if not isinstance(payload, dict):
+                            continue
+                        try:
+                            parsed = types.GenerateContentResponse.model_validate(payload)
+                            yield parsed.model_dump(exclude_none=True)
+                        except Exception:
+                            yield payload
+        except httpx.HTTPStatusError as exc:
+            detail = f"{exc.response.status_code} {exc.response.reason_phrase}"
+            logger.error(f"Gemini SDK request failed: {detail}")
+            raise HTTPException(status_code=502, detail=f"Gemini SDK error: {detail}") from exc
+        except Exception as exc:
+            logger.error(f"Gemini SDK request failed: {exc}")
+            raise HTTPException(status_code=502, detail=f"Gemini SDK error: {exc}") from exc
+        return
+
     http_options = _build_http_options(
         base_url=base_url,
         headers=headers,
         extra_body=extra_body,
         api_version=api_version,
+        base_url_resource_scope=(
+            types.ResourceScope.COLLECTION if use_vertexai else None
+        ),
+        embed_api_version_in_base_url=bool(use_vertexai),
     )
 
     client = genai.Client(vertexai=use_vertexai, http_options=http_options)

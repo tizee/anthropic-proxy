@@ -188,7 +188,7 @@ class TestGeminiAuth(unittest.IsolatedAsyncioTestCase):
     @patch("anthropic_proxy.gemini.stream_gemini_sdk_request")
     @patch("anthropic_proxy.gemini.gemini_auth.get_project_id")
     @patch("anthropic_proxy.gemini.gemini_auth.get_access_token", new_callable=AsyncMock)
-    async def test_handle_gemini_request_uses_vertexai(
+    async def test_handle_gemini_request_uses_code_assist(
         self, mock_get_access, mock_get_project, mock_stream
     ):
         mock_get_access.return_value = "access-token"
@@ -208,7 +208,36 @@ class TestGeminiAuth(unittest.IsolatedAsyncioTestCase):
         chunks = [chunk async for chunk in handle_gemini_request(request, "gemini-2.5-pro")]
         self.assertEqual(chunks, [{"chunk": "ok"}])
         self.assertTrue(mock_stream.called)
-        self.assertTrue(mock_stream.call_args.kwargs["use_vertexai"])
+        self.assertTrue(mock_stream.call_args.kwargs["use_code_assist"])
+
+    @patch("anthropic_proxy.gemini.stream_gemini_sdk_request")
+    @patch("anthropic_proxy.gemini.gemini_auth.get_project_id")
+    @patch("anthropic_proxy.gemini.gemini_auth.get_access_token", new_callable=AsyncMock)
+    async def test_handle_gemini_request_applies_model_fallback(
+        self, mock_get_access, mock_get_project, mock_stream
+    ):
+        mock_get_access.return_value = "access-token"
+        mock_get_project.return_value = "project-123"
+
+        async def fake_stream(*args, **kwargs):
+            yield {"chunk": "ok"}
+
+        mock_stream.side_effect = fake_stream
+
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-flash-image",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        chunks = [
+            chunk
+            async for chunk in handle_gemini_request(
+                request, "gemini-2.5-flash-image"
+            )
+        ]
+        self.assertEqual(chunks, [{"chunk": "ok"}])
+        self.assertEqual(mock_stream.call_args.kwargs["model_id"], "gemini-2.5-flash")
 
 
 if __name__ == "__main__":
