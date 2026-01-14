@@ -23,17 +23,13 @@ CODEX_API_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
 
-# Default models available via Codex subscription (from AUTH.md)
+# Default models available via Codex subscription (subject to upstream changes).
+# These model names can become invalid if the provider updates or disables support.
 DEFAULT_CODEX_MODELS = {
     "gpt-5.2-codex": {
         "model_name": "gpt-5.2-codex",
         "description": "Newest flagship Codex model",
         "reasoning_effort": "high"
-    },
-    "gpt-5.1-codex": {
-        "model_name": "gpt-5.1-codex",
-        "description": "Standard coding-specialized model",
-        "reasoning_effort": "medium"
     },
     "gpt-5.1-codex-max": {
         "model_name": "gpt-5.1-codex-max",
@@ -50,18 +46,28 @@ DEFAULT_CODEX_MODELS = {
         "description": "General purpose flagship",
         "reasoning_effort": "high"
     },
-    "gpt-5.1": {
-        "model_name": "gpt-5.1",
-        "description": "General purpose standard",
-        "reasoning_effort": "medium"
-    },
-    # Legacy/Alias mappings
-    "gpt-5-codex": {
-        "model_name": "gpt-5.1-codex",
-        "description": "Alias for gpt-5.1-codex",
-        "reasoning_effort": "medium"
-    }
 }
+
+def _is_codex_usage_limit_error(error_text: bytes) -> bool:
+    try:
+        text = error_text.decode("utf-8", errors="replace")
+    except Exception:
+        return False
+
+    if "usage_limit_reached" in text:
+        return True
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+
+    error_obj = data.get("error", {})
+    if isinstance(error_obj, dict):
+        code = error_obj.get("code") or error_obj.get("type")
+        if isinstance(code, str) and "usage_limit_reached" in code:
+            return True
+    return False
 
 
 class CodexAuth(OAuthPKCEAuth):
@@ -168,6 +174,8 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
             if response.status_code != 200:
                 error_text = await response.read()
                 logger.error(f"Codex API error {response.status_code}: {error_text.decode('utf-8', errors='replace')}")
+                if response.status_code == 404 and _is_codex_usage_limit_error(error_text):
+                    raise HTTPException(status_code=429, detail="Codex usage limit reached")
                 raise HTTPException(status_code=response.status_code, detail=f"Codex API Error: {response.status_code}")
 
             async for line in response.aiter_lines():

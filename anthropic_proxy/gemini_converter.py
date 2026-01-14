@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from .converter import clean_gemini_schema
+from .signature_cache import get_cached_signature
 from .types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -132,6 +133,7 @@ def _convert_message_content_to_parts(
     content: str | list[Any],
     is_antigravity: bool,
     strip_unsigned_thinking: bool,
+    session_id: str | None,
 ) -> list[dict[str, Any]]:
     if isinstance(content, str):
         return [{"text": content}]
@@ -143,9 +145,17 @@ def _convert_message_content_to_parts(
         if isinstance(block, ClaudeContentBlockText):
             parts.append({"text": block.text})
         elif isinstance(block, ClaudeContentBlockThinking):
-            if strip_unsigned_thinking and not block.signature:
+            signature = block.signature
+            if strip_unsigned_thinking and not signature and session_id:
+                signature = get_cached_signature(session_id, block.thinking)
+            if strip_unsigned_thinking and not signature:
                 continue
-            parts.append(_convert_thinking_block(block, is_antigravity))
+            part: dict[str, Any] = {"text": block.thinking}
+            if signature:
+                part["thoughtSignature"] = signature
+            if is_antigravity:
+                part["thought"] = True
+            parts.append(part)
         elif isinstance(block, ClaudeContentBlockToolUse):
             parts.append(_convert_tool_use_block(block))
         elif isinstance(block, ClaudeContentBlockToolResult):
@@ -293,6 +303,7 @@ def anthropic_to_gemini_request(
     *,
     is_antigravity: bool = False,
     system_prefix: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Convert Anthropic Messages request into Gemini GenerateContent request body."""
     contents: list[dict[str, Any]] = []
@@ -305,6 +316,7 @@ def anthropic_to_gemini_request(
             msg.content,
             is_antigravity,
             strip_unsigned_thinking,
+            session_id,
         )
         if parts:
             contents.append({"role": role, "parts": parts})
@@ -324,9 +336,9 @@ def anthropic_to_gemini_request(
         if thinking_budget and generation_config.get("maxOutputTokens", 0) <= thinking_budget:
             generation_config["maxOutputTokens"] = thinking_budget + 4000
 
-    out: dict[str, Any] = {
-        "contents": contents,
-    }
+    out: dict[str, Any] = {"contents": contents}
+    if session_id:
+        out["sessionId"] = session_id
 
     if system_parts:
         out["systemInstruction"] = {"parts": system_parts}
@@ -400,6 +412,7 @@ def anthropic_to_gemini_sdk_params(
     *,
     is_antigravity: bool = False,
     system_prefix: str | None = None,
+    session_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Convert Anthropic Messages request into Gemini SDK params."""
     body = anthropic_to_gemini_request(
@@ -407,6 +420,7 @@ def anthropic_to_gemini_sdk_params(
         model_id,
         is_antigravity=is_antigravity,
         system_prefix=system_prefix,
+        session_id=session_id,
     )
 
     contents = body.get("contents", [])

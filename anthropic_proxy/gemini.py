@@ -36,16 +36,29 @@ CODE_ASSIST_HEADERS = {
   "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
 }
 
-# Default models
+# Default models (subject to upstream changes).
+# These model names can become invalid if the provider updates or disables support.
 DEFAULT_GEMINI_MODELS = {
+    "gemini-3-pro-preview": {
+        "model_name": "gemini-3-pro-preview",
+        "description": "Gemini 3 Pro Preview",
+    },
+    "gemini-3-flash-preview": {
+        "model_name": "gemini-3-flash-preview",
+        "description": "Gemini 3 Flash Preview",
+    },
+    "gemini-2.5-pro": {
+        "model_name": "gemini-2.5-pro",
+        "description": "Gemini 2.5 Pro",
+    },
     "gemini-2.5-flash": {
         "model_name": "gemini-2.5-flash",
         "description": "Gemini 2.5 Flash",
     },
-    "gemini-3-pro-preview": {
-        "model_name": "gemini-3-pro-preview",
-        "description": "Gemini 3 Pro Preview",
-    }
+    "gemini-2.5-flash-lite": {
+        "model_name": "gemini-2.5-flash-lite",
+        "description": "Gemini 2.5 Flash Lite",
+    },
 }
 
 class GeminiAuth(OAuthPKCEAuth):

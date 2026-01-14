@@ -83,12 +83,14 @@ async def stream_gemini_sdk_request(
     request_envelope_extra: dict[str, Any] | None = None,
     use_request_envelope: bool = True,
     api_version: str | None = "v1internal",
+    session_id: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     contents, config, raw_body = anthropic_to_gemini_sdk_params(
         request,
         model_id,
         is_antigravity=is_antigravity,
         system_prefix=system_prefix,
+        session_id=session_id,
     )
 
     if "tools" in config:

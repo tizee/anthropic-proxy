@@ -60,11 +60,11 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 
 # Note on Codex Models:
 # If you have logged in via `anthropic-proxy login`, Codex subscription models
-# (e.g., gpt-5.1-codex, gpt-5.2-codex) are automatically available.
+# (e.g., gpt-5.2-codex) are automatically available.
 # You can override their settings (e.g., reasoning_effort) here by specifying
 # provider: codex (no need for api_base/api_key):
 #
-# - model_id: gpt-5.1-codex
+# - model_id: gpt-5.2-codex
 #   provider: codex
 #   reasoning_effort: high
 #   max_tokens: 32K
@@ -72,7 +72,7 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 # To configure a Codex model using a standard API Key (Non-Codex Plan)
 # instead of the subscription, explicitly set provider to 'openai':
 #
-# - model_id: gpt-5.1-codex
+# - model_id: gpt-5.2-codex
 #   provider: openai
 #   api_base: https://api.openai.com/v1
 #   api_key: sk-...

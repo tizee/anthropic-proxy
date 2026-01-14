@@ -9,7 +9,19 @@ import uuid
 from collections import deque
 from typing import Any, AsyncGenerator
 
+from .signature_cache import cache_signature
 from .types import ClaudeMessagesRequest, generate_unique_id
+
+
+def _extract_session_id(request: ClaudeMessagesRequest) -> str | None:
+    metadata = request.metadata
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +29,9 @@ logger = logging.getLogger(__name__)
 class GeminiStreamingConverter:
     """Convert Gemini streaming responses into Anthropic SSE events."""
 
-    def __init__(self, original_request: ClaudeMessagesRequest):
+    def __init__(self, original_request: ClaudeMessagesRequest, session_id: str | None):
         self.original_request = original_request
+        self.session_id = session_id
         self.message_id = f"msg_{uuid.uuid4().hex[:24]}"
         self.content_block_index = 0
         self.current_content_blocks: list[dict[str, Any]] = []
@@ -174,6 +187,8 @@ class GeminiStreamingConverter:
             if self._is_thinking_part(part):
                 signature = part.get("thoughtSignature")
                 text = part.get("text", "")
+                if signature and text and self.session_id:
+                    cache_signature(self.session_id, text, signature)
                 if not self.thinking_block_started:
                     for event in self._close_current_block():
                         yield event
@@ -219,8 +234,11 @@ async def convert_gemini_streaming_response_to_anthropic(
     response_generator: AsyncGenerator[dict[str, Any], None],
     original_request: ClaudeMessagesRequest,
     model_id: str = "",
+    session_id: str | None = None,
 ):
-    converter = GeminiStreamingConverter(original_request)
+    if session_id is None:
+        session_id = _extract_session_id(original_request)
+    converter = GeminiStreamingConverter(original_request, session_id)
 
     try:
         yield converter._send_message_start_event()

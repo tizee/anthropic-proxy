@@ -23,7 +23,7 @@ class TestCodexPartialConfig(unittest.TestCase):
         """Test that a partial codex config is hydrated with defaults IF provider is codex."""
         config_data = [
             {
-                "model_id": "gpt-5.1-codex",
+                "model_id": "gpt-5.2-codex",
                 "provider": "codex", # Explicit provider required
                 "reasoning_effort": "low", # Override default (medium)
                 "context": "16K" # Custom context
@@ -35,7 +35,7 @@ class TestCodexPartialConfig(unittest.TestCase):
             
         load_models_config(self.config_path)
         
-        model = CUSTOM_OPENAI_MODELS.get("gpt-5.1-codex")
+        model = CUSTOM_OPENAI_MODELS.get("gpt-5.2-codex")
         self.assertIsNotNone(model)
         
         # Check injected defaults
@@ -51,7 +51,7 @@ class TestCodexPartialConfig(unittest.TestCase):
         """Test that a model without provider: codex is NOT hydrated with defaults."""
         config_data = [
             {
-                "model_id": "gpt-5.1-codex",
+                "model_id": "gpt-5.2-codex",
                 # Missing provider: codex
                 "reasoning_effort": "low"
             }
@@ -63,7 +63,7 @@ class TestCodexPartialConfig(unittest.TestCase):
         load_models_config(self.config_path)
         
         # Should be rejected because api_base is missing
-        self.assertNotIn("gpt-5.1-codex", CUSTOM_OPENAI_MODELS)
+        self.assertNotIn("gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
 
     def test_unknown_model_no_defaults(self):
         """Test that an unknown model is still rejected if api_base is missing."""

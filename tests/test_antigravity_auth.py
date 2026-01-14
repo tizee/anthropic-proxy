@@ -7,7 +7,12 @@ import time
 # Add the parent directory to the sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from anthropic_proxy.antigravity import AntigravityAuth, ANTIGRAVITY_ENDPOINT
+from anthropic_proxy.antigravity import (
+    AntigravityAuth,
+    ANTIGRAVITY_ENDPOINT,
+    handle_antigravity_request,
+)
+from anthropic_proxy.types import ClaudeMessage, ClaudeMessagesRequest
 
 
 class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +167,32 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         saved_data = mock_save.call_args[0][0]
         self.assertEqual(saved_data["antigravity"]["refresh"], "refresh_token|project-456")
 
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.save_auth_file")
+    @patch("httpx.AsyncClient")
+    async def test_ensure_project_context_refreshes_access(self, mock_client, mock_save, mock_load):
+        auth_data = {
+            "antigravity": {
+                "refresh": "refresh_token",
+                "expires": time.time() + 3600,
+            }
+        }
+        mock_load.return_value = auth_data
+
+        self.auth.get_access_token = AsyncMock(return_value="new_access")
+
+        mock_http_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"cloudaicompanionProject": "project-999"}
+        mock_http_client.post.return_value = mock_response
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        await self.auth.ensure_project_context()
+
+        called_headers = mock_http_client.post.call_args[1]["headers"]
+        self.assertEqual(called_headers["Authorization"], "Bearer new_access")
+
     def test_get_project_id(self):
         self.auth._auth_data = {"refresh": "token|project"}
         self.assertEqual(self.auth.get_project_id(), "project")
@@ -179,6 +210,27 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         mock_server.assert_called_with(("localhost", 51121), unittest.mock.ANY)
         mock_thread.assert_called()
         mock_thread.return_value.start.assert_called()
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.stream_gemini_sdk_request")
+    async def test_handle_antigravity_request_requires_project(self, mock_stream, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value=None)
+        mock_auth.ensure_project_context = AsyncMock()
+
+        request = ClaudeMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1,
+            messages=[ClaudeMessage(role="user", content="hi")],
+        )
+
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as cm:
+            await handle_antigravity_request(request, "claude-sonnet-4-5").__anext__()
+
+        self.assertEqual(cm.exception.status_code, 400)
+        mock_stream.assert_not_called()
 
 
 if __name__ == "__main__":

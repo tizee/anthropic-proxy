@@ -11,7 +11,7 @@ import httpx
 # Add the parent directory to the sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from anthropic_proxy.codex import CodexAuth
+from anthropic_proxy.codex import CodexAuth, handle_codex_request, _is_codex_usage_limit_error
 
 class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -162,6 +162,10 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         account_id = self.auth._extract_account_id(token)
         self.assertEqual(account_id, "test-account-id")
 
+    def test_usage_limit_error_detection(self):
+        payload = b'{"error":{"code":"usage_limit_reached"}}'
+        self.assertTrue(_is_codex_usage_limit_error(payload))
+
     def test_generate_pkce(self):
         verifier, challenge = self.auth._generate_pkce()
         self.assertTrue(len(verifier) > 0)
@@ -171,6 +175,48 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         digest = hashlib.sha256(verifier.encode()).digest()
         expected_challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
         self.assertEqual(challenge, expected_challenge)
+
+    @patch("anthropic_proxy.codex.codex_auth.get_account_id", return_value=None)
+    @patch("anthropic_proxy.codex.codex_auth.get_access_token", new_callable=AsyncMock)
+    @patch("anthropic_proxy.codex.httpx.AsyncClient")
+    async def test_handle_codex_usage_limit_maps_429(
+        self, mock_client, mock_get_access_token, _mock_account_id
+    ):
+        mock_get_access_token.return_value = "access-token"
+
+        class FakeStream:
+            def __init__(self, response):
+                self._response = response
+
+            async def __aenter__(self):
+                return self._response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeClient:
+            def __init__(self, response):
+                self._response = response
+
+            def stream(self, *args, **kwargs):
+                return FakeStream(self._response)
+
+            async def aclose(self):
+                return None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.read = AsyncMock(
+            return_value=b'{"error":{"code":"usage_limit_reached"}}'
+        )
+        mock_client.return_value = FakeClient(mock_response)
+
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as cm:
+            await handle_codex_request({"model": "gpt-5.2-codex"}, "gpt-5.2-codex").__anext__()
+
+        self.assertEqual(cm.exception.status_code, 429)
 
     @patch("anthropic_proxy.auth_provider.socketserver.TCPServer")
     @patch("anthropic_proxy.auth_provider.threading.Thread")

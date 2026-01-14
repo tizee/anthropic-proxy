@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
 
 from .auth_provider import OAuthPKCEAuth, OAuthProviderConfig
 from .gemini_sdk import stream_gemini_sdk_request
@@ -49,8 +50,14 @@ ANTIGRAVITY_SYSTEM_INSTRUCTION = (
     "You are pair programming with a USER to solve their coding task.\n"
 )
 
-# Default models
+# Default models (subject to upstream changes).
+# These model names can become invalid if the provider updates or disables support.
 DEFAULT_ANTIGRAVITY_MODELS = {
+    "claude-opus-4-5-thinking": {
+        "model_name": "claude-opus-4-5-thinking",
+        "description": "Claude Opus 4.5 Thinking (Antigravity)",
+        "provider": "antigravity"
+    },
     "claude-sonnet-4-5": {
         "model_name": "claude-sonnet-4-5",
         "description": "Claude Sonnet 4.5 (Antigravity)",
@@ -61,17 +68,73 @@ DEFAULT_ANTIGRAVITY_MODELS = {
         "description": "Claude Sonnet 4.5 Thinking (Antigravity)",
         "provider": "antigravity"
     },
+    "gemini-3-pro": {
+        "model_name": "gemini-3-pro",
+        "description": "Gemini 3 Pro (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-3-pro-low": {
+        "model_name": "gemini-3-pro-low",
+        "description": "Gemini 3 Pro Low (Antigravity)",
+        "provider": "antigravity"
+    },
     "gemini-3-pro-high": {
         "model_name": "gemini-3-pro-high",
         "description": "Gemini 3 Pro High (Antigravity)",
         "provider": "antigravity"
     },
-    "gpt-oss-120b-medium": {
-        "model_name": "gpt-oss-120b-medium",
-        "description": "GPT-OSS 120B Medium (Antigravity)",
+    "gemini-3-pro-preview": {
+        "model_name": "gemini-3-pro-preview",
+        "description": "Gemini 3 Pro Preview (Antigravity)",
         "provider": "antigravity"
-    }
+    },
+    "gemini-3-flash": {
+        "model_name": "gemini-3-flash",
+        "description": "Gemini 3 Flash (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-2.5-pro": {
+        "model_name": "gemini-2.5-pro",
+        "description": "Gemini 2.5 Pro (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-2.5-flash": {
+        "model_name": "gemini-2.5-flash",
+        "description": "Gemini 2.5 Flash (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-2.5-flash-lite": {
+        "model_name": "gemini-2.5-flash-lite",
+        "description": "Gemini 2.5 Flash Lite (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-2.5-flash-thinking": {
+        "model_name": "gemini-2.5-flash-thinking",
+        "description": "Gemini 2.5 Flash Thinking (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-2.0-flash-exp": {
+        "model_name": "gemini-2.0-flash-exp",
+        "description": "Gemini 2.0 Flash Exp (Antigravity)",
+        "provider": "antigravity"
+    },
+    "gemini-3-pro-image": {
+        "model_name": "gemini-3-pro-image",
+        "description": "Gemini 3 Pro Image (Antigravity)",
+        "provider": "antigravity"
+    },
 }
+
+def _extract_session_id(request: ClaudeMessagesRequest) -> str | None:
+    metadata = request.metadata
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    return None
+
 
 class AntigravityAuth(OAuthPKCEAuth):
     """Manages Antigravity authentication tokens."""
@@ -99,7 +162,16 @@ class AntigravityAuth(OAuthPKCEAuth):
     def _extract_refresh_token(self, refresh_full: str | None) -> str | None:
         if not refresh_full:
             return None
-        return refresh_full.split("|")[0]
+        return refresh_full.split("|", 1)[0]
+
+    def _split_refresh(self) -> tuple[str, str]:
+        refresh_full = self._auth_data.get("refresh", "")
+        if not refresh_full:
+            return "", ""
+        if "|" in refresh_full:
+            token, project_id = refresh_full.split("|", 1)
+            return token, project_id
+        return refresh_full, ""
 
     def _post_login(self) -> None:
         print("Resolving Antigravity project...")
@@ -116,29 +188,26 @@ class AntigravityAuth(OAuthPKCEAuth):
         print("Project configuration resolved.")
 
     def get_project_id(self) -> str | None:
-        refresh = self._auth_data.get("refresh", "")
-        parts = refresh.split("|")
-        if len(parts) >= 2 and parts[1]:
-            return parts[1]
-        return None
+        _, project_id = self._split_refresh()
+        return project_id or None
 
     async def ensure_project_context(self) -> None:
         """Resolve and store project ID if missing."""
         self._load()
-        refresh_full = self._auth_data.get("refresh", "")
-        if not refresh_full:
+        refresh_token, project_id = self._split_refresh()
+        if not refresh_token:
             return
-
-        parts = refresh_full.split("|")
-        refresh_token = parts[0]
-        project_id = parts[1] if len(parts) > 1 else ""
 
         if project_id:
             return
 
         access_token = self._auth_data.get("access")
         if not access_token:
-            return
+            try:
+                access_token = await self.get_access_token()
+            except Exception as exc:
+                logger.error(f"Failed to refresh access token for project lookup: {exc}")
+                return
 
         try:
             async with httpx.AsyncClient() as client:
@@ -183,10 +252,6 @@ class AntigravityAuth(OAuthPKCEAuth):
                     )
                     if new_id:
                         self._update_refresh_with_project(refresh_token, new_id)
-                    else:
-                        self._update_refresh_with_project(
-                            refresh_token, "rising-fact-p41fc"
-                        )
 
         except Exception as exc:
             logger.error(f"Failed to ensure project context: {exc}")
@@ -215,8 +280,12 @@ async def handle_antigravity_request(
         await antigravity_auth.ensure_project_context()
         project_id = antigravity_auth.get_project_id()
         if not project_id:
-             # Fallback to default if still missing, or error
-             project_id = "rising-fact-p41fc"
+            raise HTTPException(
+                status_code=400,
+                detail="Antigravity Project ID could not be resolved. Try re-login.",
+            )
+
+    session_id = _extract_session_id(request)
 
     async for chunk in stream_gemini_sdk_request(
         request=request,
@@ -232,5 +301,6 @@ async def handle_antigravity_request(
             "requestType": "agent",
             "requestId": f"agent-{secrets.token_hex(8)}",
         },
+        session_id=session_id,
     ):
         yield chunk
