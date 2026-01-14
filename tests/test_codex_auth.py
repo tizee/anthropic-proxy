@@ -25,8 +25,8 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         }
         self.auth = CodexAuth()
 
-    @patch("anthropic_proxy.codex.load_auth_file")
-    @patch("anthropic_proxy.codex.save_auth_file")
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.save_auth_file")
     @patch("httpx.AsyncClient")
     async def test_get_access_token_refresh(self, mock_client, mock_save, mock_load):
         # Setup mocks
@@ -59,7 +59,7 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved_data["openai"]["refresh"], "new_refresh")
         self.assertAlmostEqual(saved_data["openai"]["expires"], time.time() + 3600, delta=10)
 
-    @patch("anthropic_proxy.codex.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
     async def test_get_access_token_valid(self, mock_load):
         # Setup valid token (expires in 1 hour)
         valid_auth = {
@@ -78,8 +78,8 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         # Verify
         self.assertEqual(token, "valid_access")
 
-    @patch("anthropic_proxy.codex.load_auth_file")
-    @patch("anthropic_proxy.codex.save_auth_file")
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.save_auth_file")
     @patch("httpx.AsyncClient")
     async def test_get_access_token_proactive_refresh(self, mock_client, mock_save, mock_load):
         """Test that token is refreshed if it expires in < 5 minutes."""
@@ -113,7 +113,7 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token, "new_access")
         mock_http_client.post.assert_called_once()
 
-    @patch("anthropic_proxy.codex.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
     @patch("httpx.AsyncClient")
     async def test_get_access_token_refresh_fail(self, mock_client, mock_load):
         """Test handling of failed refresh (e.g. revoked token)."""
@@ -172,8 +172,8 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
         expected_challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
         self.assertEqual(challenge, expected_challenge)
 
-    @patch("anthropic_proxy.codex.socketserver.TCPServer")
-    @patch("anthropic_proxy.codex.threading.Thread")
+    @patch("anthropic_proxy.auth_provider.socketserver.TCPServer")
+    @patch("anthropic_proxy.auth_provider.threading.Thread")
     @patch("anthropic_proxy.codex.CodexAuth._open_browser")
     @patch("builtins.print")
     def test_login_starts_server(self, mock_print, mock_open_browser, mock_thread, mock_server):

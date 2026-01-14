@@ -116,7 +116,7 @@ class CodexAuth(OAuthPKCEAuth):
             logger.warning(f"Failed to extract account ID from token: {exc}")
 
     async def _refresh_token(self, refresh_token_raw: str, refresh_full: str | None) -> str:
-        new_access = await super()._refresh_token(refresh_token_raw, refresh_full)
+        new_access = await super()._refresh_token(refresh_token_raw, None)
         try:
             account_id = self._extract_account_id(new_access)
             if account_id:
