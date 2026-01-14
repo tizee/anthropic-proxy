@@ -186,6 +186,69 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
             chunks[0]["candidates"][0]["content"]["parts"][0]["text"], "hi"
         )
 
+    @patch("anthropic_proxy.gemini_sdk.httpx.AsyncClient")
+    async def test_gemini_code_assist_injects_tool_config(self, mock_client):
+        class DummyResponse:
+            status_code = 200
+            reason_phrase = "OK"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                yield "data: [DONE]"
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            def stream(self, method, url, **kwargs):
+                self.method = method
+                self.url = url
+                self.kwargs = kwargs
+                return DummyResponse()
+
+        mock_client.return_value = DummyClient()
+
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[
+                {
+                    "name": "get_weather",
+                    "description": "",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        )
+
+        async for _chunk in stream_gemini_sdk_request(
+            request=request,
+            model_id="gemini-2.5-pro",
+            access_token="token",
+            project_id="project-123",
+            base_url="https://cloudcode-pa.googleapis.com",
+            extra_headers={},
+            is_antigravity=False,
+            use_code_assist=True,
+        ):
+            pass
+
+        request_body = mock_client.return_value.kwargs["json"]["request"]
+        self.assertIn("toolConfig", request_body)
+        self.assertEqual(
+            request_body["toolConfig"]["functionCallingConfig"]["mode"], "VALIDATED"
+        )
     def test_clean_gemini_schema_strips_code_assist_unsupported_keys(self):
         schema = {
             "type": "object",

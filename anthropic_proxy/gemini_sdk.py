@@ -140,6 +140,9 @@ async def stream_gemini_sdk_request(
         headers.setdefault("Accept", "text/event-stream")
         headers.setdefault("Content-Type", "application/json")
 
+        if raw_body.get("tools") and "toolConfig" not in raw_body:
+            raw_body["toolConfig"] = {"functionCallingConfig": {"mode": "VALIDATED"}}
+
         envelope: dict[str, Any] = {"request": raw_body}
         if project_id:
             envelope["project"] = project_id
