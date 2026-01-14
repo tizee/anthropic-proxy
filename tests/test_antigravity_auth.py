@@ -123,6 +123,49 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         saved_data = mock_save.call_args[0][0]
         self.assertEqual(saved_data["antigravity"]["refresh"], "refresh_token|project-321")
 
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.save_auth_file")
+    @patch("httpx.AsyncClient")
+    async def test_ensure_project_context_onboard_user(self, mock_client, mock_save, mock_load):
+        auth_data = {
+            "antigravity": {
+                "access": "access",
+                "refresh": "refresh_token",
+                "expires": time.time() + 3600,
+            }
+        }
+        mock_load.return_value = auth_data
+
+        load_response = MagicMock()
+        load_response.status_code = 404
+        load_response.json.return_value = {}
+
+        onboard_response = MagicMock()
+        onboard_response.status_code = 200
+        onboard_response.json.return_value = {
+            "response": {"cloudaicompanionProject": {"id": "project-456"}}
+        }
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post.side_effect = [load_response, onboard_response]
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        await self.auth.ensure_project_context()
+
+        self.assertEqual(mock_http_client.post.call_count, 2)
+        called_url = mock_http_client.post.call_args_list[1][0][0]
+        self.assertEqual(
+            called_url,
+            f"{ANTIGRAVITY_ENDPOINT}/v1internal:onboardUser",
+        )
+
+        saved_data = mock_save.call_args[0][0]
+        self.assertEqual(saved_data["antigravity"]["refresh"], "refresh_token|project-456")
+
+    def test_get_project_id(self):
+        self.auth._auth_data = {"refresh": "token|project"}
+        self.assertEqual(self.auth.get_project_id(), "project")
+
     @patch("anthropic_proxy.auth_provider.OAuthPKCEAuth._open_browser")
     @patch("anthropic_proxy.auth_provider.socketserver.TCPServer")
     @patch("anthropic_proxy.auth_provider.threading.Thread")
