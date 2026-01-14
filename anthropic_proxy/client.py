@@ -136,9 +136,7 @@ def load_codex_models():
     # Check if we have auth data (access or refresh token)
     # We don't need to validate it here, just check existence to avoid cluttering
     # the model list for users who don't use Codex.
-    # Accessing internal _auth_data is a bit hacky but efficient.
-    # Better to ask the auth object.
-    has_auth = bool(codex_auth.get_account_id() or codex_auth._auth_data.get("refresh"))
+    has_auth = codex_auth.has_auth()
 
     if not has_auth:
         return
@@ -171,7 +169,7 @@ def load_codex_models():
 
 def load_gemini_models():
     """Auto-register default Gemini models if authentication is available."""
-    has_auth = bool(gemini_auth._auth_data.get("refresh"))
+    has_auth = gemini_auth.has_auth()
 
     if not has_auth:
         return
@@ -203,7 +201,7 @@ def load_gemini_models():
 
 def load_antigravity_models():
     """Auto-register default Antigravity models if authentication is available."""
-    has_auth = bool(antigravity_auth._auth_data.get("refresh"))
+    has_auth = antigravity_auth.has_auth()
 
     if not has_auth:
         return

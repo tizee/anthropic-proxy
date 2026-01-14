@@ -1,7 +1,5 @@
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
-import json
-import httpx
 import sys
 import os
 
@@ -29,7 +27,7 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
     @patch("anthropic_proxy.client.gemini_auth")
     def test_load_gemini_models_with_auth(self, mock_auth):
         # Simulate auth present
-        mock_auth._auth_data = {"refresh": "token"}
+        mock_auth.has_auth.return_value = True
         
         load_gemini_models()
         
@@ -39,64 +37,31 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
     @patch("anthropic_proxy.client.gemini_auth")
     def test_load_gemini_models_no_auth(self, mock_auth):
         # Simulate no auth
-        mock_auth._auth_data = {}
+        mock_auth.has_auth.return_value = False
         
         load_gemini_models()
         
         self.assertNotIn("gemini-2.5-flash", CUSTOM_OPENAI_MODELS)
 
+    @patch("anthropic_proxy.gemini.stream_gemini_sdk_request")
     @patch("anthropic_proxy.gemini.gemini_auth")
-    @patch("httpx.AsyncClient")
-    async def test_handle_gemini_request_stream(self, mock_client_cls, mock_auth):
+    async def test_handle_gemini_request_stream(self, mock_auth, mock_stream):
         # Setup Auth
         mock_auth.get_access_token = AsyncMock(return_value="access_token")
         mock_auth.get_project_id = MagicMock(return_value="project_id")
-        
-        # Setup Gemini Response stream
-        mock_client = MagicMock() # Client itself shouldn't be AsyncMock to control methods
-        # But we need to support 'async with client' if used as ctx, but here we instantiate it
-        mock_client_cls.return_value = mock_client
-        
-        # aclose must be awaitable
-        mock_client.aclose = AsyncMock()
-        
-        # httpx.AsyncClient.stream returns a Context Manager (not awaitable itself)
-        # So stream should be a MagicMock
-        mock_stream_ctx = MagicMock()
-        mock_client.stream.return_value = mock_stream_ctx
-        
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        
-        # Context manager returns response on __aenter__
-        mock_stream_ctx.__aenter__.return_value = mock_response
-        
-        # Sample Gemini SSE response lines
-        # data: {"response": {"candidates": [{"content": {"parts": [{"text": "Hello"}]}, "finishReason": "STOP"}]}}
-        
         gemini_chunk = {
-            "response": {
-                "candidates": [
-                    {
-                        "content": {"parts": [{"text": "Hello"}]},
-                        "finishReason": "STOP"
-                    }
-                ]
-            }
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Hello"}]},
+                    "finishReason": "STOP",
+                }
+            ]
         }
-        
-        lines = [
-            f"data: {json.dumps(gemini_chunk)}",
-            "", # empty line
-            "data: [DONE]" # Not standard Gemini but good for testing loop break if we handled it, but logic parses json
-        ]
-        
-        async def aiter_lines():
-            for line in lines:
-                yield line
-                
-        mock_response.aiter_lines = aiter_lines
-        mock_client.stream.return_value.__aenter__.return_value = mock_response
+
+        async def fake_stream(**kwargs):
+            yield gemini_chunk
+
+        mock_stream.side_effect = lambda **kwargs: fake_stream(**kwargs)
         
         # Run Handler
         claude_req = ClaudeMessagesRequest(

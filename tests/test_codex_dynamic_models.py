@@ -16,8 +16,7 @@ class TestCodexDynamicModels(unittest.TestCase):
     @patch("anthropic_proxy.client.codex_auth")
     def test_dynamic_injection_with_auth(self, mock_auth):
         # Simulate auth data present
-        mock_auth.get_account_id.return_value = "acc-123"
-        mock_auth._auth_data = {"refresh": "token"}
+        mock_auth.has_auth.return_value = True
         
         load_codex_models()
         
@@ -30,8 +29,7 @@ class TestCodexDynamicModels(unittest.TestCase):
     @patch("anthropic_proxy.client.codex_auth")
     def test_no_injection_without_auth(self, mock_auth):
         # Simulate no auth data
-        mock_auth.get_account_id.return_value = None
-        mock_auth._auth_data = {}
+        mock_auth.has_auth.return_value = False
         
         load_codex_models()
         
@@ -41,8 +39,7 @@ class TestCodexDynamicModels(unittest.TestCase):
     @patch("anthropic_proxy.client.codex_auth")
     def test_no_overwrite_user_config(self, mock_auth):
         # Simulate auth data present
-        mock_auth.get_account_id.return_value = "acc-123"
-        mock_auth._auth_data = {"refresh": "token"}
+        mock_auth.has_auth.return_value = True
         
         # Pre-register a model (simulating models.yaml)
         CUSTOM_OPENAI_MODELS["gpt-5.1-codex"] = {

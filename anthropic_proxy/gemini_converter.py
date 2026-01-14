@@ -323,3 +323,90 @@ def anthropic_to_gemini_request(
         out["toolConfig"] = tool_config
 
     return out
+
+
+def _camel_to_snake(name: str) -> str:
+    out = []
+    for ch in name:
+        if ch.isupper():
+            out.append("_")
+            out.append(ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out).lstrip("_")
+
+
+def _convert_keys_to_snake(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {_camel_to_snake(k): _convert_keys_to_snake(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_convert_keys_to_snake(item) for item in value]
+    return value
+
+
+def _system_parts_to_text(system_instruction: dict[str, Any]) -> str | None:
+    parts = system_instruction.get("parts") if system_instruction else None
+    if not parts:
+        return None
+    texts = [part.get("text", "") for part in parts if isinstance(part, dict)]
+    joined = "\n".join(text for text in texts if text)
+    return joined or None
+
+
+def _build_sdk_tools(request: ClaudeMessagesRequest) -> list[dict[str, Any]] | None:
+    tools = _build_tools(request)
+    if not tools:
+        return None
+
+    function_decls = []
+    for tool in tools:
+        for decl in tool.get("functionDeclarations", []):
+            function_decls.append(
+                {
+                    "name": decl.get("name", ""),
+                    "description": decl.get("description", ""),
+                    "parameters_json_schema": decl.get("parameters", {}),
+                }
+            )
+
+    if not function_decls:
+        return None
+
+    return [{"function_declarations": function_decls}]
+
+
+def anthropic_to_gemini_sdk_params(
+    request: ClaudeMessagesRequest,
+    model_id: str,
+    *,
+    is_antigravity: bool = False,
+    system_prefix: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """Convert Anthropic Messages request into Gemini SDK params."""
+    body = anthropic_to_gemini_request(
+        request,
+        model_id,
+        is_antigravity=is_antigravity,
+        system_prefix=system_prefix,
+    )
+
+    contents = body.get("contents", [])
+    config: dict[str, Any] = {}
+
+    system_text = _system_parts_to_text(body.get("systemInstruction", {}))
+    if system_text:
+        config["system_instruction"] = system_text
+
+    generation_config = body.get("generationConfig")
+    if generation_config:
+        config["generation_config"] = _convert_keys_to_snake(generation_config)
+
+    tools = _build_sdk_tools(request)
+    if tools:
+        config["tools"] = tools
+
+    tool_config = body.get("toolConfig")
+    if tool_config:
+        config["tool_config"] = _convert_keys_to_snake(tool_config)
+
+    return contents, config, body
