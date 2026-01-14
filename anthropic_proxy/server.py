@@ -26,10 +26,10 @@ from .client import (
     CUSTOM_OPENAI_MODELS,
     create_claude_client,
     create_openai_client,
+    get_model_format,
     initialize_custom_models,
     is_antigravity_model,
     is_codex_model,
-    is_direct_mode_model,
     is_gemini_model,
 )
 from .codex import handle_codex_request
@@ -448,11 +448,59 @@ async def create_message(raw_request: Request):
             f"📊 REQUEST: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}, Stream={model_config.get('can_stream')}"
         )
 
-        # Check if this model should use direct Claude API mode
-        if is_direct_mode_model(model_id):
-            logger.info(f"🔗 DIRECT MODE: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
+        model_format = get_model_format(model_id) or "openai"
+
+        if model_format == "anthropic":
+            logger.info(f"🔗 ANTHROPIC FORMAT: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
             return await handle_direct_claude_request(
                 request, model_id, model_config, raw_request
+            )
+
+        if model_format == "gemini":
+            provider_model_name = model_config.get("model_name", model_id)
+            if is_gemini_model(model_id):
+                logger.info(f"🔗 GEMINI FORMAT: Model={model_id}")
+                provider_generator = await handle_gemini_request(
+                    request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            elif is_antigravity_model(model_id):
+                logger.info(f"🔗 ANTIGRAVITY FORMAT: Model={model_id}")
+                provider_generator = await handle_antigravity_request(
+                    request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                )
+
+            hooked_generator = hook_streaming_response(
+                convert_gemini_streaming_response_to_anthropic(
+                    provider_generator, request, model_id
+                ),
+                request,
+                model_id,
+            )
+            return StreamingResponse(
+                hooked_generator,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+
+        if model_format != "openai":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown format '{model_format}' for model '{model_id}'.",
             )
 
         # Convert Anthropic request to OpenAI format (default path)
@@ -476,32 +524,17 @@ async def create_message(raw_request: Request):
         provider_generator = None
         if is_codex_model(model_id):
             logger.info(f"🔗 CODEX MODE: Model={model_id}")
+            openai_request["model"] = model_config.get("model_name", model_id)
             provider_generator = await handle_codex_request(openai_request, model_id)
-        elif is_gemini_model(model_id):
-            logger.info(f"🔗 GEMINI MODE: Model={model_id}")
-            provider_generator = await handle_gemini_request(request, model_id)
-        elif is_antigravity_model(model_id):
-            logger.info(f"🔗 ANTIGRAVITY MODE: Model={model_id}")
-            provider_generator = await handle_antigravity_request(request, model_id)
 
         if provider_generator:
-            # Gemini/Antigravity produce Gemini chunks, not OpenAI chunks.
-            if is_gemini_model(model_id) or is_antigravity_model(model_id):
-                hooked_generator = hook_streaming_response(
-                    convert_gemini_streaming_response_to_anthropic(
-                        provider_generator, request, model_id
-                    ),
-                    request,
-                    model_id,
-                )
-            else:
-                hooked_generator = hook_streaming_response(
-                    convert_openai_streaming_response_to_anthropic(
-                        provider_generator, request, model_id
-                    ),
-                    request,
-                    model_id,
-                )
+            hooked_generator = hook_streaming_response(
+                convert_openai_streaming_response_to_anthropic(
+                    provider_generator, request, model_id
+                ),
+                request,
+                model_id,
+            )
             return StreamingResponse(
                 hooked_generator,
                 media_type="text/event-stream",

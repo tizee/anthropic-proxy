@@ -6,14 +6,15 @@ import sys
 # Add the parent directory to the sys.path to allow imports from the server module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from anthropic_proxy.client import is_direct_mode_model
+from anthropic_proxy.client import get_model_format, is_direct_mode_model
 
 
-class TestDirectModeDetection(unittest.TestCase):
+class TestFormatRouting(unittest.TestCase):
     def setUp(self):
         self.mock_models = {
-            "model-direct": {"max_input_tokens": 50000, "direct": True},
-            "model-openai-compatible": {"max_input_tokens": 30000, "direct": False},
+            "model-anthropic": {"max_input_tokens": 50000, "format": "anthropic"},
+            "model-openai": {"max_input_tokens": 30000, "format": "openai"},
+            "model-legacy-direct": {"max_input_tokens": 30000, "direct": True},
         }
 
         patcher_models = patch.dict(
@@ -22,15 +23,25 @@ class TestDirectModeDetection(unittest.TestCase):
         self.addCleanup(patcher_models.stop)
         patcher_models.start()
 
-    def test_is_direct_mode_model_with_explicit_direct_true(self):
-        """Test that a model with direct=True is identified as direct mode."""
-        result = is_direct_mode_model("model-direct")
+    def test_get_model_format(self):
+        """Test that format is returned for known models."""
+        result = get_model_format("model-anthropic")
+        self.assertEqual(result, "anthropic")
+
+    def test_is_direct_mode_model_with_format_anthropic(self):
+        """Test that a model with format=anthropic is identified as direct mode."""
+        result = is_direct_mode_model("model-anthropic")
         self.assertTrue(result)
 
-    def test_is_direct_mode_model_with_explicit_direct_false(self):
-        """Test that a model with direct=False is not identified as direct mode."""
-        result = is_direct_mode_model("model-openai-compatible")
+    def test_is_direct_mode_model_with_format_openai(self):
+        """Test that a model with format=openai is not identified as direct mode."""
+        result = is_direct_mode_model("model-openai")
         self.assertFalse(result)
+
+    def test_is_direct_mode_model_with_legacy_direct_true(self):
+        """Test that legacy direct=True is still recognized when format is missing."""
+        result = is_direct_mode_model("model-legacy-direct")
+        self.assertTrue(result)
 
     def test_is_direct_mode_model_unknown_model(self):
         """Test that an unknown model returns False for direct mode."""

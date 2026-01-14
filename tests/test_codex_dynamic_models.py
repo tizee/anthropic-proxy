@@ -21,10 +21,10 @@ class TestCodexDynamicModels(unittest.TestCase):
         load_codex_models()
         
         # Verify models are registered
-        self.assertIn("gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
-        self.assertTrue(is_codex_model("gpt-5.2-codex"))
-        self.assertEqual(CUSTOM_OPENAI_MODELS["gpt-5.2-codex"]["provider"], "codex")
-        self.assertEqual(CUSTOM_OPENAI_MODELS["gpt-5.2-codex"]["reasoning_effort"], "high")
+        self.assertIn("codex/gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
+        self.assertTrue(is_codex_model("codex/gpt-5.2-codex"))
+        self.assertEqual(CUSTOM_OPENAI_MODELS["codex/gpt-5.2-codex"]["provider"], "codex")
+        self.assertEqual(CUSTOM_OPENAI_MODELS["codex/gpt-5.2-codex"]["reasoning_effort"], "high")
 
     @patch("anthropic_proxy.client.codex_auth")
     def test_no_injection_without_auth(self, mock_auth):
@@ -34,7 +34,7 @@ class TestCodexDynamicModels(unittest.TestCase):
         load_codex_models()
         
         # Verify no models registered
-        self.assertNotIn("gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
+        self.assertNotIn("codex/gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
 
     @patch("anthropic_proxy.client.codex_auth")
     def test_no_overwrite_user_config(self, mock_auth):
@@ -42,8 +42,8 @@ class TestCodexDynamicModels(unittest.TestCase):
         mock_auth.has_auth.return_value = True
         
         # Pre-register a model (simulating models.yaml)
-        CUSTOM_OPENAI_MODELS["gpt-5.2-codex"] = {
-            "model_id": "gpt-5.2-codex",
+        CUSTOM_OPENAI_MODELS["codex/gpt-5.2-codex"] = {
+            "model_id": "codex/gpt-5.2-codex",
             "provider": "user-defined", # Different provider to prove no overwrite
             "reasoning_effort": "custom"
         }
@@ -51,11 +51,11 @@ class TestCodexDynamicModels(unittest.TestCase):
         load_codex_models()
         
         # Verify user config was preserved
-        self.assertEqual(CUSTOM_OPENAI_MODELS["gpt-5.2-codex"]["provider"], "user-defined")
-        self.assertEqual(CUSTOM_OPENAI_MODELS["gpt-5.2-codex"]["reasoning_effort"], "custom")
+        self.assertEqual(CUSTOM_OPENAI_MODELS["codex/gpt-5.2-codex"]["provider"], "user-defined")
+        self.assertEqual(CUSTOM_OPENAI_MODELS["codex/gpt-5.2-codex"]["reasoning_effort"], "custom")
         
         # Verify other models were still injected
-        self.assertIn("gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
+        self.assertIn("codex/gpt-5.2-codex", CUSTOM_OPENAI_MODELS)
 
 if __name__ == "__main__":
     unittest.main()

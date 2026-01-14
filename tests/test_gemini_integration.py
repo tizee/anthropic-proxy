@@ -31,8 +31,8 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
         
         load_gemini_models()
         
-        self.assertIn("gemini-2.5-flash", CUSTOM_OPENAI_MODELS)
-        self.assertEqual(CUSTOM_OPENAI_MODELS["gemini-2.5-flash"]["provider"], "gemini")
+        self.assertIn("gemini/gemini-2.5-flash", CUSTOM_OPENAI_MODELS)
+        self.assertEqual(CUSTOM_OPENAI_MODELS["gemini/gemini-2.5-flash"]["provider"], "gemini")
 
     @patch("anthropic_proxy.client.gemini_auth")
     def test_load_gemini_models_no_auth(self, mock_auth):
@@ -41,7 +41,7 @@ class TestGeminiIntegration(unittest.IsolatedAsyncioTestCase):
         
         load_gemini_models()
         
-        self.assertNotIn("gemini-2.5-flash", CUSTOM_OPENAI_MODELS)
+        self.assertNotIn("gemini/gemini-2.5-flash", CUSTOM_OPENAI_MODELS)
 
     @patch("anthropic_proxy.gemini.stream_gemini_sdk_request")
     @patch("anthropic_proxy.gemini.gemini_auth")

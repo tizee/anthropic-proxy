@@ -3,17 +3,18 @@
 [![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy)
 [![License](https://img.shields.io/github/license/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy/blob/main/LICENSE)
 
-A proxy server that enables Claude Code to work with multiple model providers through two modes:
+A proxy server that enables Claude Code to work with multiple model providers through format-based routing:
 
-1. **OpenAI-Compatible Mode**: Translates Anthropic API requests to OpenAI-compatible endpoints
-2. **Direct Claude API Mode**: Routes requests directly to official Claude API or compatible endpoints
+1. **OpenAI-Compatible Format** (`format: openai`): Translates Anthropic API requests to OpenAI-compatible endpoints
+2. **Anthropic-Compatible Format** (`format: anthropic`): Routes requests directly to official Claude API or compatible endpoints
+3. **Gemini Format** (`format: gemini`): Routes requests through Gemini-compatible backends (Gemini/Antigravity subscriptions)
 
 - kimi official supports Anthropic API https://api.moonshot.cn/anthropic
 - deepseek supports Anthropic https://api-docs.deepseek.com/guides/anthropic_api
 - Zhipu GLM supports Anthropic API https://open.bigmodel.cn/api/anthropic
 - MiniMax supports Anthropic API https://api.minimax.io/anthropic
 
-This allows you to use Claude Code with both OpenAI-compatible models and native Claude API endpoints. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
+This allows you to use Claude Code with OpenAI-compatible models, native Claude API endpoints, and Gemini subscriptions. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
 ## Primary Use Case: Claude Code Proxy
 
@@ -40,7 +41,7 @@ Use this proxy in the following scenarios:
 
 ## Third-Party Providers Supporting Anthropic Format
 
-The following providers offer native Anthropic API compatibility, allowing direct usage without format conversion:
+The following providers offer native Anthropic API compatibility, allowing Anthropic format usage without conversion:
 
 | Provider | API Endpoint | Supported Models |
 |----------|-------------|------------------|
@@ -52,22 +53,23 @@ The following providers offer native Anthropic API compatibility, allowing direc
 
 ### Configuration Example
 
-For providers with native Anthropic support, configure as direct mode:
+For providers with native Anthropic support, configure as Anthropic format:
 
 ```yaml
 - model_id: kimi-k2-direct
   model_name: kimi-k2-0711-preview
   api_base: https://api.moonshot.cn/anthropic
-  direct: true
+  format: anthropic
   max_tokens: 16k
   max_input_tokens: 200k
 ```
 
 ## Key Features
 
-### 🔄 Dual-Mode Operation
-- **OpenAI-Compatible Mode**: Convert Anthropic API requests to OpenAI format for third-party providers
-- **Direct Claude API Mode**: Route requests directly to official Anthropic API with native format preservation
+### 🔄 Format-Based Operation
+- **OpenAI-Compatible Format**: Convert Anthropic API requests to OpenAI format for third-party providers
+- **Anthropic-Compatible Format**: Route requests directly to official Anthropic API with native format preservation
+- **Gemini Format**: Route requests via Gemini Code Assist (subscription-backed)
 
 ### 🔗 ccproxy Integration (Recommended)
 This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper script):
@@ -77,7 +79,7 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 
 ### 🎯 Model Selection
 - Model choice comes from the incoming request (ccproxy controls this)
-- Support for both direct and OpenAI-compatible models in `models.yaml`
+- Support for `openai`, `anthropic`, and `gemini` formats in `models.yaml` (with `direct` as a legacy alias)
 - Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose "reasoning level" variants. `reasoning_effort` supports `minimal|low|medium|high` (where `minimal` means no thinking).
 
 Example:
@@ -168,7 +170,7 @@ Plugins are loaded automatically at server startup. Both request and response ho
 
 ## 🔑 Codex Subscription Support
 
-This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `gpt-5.1-codex`) directly.
+This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `codex/gpt-5.2-codex`) directly.
 
 ### 1. Login
 
@@ -181,21 +183,22 @@ This will open a browser window to log in to OpenAI. Once authenticated, your se
 
 ### 2. Available Models
 
-Once logged in, the following models are **automatically available** without any configuration in `models.yaml`:
+Once logged in, the following models are **automatically available** without any configuration in `models.yaml` (subject to upstream changes). These IDs are prefixed to avoid collisions:
 
-- `gpt-5.1-codex` (Medium reasoning)
-- `gpt-5.2-codex` (High reasoning)
-- `gpt-5.1-codex-max` (High reasoning)
-- `gpt-5.1-codex-mini` (Medium reasoning)
+- `codex/gpt-5.2-codex` (High reasoning)
+- `codex/gpt-5.1-codex-max` (High reasoning)
+- `codex/gpt-5.1-codex-mini` (Medium reasoning)
+- `codex/gpt-5.2` (High reasoning)
 
 You can use these model IDs directly in your Claude Code setup.
+If you define the same `model_id` in `models.yaml`, your configuration takes precedence.
 
 ### 3. Customizing Codex Models
 
 To customize parameters (like `reasoning_effort` or `max_tokens`) for a Codex model, add an entry to `models.yaml`. **Note:** You must explicitly set `provider: codex` to inherit the subscription authentication.
 
 ```yaml
-- model_id: gpt-5.1-codex
+- model_id: codex/gpt-5.2-codex
   provider: codex
   reasoning_effort: high  # Override default
   max_tokens: 32K
@@ -203,11 +206,11 @@ To customize parameters (like `reasoning_effort` or `max_tokens`) for a Codex mo
 
 ### 4. Non-Codex Plan Usage
 
-If you have a Codex model ID but want to use it with a standard OpenAI API key (Billing) instead of the subscription plan, set `provider: openai` and provide your key:
+If you have a Codex model ID but want to use it with a standard OpenAI API key (billing) instead of the subscription plan, provide `api_base`/`api_key` and leave `provider` unset:
 
 ```yaml
-- model_id: gpt-5.1-codex
-  provider: openai
+- model_id: codex/gpt-5.2-codex
+  model_name: gpt-5.2-codex
   api_base: https://api.openai.com/v1
   api_key: sk-...
 ```
@@ -227,18 +230,61 @@ This authenticates with your Google account. It will automatically resolve a Goo
 
 ### 2. Available Models
 
-The following models are automatically available:
-- `gemini-2.5-flash`
-- `gemini-3-pro-preview`
+The following models are automatically available (subject to upstream changes). These IDs are prefixed to avoid collisions:
+- `gemini/gemini-3-pro-preview`
+- `gemini/gemini-3-flash-preview`
+- `gemini/gemini-2.5-pro`
+- `gemini/gemini-2.5-flash`
+- `gemini/gemini-2.5-flash-lite`
+If you define the same `model_id` in `models.yaml`, your configuration takes precedence.
 
 ### 3. Customizing Gemini Models
 
 To override settings, specify `provider: gemini`:
 
 ```yaml
-- model_id: gemini-2.5-flash
+- model_id: gemini/gemini-2.5-flash
   provider: gemini
   reasoning_effort: medium  # if applicable
+```
+
+## 🛰️ Antigravity Subscription Support (Google Internal)
+
+Use Google's internal Antigravity service (Cloud Code backend) with your Google account.
+
+### 1. Login
+
+```bash
+anthropic-proxy login --antigravity
+```
+
+### 2. Available Models
+
+The following models are automatically available (subject to upstream changes). These IDs are prefixed to avoid collisions:
+- `antigravity/claude-opus-4-5-thinking`
+- `antigravity/claude-sonnet-4-5`
+- `antigravity/claude-sonnet-4-5-thinking`
+- `antigravity/gemini-3-pro`
+- `antigravity/gemini-3-pro-low`
+- `antigravity/gemini-3-pro-high`
+- `antigravity/gemini-3-pro-preview`
+- `antigravity/gemini-3-flash`
+- `antigravity/gemini-2.5-pro`
+- `antigravity/gemini-2.5-flash`
+- `antigravity/gemini-2.5-flash-lite`
+- `antigravity/gemini-2.5-flash-thinking`
+- `antigravity/gemini-2.0-flash-exp`
+- `antigravity/gemini-3-pro-image`
+If you define the same `model_id` in `models.yaml`, your configuration takes precedence.
+
+### 3. Customizing Antigravity Models
+
+To override settings, specify `provider: antigravity`:
+
+```yaml
+- model_id: antigravity/claude-sonnet-4-5
+  provider: antigravity
+  reasoning_effort: high
 ```
 
 ## Quick Start
@@ -338,7 +384,7 @@ Configure your models in `~/.config/anthropic-proxy/models.yaml`:
 ```yaml
 # Required fields: model_id, api_base
 # Optional fields: model_name, api_key, can_stream, max_tokens, max_input_tokens,
-#                  context, extra_headers, extra_body, direct, reasoning_effort, temperature
+#                  context, extra_headers, extra_body, format, direct, reasoning_effort, temperature
 #
 # API Key Configuration:
 # - api_key: Optional per-model API key. If set, it takes precedence over request headers.
@@ -346,12 +392,13 @@ Configure your models in `~/.config/anthropic-proxy/models.yaml`:
 # - API keys stored here are in plain text - use caution in shared environments.
 #
 # reasoning_effort supports: minimal, low, medium, high (minimal = no thinking)
-# direct: true for Anthropic-compatible APIs, false for OpenAI-compatible
+# format: openai | anthropic | gemini (routing format; defaults to openai)
+# direct: legacy alias (direct: true -> format=anthropic). If format is set, it wins.
 
 - model_id: deepseek-chat
   model_name: deepseek-chat
   api_base: https://api.deepseek.com/v1
-  direct: false
+  format: openai
   can_stream: true
   max_tokens: 8K
   context: 128K
@@ -359,7 +406,7 @@ Configure your models in `~/.config/anthropic-proxy/models.yaml`:
 - model_id: claude-3-5-sonnet-direct
   model_name: claude-3-5-sonnet-20241022
   api_base: https://api.anthropic.com
-  direct: true
+  format: anthropic
   can_stream: true
   max_tokens: 8K
   max_input_tokens: 200K

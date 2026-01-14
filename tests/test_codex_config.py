@@ -46,7 +46,7 @@ class TestCodexConfig(unittest.TestCase):
         self.assertTrue(is_codex_model("gpt-4o-codex"))
         
         # Verify other model defaults
-        self.assertEqual(CUSTOM_OPENAI_MODELS["claude-direct"]["provider"], "anthropic")
+        self.assertIsNone(CUSTOM_OPENAI_MODELS["claude-direct"]["provider"])
         self.assertFalse(is_codex_model("claude-direct"))
 
 if __name__ == "__main__":

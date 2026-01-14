@@ -17,21 +17,37 @@ Key points:
 - **Model selection** is driven by the incoming request model. The server does not perform routing or model switching.
 - **models.yaml** defines model → API URL mappings and per-model options (no `api_key_name`, no pricing fields).
 - **/v1/messages/count_tokens** returns a local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice.
+- **Default auth-provider models may drift**: Codex/Gemini/Antigravity default model IDs are best-effort and can become invalid if upstream providers change or disable support. Keep docs/tests in sync when updating.
+- **Auth default model IDs are prefixed**: Codex/Gemini/Antigravity defaults use `codex/`, `gemini/`, `antigravity/` prefixes to avoid collisions; user-defined IDs take precedence.
 
-### Dual-Mode Operation
-The proxy operates in two distinct modes based on the `direct` flag in models.yaml:
-- **Direct mode** (`direct: true`): Routes to Anthropic-compatible APIs without format conversion. Providers include Moonshot AI (Kimi), DeepSeek, Zhipu GLM, MiniMax. Uses httpx client.
-- **OpenAI-compatible mode** (`direct: false`): Converts Anthropic format to OpenAI format for third-party providers. Uses AsyncOpenAI SDK client.
+### Format-Based Operation
+The proxy routes requests based on the `format` field in models.yaml (with `direct` as a legacy alias):
+- **Anthropic format** (`format: anthropic` or legacy `direct: true`): Routes to Anthropic-compatible APIs without format conversion. Providers include Moonshot AI (Kimi), DeepSeek, Zhipu GLM, MiniMax. Uses httpx client.
+- **OpenAI format** (`format: openai`): Converts Anthropic format to OpenAI format for third-party providers. Uses AsyncOpenAI SDK client.
+- **Gemini format** (`format: gemini`): Routes via Gemini Code Assist subscriptions (Gemini/Antigravity).
 
 ## Architecture Reference
 
 ### Core Modules
 - `anthropic_proxy/server.py`: FastAPI endpoints, request handling, and response conversion.
 - `anthropic_proxy/client.py`: Loads `models.yaml` and creates provider-specific clients.
-- `anthropic_proxy/converter.py`: Anthropic ↔ OpenAI request/response conversion.
-- `anthropic_proxy/streaming.py`: Streaming conversion logic.
+- `anthropic_proxy/openai_converter.py`: Anthropic ↔ OpenAI request/response conversion.
+- `anthropic_proxy/gemini_converter.py`: Anthropic ↔ Gemini request/response conversion.
+- `anthropic_proxy/converter.py`: Converter facade (re-exports format-specific converters).
+- `anthropic_proxy/streaming.py`: Streaming conversion facade.
 - `anthropic_proxy/types.py`: Pydantic models and API schemas.
 - `anthropic_proxy/utils.py`: Usage tracking and error helpers.
+
+### Auth Providers
+- `anthropic_proxy/auth_provider.py`: Shared OAuth PKCE login + refresh base.
+- `anthropic_proxy/codex.py`: Codex OAuth + request handling (maps usage-limit 404 -> 429).
+- `anthropic_proxy/gemini.py`: Gemini OAuth + project resolution (Code Assist).
+- `anthropic_proxy/antigravity.py`: Antigravity OAuth + project resolution (internal gateway).
+- Default auth-provider models are defined in each provider module and may become invalid if upstream changes.
+
+### Gemini SDK Integration
+- `anthropic_proxy/gemini_sdk.py`: Uses google-genai SDK to send Gemini-style requests.
+- `anthropic_proxy/gemini_converter.py`: Ensures Gemini schema/tool/thinking normalization.
 
 ### Daemon & CLI
 - `anthropic_proxy/daemon.py`: Background daemon management (PID file, process control, start/stop).
@@ -97,7 +113,7 @@ uv run -m anthropic_proxy.server --host 0.0.0.0 --port 8082
 ## Configuration Files
 
 Located in `~/.config/anthropic-proxy/`:
-- `models.yaml`: Model configurations (model_id, api_base, direct mode, etc.)
+- `models.yaml`: Model configurations (model_id, api_base, format/direct, etc.)
 - `config.json`: Server settings (log_level, log_file_path, host, port)
 
 Runtime files in `~/.anthropic-proxy/`:
@@ -148,6 +164,7 @@ This allows creating "reasoning level" variants of the same base model:
 - `make test-cov-html` generates HTML coverage report.
 - Single test suites: `make test-routing`, `make test-hooks`, `make test-conversion`
 - Integration tests that require a live proxy server are intentionally removed.
+ - Auth tests: `uv run -m pytest tests/test_codex_auth.py tests/test_gemini_auth.py tests/test_antigravity_auth.py`
 
 ### Code Quality
 - `make lint` checks and fixes code with ruff.
@@ -155,13 +172,23 @@ This allows creating "reasoning level" variants of the same base model:
 
 ### Test Structure
 - `tests/test_conversions.py`: Request/response conversion tests
-- `tests/test_routing.py`: Model routing and direct mode detection
+- `tests/test_routing.py`: Model format routing detection
 - `tests/test_hooks.py`: Plugin hook system tests
 - `tests/test_insight_conversion.py`: Insight tag preservation tests
 - `tests/test_token_parsing.py`: Token count parsing tests
 - `tests/test_daemon.py`: Daemon and PID management tests
 - `tests/test_config_manager.py`: Configuration management tests
 - `tests/test_cli.py`: CLI argument parsing and command tests
+- `tests/test_gemini_auth.py`: Gemini OAuth + project resolution
+- `tests/test_antigravity_auth.py`: Antigravity OAuth + project resolution
+- `tests/test_codex_auth.py`: Codex OAuth + token refresh + usage-limit mapping
+
+## Auth Notes & Gotchas
+- OAuth tokens live in `~/.config/anthropic-proxy/auth.json`. Refresh tokens are required for auto-refresh.
+- Gemini/Antigravity require a project ID resolved via `v1internal:loadCodeAssist` (and `onboardUser` fallback).
+- Antigravity and Gemini default model IDs are best-effort; update docs/tests when upstream changes.
+- Codex default models are best-effort; usage-limit errors may be returned as 404 and are mapped to 429.
+- Antigravity Claude thinking signatures are cached in-memory per session (see `anthropic_proxy/signature_cache.py`); supply a stable `metadata.session_id` (or similar) for multi-turn recovery.
 
 ## Code Design Guidelines
 - Keep functions focused and readable (single responsibility).

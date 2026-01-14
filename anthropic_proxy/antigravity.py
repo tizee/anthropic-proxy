@@ -269,6 +269,8 @@ antigravity_auth = AntigravityAuth()
 async def handle_antigravity_request(
     request: ClaudeMessagesRequest,
     model_id: str,
+    *,
+    model_name: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle request to Antigravity backend, returning a generator of Gemini response chunks.
@@ -287,9 +289,11 @@ async def handle_antigravity_request(
 
     session_id = _extract_session_id(request)
 
+    target_model = model_name or model_id
+
     async for chunk in stream_gemini_sdk_request(
         request=request,
-        model_id=model_id,
+        model_id=target_model,
         access_token=access_token,
         project_id=project_id,
         base_url=ANTIGRAVITY_ENDPOINT,

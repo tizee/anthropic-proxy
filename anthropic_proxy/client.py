@@ -24,6 +24,65 @@ logger = logging.getLogger(__name__)
 
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
+SUPPORTED_FORMATS = {"openai", "anthropic", "gemini"}
+PREFIXED_PROVIDERS = {"codex", "gemini", "antigravity"}
+
+
+def _normalize_format(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.strip().lower()
+
+
+def _resolve_model_format(model: dict) -> str:
+    raw_format = _normalize_format(model.get("format"))
+    if raw_format and raw_format not in SUPPORTED_FORMATS:
+        logger.warning(
+            "Unknown model format '%s' for model '%s'. Falling back to 'openai'.",
+            raw_format,
+            model.get("model_id"),
+        )
+        raw_format = None
+
+    direct = model.get("direct")
+    provider = model.get("provider")
+    api_base = (model.get("api_base") or "").lower()
+
+    if raw_format:
+        if direct is not None and (raw_format == "anthropic") != bool(direct):
+            logger.warning(
+                "Model '%s' sets format='%s' and direct=%s; direct is ignored in favor of format.",
+                model.get("model_id"),
+                raw_format,
+                direct,
+            )
+        return raw_format
+
+    if direct is True:
+        return "anthropic"
+
+    if provider in {"gemini", "antigravity"}:
+        return "gemini"
+
+    if "anthropic.com" in api_base:
+        return "anthropic"
+
+    return "openai"
+
+
+def _prefix_model_id(provider: str, model_id: str) -> str:
+    return f"{provider}/{model_id}"
+
+
+def _default_model_name(model: dict, model_id: str, provider: str | None) -> str:
+    configured_name = model.get("model_name")
+    if configured_name:
+        return configured_name
+    if provider in PREFIXED_PROVIDERS:
+        prefix = f"{provider}/"
+        if model_id.startswith(prefix):
+            return model_id[len(prefix):]
+    return model_id
 
 
 def load_models_config(config_file=None):
@@ -85,15 +144,11 @@ def load_models_config(config_file=None):
                 continue
 
             model_id = model["model_id"]
-            model_name = model.get("model_name", model_id)
-
-            # Determine if this model should use direct Claude API mode
-            is_direct_mode = model.get("direct", False) or "anthropic.com" in model["api_base"].lower()
-
-            # Determine provider (default to openai if direct=false, anthropic if direct=true)
             provider = model.get("provider")
-            if not provider:
-                provider = "anthropic" if is_direct_mode else "openai"
+            model_name = _default_model_name(model, model_id, provider)
+
+            model_format = _resolve_model_format(model)
+            is_direct_mode = model_format == "anthropic"
 
             CUSTOM_OPENAI_MODELS[model_id] = {
                 "model_id": model_id,
@@ -118,7 +173,8 @@ def load_models_config(config_file=None):
                 "extra_body": model.get("extra_body", {}),
                 "temperature": model.get("temperature", 1.0),
                 "reasoning_effort": model.get("reasoning_effort", None),
-                # Direct mode configuration
+                # Routing configuration
+                "format": model_format,
                 "direct": is_direct_mode,
                 "provider": provider,
             }
@@ -144,13 +200,18 @@ def load_codex_models():
     logger.info("Codex authentication detected. Registering default Codex models...")
 
     for model_id, details in DEFAULT_CODEX_MODELS.items():
+        prefixed_id = _prefix_model_id("codex", model_id)
         # User defined config in models.yaml takes precedence
-        if model_id in CUSTOM_OPENAI_MODELS:
-            logger.debug(f"Skipping default Codex model {model_id} (overridden by user config)")
+        if prefixed_id in CUSTOM_OPENAI_MODELS:
+            logger.warning(
+                "Skipping default Codex model %s because model_id '%s' is already defined.",
+                model_id,
+                prefixed_id,
+            )
             continue
 
-        CUSTOM_OPENAI_MODELS[model_id] = {
-            "model_id": model_id,
+        CUSTOM_OPENAI_MODELS[prefixed_id] = {
+            "model_id": prefixed_id,
             "model_name": details["model_name"],
             "api_base": CODEX_API_URL,
             "api_key": "dummy",
@@ -162,10 +223,12 @@ def load_codex_models():
             "extra_body": {},
             "temperature": 1.0,
             "reasoning_effort": details.get("reasoning_effort"),
+            "format": "openai",
             "direct": False,
             "provider": "codex",
         }
-        logger.debug(f"Registered default Codex model: {model_id}")
+        logger.debug(f"Registered default Codex model: {prefixed_id}")
+
 
 def load_gemini_models():
     """Auto-register default Gemini models if authentication is available."""
@@ -177,12 +240,17 @@ def load_gemini_models():
     logger.info("Gemini authentication detected. Registering default Gemini models...")
 
     for model_id, details in DEFAULT_GEMINI_MODELS.items():
-        if model_id in CUSTOM_OPENAI_MODELS:
-            logger.debug(f"Skipping default Gemini model {model_id} (overridden by user config)")
+        prefixed_id = _prefix_model_id("gemini", model_id)
+        if prefixed_id in CUSTOM_OPENAI_MODELS:
+            logger.warning(
+                "Skipping default Gemini model %s because model_id '%s' is already defined.",
+                model_id,
+                prefixed_id,
+            )
             continue
 
-        CUSTOM_OPENAI_MODELS[model_id] = {
-            "model_id": model_id,
+        CUSTOM_OPENAI_MODELS[prefixed_id] = {
+            "model_id": prefixed_id,
             "model_name": details["model_name"],
             "api_base": GEMINI_CODE_ASSIST_ENDPOINT,
             "api_key": "dummy",
@@ -193,10 +261,11 @@ def load_gemini_models():
             "extra_headers": {},
             "extra_body": {},
             "temperature": 1.0,
+            "format": "gemini",
             "direct": False,
             "provider": "gemini",
         }
-        logger.debug(f"Registered default Gemini model: {model_id}")
+        logger.debug(f"Registered default Gemini model: {prefixed_id}")
 
 
 def load_antigravity_models():
@@ -209,12 +278,17 @@ def load_antigravity_models():
     logger.info("Antigravity authentication detected. Registering default Antigravity models...")
 
     for model_id, details in DEFAULT_ANTIGRAVITY_MODELS.items():
-        if model_id in CUSTOM_OPENAI_MODELS:
-            logger.debug(f"Skipping default Antigravity model {model_id} (overridden by user config)")
+        prefixed_id = _prefix_model_id("antigravity", model_id)
+        if prefixed_id in CUSTOM_OPENAI_MODELS:
+            logger.warning(
+                "Skipping default Antigravity model %s because model_id '%s' is already defined.",
+                model_id,
+                prefixed_id,
+            )
             continue
 
-        CUSTOM_OPENAI_MODELS[model_id] = {
-            "model_id": model_id,
+        CUSTOM_OPENAI_MODELS[prefixed_id] = {
+            "model_id": prefixed_id,
             "model_name": details["model_name"],
             "api_base": ANTIGRAVITY_ENDPOINT,
             "api_key": "dummy",
@@ -225,10 +299,11 @@ def load_antigravity_models():
             "extra_headers": {},
             "extra_body": {},
             "temperature": 1.0,
+            "format": "gemini",
             "direct": False,
             "provider": "antigravity",
         }
-        logger.debug(f"Registered default Antigravity model: {model_id}")
+        logger.debug(f"Registered default Antigravity model: {prefixed_id}")
 
 
 def initialize_custom_models():
@@ -339,6 +414,13 @@ def get_model_config(model_id: str) -> dict:
     return CUSTOM_OPENAI_MODELS[model_id]
 
 
+def get_model_format(model_id: str) -> str | None:
+    """Get the routing format for a given model ID."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return None
+    return CUSTOM_OPENAI_MODELS[model_id].get("format")
+
+
 def list_available_models() -> list:
     """List all available custom models."""
     return list(CUSTOM_OPENAI_MODELS.keys())
@@ -353,6 +435,9 @@ def is_direct_mode_model(model_id: str) -> bool:
     """Check if a model should use direct Claude API mode."""
     if model_id not in CUSTOM_OPENAI_MODELS:
         return False
+    model_format = CUSTOM_OPENAI_MODELS[model_id].get("format")
+    if model_format:
+        return model_format == "anthropic"
     return CUSTOM_OPENAI_MODELS[model_id].get("direct", False)
 
 

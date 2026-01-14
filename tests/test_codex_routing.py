@@ -1,19 +1,21 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 import os
 import sys
+import json
 
 # Add the parent directory to the sys.path to allow imports from the server module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from anthropic_proxy.client import is_codex_model, load_models_config
+from anthropic_proxy.server import create_message
 
 class TestCodexRouting(unittest.TestCase):
     def setUp(self):
         self.mock_models = {
             "model-codex": {"provider": "codex", "direct": False},
             "model-openai": {"provider": "openai", "direct": False},
-            "model-default": {"direct": False}, # Defaults to openai
+            "model-default": {"direct": False},
         }
 
         patcher_models = patch.dict(
@@ -41,6 +43,62 @@ class TestCodexRouting(unittest.TestCase):
         """Test that unknown model is not codex model."""
         result = is_codex_model("unknown")
         self.assertFalse(result)
+
+class TestCodexModelNameRouting(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_model_name_override(self):
+        model_id = "codex/gpt-5.2-codex"
+        mock_models = {
+            model_id: {
+                "model_id": model_id,
+                "model_name": "gpt-5.2-codex",
+                "api_base": "https://chatgpt.com/backend-api/codex/responses",
+                "api_key": "dummy",
+                "can_stream": True,
+                "format": "openai",
+                "direct": False,
+                "provider": "codex",
+                "extra_headers": {},
+                "extra_body": {},
+                "temperature": 1.0,
+                "reasoning_effort": None,
+                "max_tokens": 8192,
+                "context": 128000,
+                "max_input_tokens": 128000,
+            }
+        }
+
+        async def dummy_gen():
+            if False:
+                yield None
+
+        with patch.dict(
+            "anthropic_proxy.server.CUSTOM_OPENAI_MODELS", mock_models, clear=True
+        ), patch("anthropic_proxy.server.handle_codex_request", new_callable=AsyncMock) as mock_handle:
+            mock_handle.return_value = dummy_gen()
+
+            body = json.dumps(
+                {
+                    "model": model_id,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                }
+            ).encode("utf-8")
+
+            class DummyRequest:
+                headers = {"Authorization": "Bearer sk-test"}
+                url = type("Url", (), {"path": "/v1/messages"})()
+
+                def __init__(self, raw_body: bytes):
+                    self._body = raw_body
+
+                async def body(self):
+                    return self._body
+
+            await create_message(DummyRequest(body))
+
+            called_args, _ = mock_handle.call_args
+            openai_request = called_args[0]
+            self.assertEqual(openai_request["model"], "gpt-5.2-codex")
 
 if __name__ == "__main__":
     unittest.main()

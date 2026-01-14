@@ -187,6 +187,8 @@ gemini_auth = GeminiAuth()
 async def handle_gemini_request(
     request: ClaudeMessagesRequest,
     model_id: str,
+    *,
+    model_name: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle request to Gemini backend, returning a generator of Gemini response chunks.
@@ -200,9 +202,11 @@ async def handle_gemini_request(
         if not project_id:
              raise HTTPException(status_code=400, detail="Gemini Project ID could not be resolved. Try re-login.")
 
+    target_model = model_name or model_id
+
     async for chunk in stream_gemini_sdk_request(
         request=request,
-        model_id=model_id,
+        model_id=target_model,
         access_token=access_token,
         project_id=project_id,
         base_url=GEMINI_CODE_ASSIST_ENDPOINT,

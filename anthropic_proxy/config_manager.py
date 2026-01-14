@@ -22,7 +22,7 @@ DEFAULT_AUTH_FILE = DEFAULT_CONFIG_DIR / "auth.json"
 DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 # Required fields: model_id, api_base
 # Optional fields: model_name, api_key, can_stream, max_tokens, max_input_tokens,
-#                  context, extra_headers, extra_body, direct, reasoning_effort, temperature
+#                  context, extra_headers, extra_body, format, direct, reasoning_effort, temperature
 #
 # API Key Configuration:
 # - api_key: Optional per-model API key. If set, it takes precedence over request headers.
@@ -34,8 +34,12 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 # - Use uppercase K for consistency
 #
 # reasoning_effort supports: minimal, low, medium, high (minimal = no thinking)
-# direct: true for Anthropic-compatible APIs, false for OpenAI-compatible
+# format: openai | anthropic | gemini (routing format; defaults to openai)
+# direct: legacy alias (direct: true -> format=anthropic). If format is set, it wins.
 # thinking.type can be "enabled" or "disabled"
+#
+# Auth-provider default model IDs are prefixed to avoid collisions:
+# - codex/<model_id>, gemini/<model_id>, antigravity/<model_id>
 #
 # Example configurations below - replace with your actual models
 
@@ -43,7 +47,7 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 - model_id: example-model
   model_name: gpt-4o-mini
   api_base: https://api.openai.com/v1
-  direct: false
+  format: openai
   can_stream: true
   max_tokens: 16K
   context: 128K
@@ -53,27 +57,27 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 - model_id: example-claude-model
   model_name: claude-3-5-sonnet-20241022
   api_base: https://api.anthropic.com
-  direct: true
+  format: anthropic
   can_stream: true
   max_tokens: 8K
   max_input_tokens: 200K
 
 # Note on Codex Models:
 # If you have logged in via `anthropic-proxy login`, Codex subscription models
-# (e.g., gpt-5.2-codex) are automatically available.
+# (e.g., codex/gpt-5.2-codex) are automatically available.
 # You can override their settings (e.g., reasoning_effort) here by specifying
 # provider: codex (no need for api_base/api_key):
 #
-# - model_id: gpt-5.2-codex
+# - model_id: codex/gpt-5.2-codex
 #   provider: codex
 #   reasoning_effort: high
 #   max_tokens: 32K
 #
-# To configure a Codex model using a standard API Key (Non-Codex Plan)
-# instead of the subscription, explicitly set provider to 'openai':
+# To configure a Codex model using a standard API Key (non-subscription),
+# set api_base/api_key and keep provider unset (you can still use a prefixed ID):
 #
-# - model_id: gpt-5.2-codex
-#   provider: openai
+# - model_id: codex/gpt-5.2-codex
+#   model_name: gpt-5.2-codex
 #   api_base: https://api.openai.com/v1
 #   api_key: sk-...
 """

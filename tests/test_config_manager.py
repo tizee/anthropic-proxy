@@ -333,6 +333,7 @@ class TestDefaultTemplates(unittest.TestCase):
         self.assertIn("model_id", DEFAULT_MODELS_TEMPLATE)
         self.assertIn("api_base", DEFAULT_MODELS_TEMPLATE)
         self.assertIn("api_key", DEFAULT_MODELS_TEMPLATE)
+        self.assertIn("format", DEFAULT_MODELS_TEMPLATE)
         self.assertIn("direct", DEFAULT_MODELS_TEMPLATE)
 
     def test_default_config_template_has_required_keys(self):
