@@ -418,6 +418,7 @@ class AnthropicStreamingConverter:
         # Tool call state - support multiple simultaneous tool calls by index
         self.tool_calls = {}  # index -> {id, name, json_accumulator, content_block_index}
         self.active_tool_indices = set()  # Track which tool indices are active
+        self.thinking_content_block_index = None
 
         # Response state
         self.has_sent_stop_reason = False
@@ -678,6 +679,7 @@ class AnthropicStreamingConverter:
             self.thinking_block_closed = True
             yield self._send_content_block_stop_event()
             self.content_block_index += 1
+            self.thinking_content_block_index = None
 
     async def _prepare_finalization(self, stop_reason: str):
         """Prepare for stream finalization by closing any open blocks."""
@@ -702,9 +704,23 @@ class AnthropicStreamingConverter:
                 if self.is_malformed_tool_json(json_acc):
                     repaired, was_repaired = self.try_repair_tool_json(json_acc)
                     if repaired:
-                        self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
+                        if tool_info["content_block_index"] < len(self.current_content_blocks):
+                            self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
+                        else:
+                            logger.error(
+                                "🔧 TOOL_DEBUG: content_block_index out of range during finalization (%s >= %s)",
+                                tool_info["content_block_index"],
+                                len(self.current_content_blocks),
+                            )
                     elif was_repaired:
-                        self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
+                        if tool_info["content_block_index"] < len(self.current_content_blocks):
+                            self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
+                        else:
+                            logger.error(
+                                "🔧 TOOL_DEBUG: content_block_index out of range during finalization (%s >= %s)",
+                                tool_info["content_block_index"],
+                                len(self.current_content_blocks),
+                            )
 
         # Clear tool call state
         self.tool_calls = {}
@@ -758,6 +774,17 @@ class AnthropicStreamingConverter:
             # Start a new thinking block
             yield self._send_content_block_start_event("thinking")
             self.thinking_block_started = True
+            if len(self.current_content_blocks) < self.content_block_index:
+                logger.debug(
+                    "🔧 TOOL_DEBUG: Padding content blocks before thinking block (index=%s, len=%s)",
+                    self.content_block_index,
+                    len(self.current_content_blocks),
+                )
+                while len(self.current_content_blocks) < self.content_block_index:
+                    self.current_content_blocks.append({"type": "text", "text": ""})
+            if len(self.current_content_blocks) == self.content_block_index:
+                self.thinking_content_block_index = self.content_block_index
+                self.current_content_blocks.append({"type": "thinking", "thinking": ""})
 
         # Send thinking delta
         yield self._send_content_block_delta_event("thinking_delta", content)
@@ -765,6 +792,8 @@ class AnthropicStreamingConverter:
         # Update accumulated thinking
         self.accumulated_thinking += content
         self.output_tokens += 1
+        if self.thinking_content_block_index is not None:
+            self.current_content_blocks[self.thinking_content_block_index]["thinking"] += content
 
     async def _handle_tool_call_delta(self, tool_call):
         """Handle tool call deltas and manage tool_use blocks."""
@@ -873,7 +902,14 @@ class AnthropicStreamingConverter:
         if tool_info["json_accumulator"]:
             parsed_args, was_repaired = self.try_repair_tool_json(tool_info["json_accumulator"])
             if parsed_args:
-                self.current_content_blocks[tool_info["content_block_index"]]["input"] = parsed_args
+                if tool_info["content_block_index"] < len(self.current_content_blocks):
+                    self.current_content_blocks[tool_info["content_block_index"]]["input"] = parsed_args
+                else:
+                    logger.error(
+                        "🔧 TOOL_DEBUG: content_block_index out of range (%s >= %s)",
+                        tool_info["content_block_index"],
+                        len(self.current_content_blocks),
+                    )
                 if was_repaired:
                     logger.debug("🔧 TOOL_DEBUG: Repaired malformed tool JSON")
 

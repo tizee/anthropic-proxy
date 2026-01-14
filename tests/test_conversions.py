@@ -2475,6 +2475,13 @@ class TestAnthropicStreamingConverter(unittest.TestCase):
         self.assertTrue(converter.thinking_block_closed)
         self.assertIn(0, converter.tool_calls)
         self.assertEqual(converter.tool_calls[0]["content_block_index"], 1)
+        self.assertEqual(len(converter.current_content_blocks), 2)
+        self.assertEqual(converter.current_content_blocks[0]["type"], "thinking")
+        self.assertEqual(converter.current_content_blocks[1]["type"], "tool_use")
+        self.assertEqual(
+            converter.current_content_blocks[1]["input"],
+            {"skill": "planning-with-files"},
+        )
 
         stop_index = next(
             i for i, event in enumerate(tool_events) if event.startswith("event: content_block_stop")

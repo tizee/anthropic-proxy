@@ -460,14 +460,14 @@ async def create_message(raw_request: Request):
             provider_model_name = model_config.get("model_name", model_id)
             if is_gemini_model(model_id):
                 logger.info(f"🔗 GEMINI FORMAT: Model={model_id}")
-                provider_generator = await handle_gemini_request(
+                provider_generator = handle_gemini_request(
                     request,
                     model_id,
                     model_name=provider_model_name,
                 )
             elif is_antigravity_model(model_id):
                 logger.info(f"🔗 ANTIGRAVITY FORMAT: Model={model_id}")
-                provider_generator = await handle_antigravity_request(
+                provider_generator = handle_antigravity_request(
                     request,
                     model_id,
                     model_name=provider_model_name,
