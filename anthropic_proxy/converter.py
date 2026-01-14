@@ -73,6 +73,7 @@ def clean_gemini_schema(schema: Any) -> Any:
         return None
 
     if isinstance(schema, dict):
+        schema_type = schema.get("type")
         cleaned_schema = {}
         for key, value in schema.items():
             # Skip unsupported keywords
@@ -86,6 +87,10 @@ def clean_gemini_schema(schema: Any) -> Any:
                 "definitions",  # Complex references not supported
                 "title",  # Can cause issues in nested objects
             ]:
+                continue
+            if key == "enum" and schema_type in {"integer", "number"}:
+                cleaned_schema["enum"] = [str(item) for item in value] if value else []
+                cleaned_schema["type"] = "string"
                 continue
 
             # Clean nested schemas
@@ -101,6 +106,15 @@ def clean_gemini_schema(schema: Any) -> Any:
                 cleaned_schema[key] = cleaned_list
             else:
                 cleaned_schema[key] = value
+
+        if schema_type == "array" and "items" not in cleaned_schema:
+            cleaned_schema["items"] = {}
+
+        if "required" in cleaned_schema and "properties" in cleaned_schema:
+            required = cleaned_schema.get("required")
+            properties = cleaned_schema.get("properties", {})
+            if isinstance(required, list) and isinstance(properties, dict):
+                cleaned_schema["required"] = [item for item in required if item in properties]
 
         return cleaned_schema
 

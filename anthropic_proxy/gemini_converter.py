@@ -58,6 +58,8 @@ def _convert_image_block(block: ClaudeContentBlockImage) -> dict[str, Any] | Non
     """Convert Claude image block to Gemini part if possible."""
     source = block.source
     if isinstance(source, ClaudeContentBlockImageBase64Source):
+        if not source.data:
+            return {"text": "[image omitted: empty base64 data]"}
         return {
             "inlineData": {
                 "mimeType": source.media_type,
@@ -79,6 +81,8 @@ def _convert_image_block(block: ClaudeContentBlockImage) -> dict[str, Any] | Non
                     "data": source.get("data"),
                 }
             }
+        if source.get("type") == "base64" and not source.get("data"):
+            return {"text": "[image omitted: empty base64 data]"}
         if source.get("type") == "url" and source.get("url"):
             return {
                 "fileData": {
@@ -127,6 +131,7 @@ def _convert_message_content_to_parts(
     request: ClaudeMessagesRequest,
     content: str | list[Any],
     is_antigravity: bool,
+    strip_unsigned_thinking: bool,
 ) -> list[dict[str, Any]]:
     if isinstance(content, str):
         return [{"text": content}]
@@ -138,6 +143,8 @@ def _convert_message_content_to_parts(
         if isinstance(block, ClaudeContentBlockText):
             parts.append({"text": block.text})
         elif isinstance(block, ClaudeContentBlockThinking):
+            if strip_unsigned_thinking and not block.signature:
+                continue
             parts.append(_convert_thinking_block(block, is_antigravity))
         elif isinstance(block, ClaudeContentBlockToolUse):
             parts.append(_convert_tool_use_block(block))
@@ -179,10 +186,16 @@ def _build_generation_config(request: ClaudeMessagesRequest, model_id: str) -> d
     config: dict[str, Any] = {}
     if request.temperature is not None:
         config["temperature"] = request.temperature
+    else:
+        config["temperature"] = 1.0
     if request.top_p is not None:
         config["topP"] = request.top_p
+    else:
+        config["topP"] = 0.95
     if request.top_k is not None:
         config["topK"] = request.top_k
+    else:
+        config["topK"] = 64
     if request.stop_sequences:
         config["stopSequences"] = request.stop_sequences
     if request.max_tokens is not None:
@@ -283,10 +296,16 @@ def anthropic_to_gemini_request(
 ) -> dict[str, Any]:
     """Convert Anthropic Messages request into Gemini GenerateContent request body."""
     contents: list[dict[str, Any]] = []
+    strip_unsigned_thinking = is_antigravity and "claude" in model_id.lower()
 
     for msg in request.messages:
         role = "user" if msg.role == "user" else "model"
-        parts = _convert_message_content_to_parts(request, msg.content, is_antigravity)
+        parts = _convert_message_content_to_parts(
+            request,
+            msg.content,
+            is_antigravity,
+            strip_unsigned_thinking,
+        )
         if parts:
             contents.append({"role": role, "parts": parts})
 

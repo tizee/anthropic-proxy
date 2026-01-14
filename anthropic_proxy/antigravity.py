@@ -229,6 +229,7 @@ async def handle_antigravity_request(
         system_prefix=ANTIGRAVITY_SYSTEM_INSTRUCTION,
         request_envelope_extra={
             "userAgent": "antigravity",
+            "requestType": "agent",
             "requestId": f"agent-{secrets.token_hex(8)}",
         },
     ):

@@ -2573,5 +2573,25 @@ class TestAnthropicStreamingConverter(unittest.TestCase):
             self.assertIn("input", block)
 
 
+class TestGeminiSchemaCleaning(unittest.TestCase):
+    def test_clean_gemini_schema_edge_cases(self):
+        from anthropic_proxy.converter import clean_gemini_schema
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "enum": [1, 2]},
+                "items": {"type": "array"},
+            },
+            "required": ["count", "missing"],
+        }
+
+        cleaned = clean_gemini_schema(schema)
+        self.assertEqual(cleaned["properties"]["count"]["type"], "string")
+        self.assertEqual(cleaned["properties"]["count"]["enum"], ["1", "2"])
+        self.assertEqual(cleaned["properties"]["items"]["items"], {})
+        self.assertEqual(cleaned["required"], ["count"])
+
+
 if __name__ == "__main__":
     unittest.main()
