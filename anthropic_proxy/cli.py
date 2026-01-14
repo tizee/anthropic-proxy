@@ -440,7 +440,46 @@ Examples:
     )
     init_parser.set_defaults(func=cmd_init)
 
+    # login subcommand
+    login_parser = subparsers.add_parser(
+        "login",
+        help="Login to provider subscription (e.g. Codex)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+This command opens a browser to authenticate with supported providers.
+
+Examples:
+  anthropic-proxy login --codex      Login to OpenAI Codex subscription
+        """,
+    )
+    login_parser.add_argument(
+        "--codex",
+        action="store_true",
+        help="Login to OpenAI Codex subscription",
+    )
+    login_parser.set_defaults(func=cmd_login)
+
     return parser
+
+
+def cmd_login(args: argparse.Namespace) -> None:
+    """Login to provider subscription.
+
+    Args:
+        args: Parsed command-line arguments
+    """
+    if args.codex:
+        from .codex import codex_auth
+        codex_auth.login()
+        return
+
+    # Default behavior if no flags (or show help)
+    # For now, if no flags are provided, we can default to codex OR show help.
+    # Given the request is to make it an optional parameter, implies explicit selection.
+    print(f"{Colors.YELLOW}Please specify a provider to login.{Colors.RESET}")
+    print("Available providers:")
+    print(f"  {Colors.GREEN}--codex{Colors.RESET}   Login to OpenAI Codex subscription")
+    sys.exit(1)
 
 
 def parse_args() -> argparse.Namespace:

@@ -10,6 +10,7 @@ import httpx
 import yaml
 from openai import AsyncOpenAI
 
+from .codex import DEFAULT_CODEX_MODELS, CODEX_API_URL, codex_auth
 from .config import config, parse_token_value
 from .types import ModelDefaults
 
@@ -44,6 +45,19 @@ def load_models_config(config_file=None):
             return
 
         for model in models:
+            model_id = model.get("model_id")
+            
+            # Apply defaults for Codex provider models
+            if model.get("provider") == "codex":
+                if "api_base" not in model:
+                    model["api_base"] = CODEX_API_URL
+                if "api_key" not in model:
+                    model["api_key"] = "codex-auth" # Placeholder to pass validation
+                
+                # Apply default reasoning effort if known model and not specified
+                if "reasoning_effort" not in model and model_id in DEFAULT_CODEX_MODELS:
+                    model["reasoning_effort"] = DEFAULT_CODEX_MODELS[model_id].get("reasoning_effort")
+
             if "model_id" not in model or "api_base" not in model:
                 logger.warning(
                     f"Invalid model configuration, missing required fields: {model}"
@@ -55,6 +69,11 @@ def load_models_config(config_file=None):
 
             # Determine if this model should use direct Claude API mode
             is_direct_mode = model.get("direct", False) or "anthropic.com" in model["api_base"].lower()
+            
+            # Determine provider (default to openai if direct=false, anthropic if direct=true)
+            provider = model.get("provider")
+            if not provider:
+                provider = "anthropic" if is_direct_mode else "openai"
 
             CUSTOM_OPENAI_MODELS[model_id] = {
                 "model_id": model_id,
@@ -81,6 +100,7 @@ def load_models_config(config_file=None):
                 "reasoning_effort": model.get("reasoning_effort", None),
                 # Direct mode configuration
                 "direct": is_direct_mode,
+                "provider": provider,
             }
 
             logger.info(
@@ -91,6 +111,46 @@ def load_models_config(config_file=None):
         logger.error(f"Error loading custom models: {str(e)}")
 
 
+def load_codex_models():
+    """Auto-register default Codex models if authentication is available."""
+    # Check if we have auth data (access or refresh token)
+    # We don't need to validate it here, just check existence to avoid cluttering 
+    # the model list for users who don't use Codex.
+    # Accessing internal _auth_data is a bit hacky but efficient.
+    # Better to ask the auth object.
+    has_auth = bool(codex_auth.get_account_id() or codex_auth._auth_data.get("refresh"))
+    
+    if not has_auth:
+        return
+
+    logger.info("Codex authentication detected. Registering default Codex models...")
+    
+    for model_id, details in DEFAULT_CODEX_MODELS.items():
+        # User defined config in models.yaml takes precedence
+        if model_id in CUSTOM_OPENAI_MODELS:
+            logger.debug(f"Skipping default Codex model {model_id} (overridden by user config)")
+            continue
+
+        CUSTOM_OPENAI_MODELS[model_id] = {
+            "model_id": model_id,
+            "model_name": details["model_name"],
+            "api_base": CODEX_API_URL,
+            "api_key": "dummy", # Not used for Codex, but required by some checks? 
+                               # Actually server.py checks is_codex_model first.
+            "can_stream": True,
+            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS, # Default 100k
+            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD, # Default 128k
+            "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
+            "extra_headers": {},
+            "extra_body": {},
+            "temperature": 1.0,
+            "reasoning_effort": details.get("reasoning_effort"),
+            "direct": False,
+            "provider": "codex",
+        }
+        logger.debug(f"Registered default Codex model: {model_id}")
+
+
 def initialize_custom_models():
     """Initialize custom models. Called when running as main.
 
@@ -98,6 +158,7 @@ def initialize_custom_models():
     request headers from ccproxy. Model-specific keys take precedence.
     """
     load_models_config()
+    load_codex_models()
 
 
 def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
@@ -211,3 +272,10 @@ def is_direct_mode_model(model_id: str) -> bool:
     if model_id not in CUSTOM_OPENAI_MODELS:
         return False
     return CUSTOM_OPENAI_MODELS[model_id].get("direct", False)
+
+
+def is_codex_model(model_id: str) -> bool:
+    """Check if a model is a Codex model."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return False
+    return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "codex"

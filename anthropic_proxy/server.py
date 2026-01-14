@@ -27,7 +27,9 @@ from .client import (
     create_openai_client,
     initialize_custom_models,
     is_direct_mode_model,
+    is_codex_model,
 )
+from .codex import handle_codex_request
 from .config import config, setup_logging
 from .converter import (
     convert_openai_response_to_anthropic,
@@ -466,6 +468,11 @@ async def create_message(raw_request: Request):
 
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
+
+        # Check for Codex provider
+        if is_codex_model(model_id):
+            logger.info(f"🔗 CODEX MODE: Model={model_id}")
+            return await handle_codex_request(openai_request, model_id)
 
         # Create OpenAI client for the model with the extracted API key
         client = create_openai_client(model_id, api_key)

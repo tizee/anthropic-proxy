@@ -166,6 +166,52 @@ def response_hook(payload):
 
 Plugins are loaded automatically at server startup. Both request and response hooks are optional - include only what you need.
 
+## 🔑 Codex Subscription Support
+
+This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `gpt-5.1-codex`) directly.
+
+### 1. Login
+
+Authenticate via your browser:
+
+```bash
+anthropic-proxy login --codex
+```
+This will open a browser window to log in to OpenAI. Once authenticated, your session tokens are saved securely to `~/.config/anthropic-proxy/auth.json` (or your OS equivalent). Tokens are automatically refreshed in the background.
+
+### 2. Available Models
+
+Once logged in, the following models are **automatically available** without any configuration in `models.yaml`:
+
+- `gpt-5.1-codex` (Medium reasoning)
+- `gpt-5.2-codex` (High reasoning)
+- `gpt-5.1-codex-max` (High reasoning)
+- `gpt-5.1-codex-mini` (Medium reasoning)
+
+You can use these model IDs directly in your Claude Code setup.
+
+### 3. Customizing Codex Models
+
+To customize parameters (like `reasoning_effort` or `max_tokens`) for a Codex model, add an entry to `models.yaml`. **Note:** You must explicitly set `provider: codex` to inherit the subscription authentication.
+
+```yaml
+- model_id: gpt-5.1-codex
+  provider: codex
+  reasoning_effort: high  # Override default
+  max_tokens: 32K
+```
+
+### 4. Non-Codex Plan Usage
+
+If you have a Codex model ID but want to use it with a standard OpenAI API key (Billing) instead of the subscription plan, set `provider: openai` and provide your key:
+
+```yaml
+- model_id: gpt-5.1-codex
+  provider: openai
+  api_base: https://api.openai.com/v1
+  api_key: sk-...
+```
+
 ## Quick Start
 
 ### Prerequisites

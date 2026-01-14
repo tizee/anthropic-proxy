@@ -16,6 +16,7 @@ DEFAULT_CONFIG_DIR = Path.home() / ".config" / "anthropic-proxy"
 DEFAULT_LOG_DIR = Path.home() / ".anthropic-proxy"
 DEFAULT_MODELS_FILE = DEFAULT_CONFIG_DIR / "models.yaml"
 DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.json"
+DEFAULT_AUTH_FILE = DEFAULT_CONFIG_DIR / "auth.json"
 
 # Default models.yaml template
 DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
@@ -56,6 +57,25 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
   can_stream: true
   max_tokens: 8K
   max_input_tokens: 200K
+
+# Note on Codex Models:
+# If you have logged in via `anthropic-proxy login`, Codex subscription models
+# (e.g., gpt-5.1-codex, gpt-5.2-codex) are automatically available.
+# You can override their settings (e.g., reasoning_effort) here by specifying
+# provider: codex (no need for api_base/api_key):
+#
+# - model_id: gpt-5.1-codex
+#   provider: codex
+#   reasoning_effort: high
+#   max_tokens: 32K
+#
+# To configure a Codex model using a standard API Key (Non-Codex Plan)
+# instead of the subscription, explicitly set provider to 'openai':
+#
+# - model_id: gpt-5.1-codex
+#   provider: openai
+#   api_base: https://api.openai.com/v1
+#   api_key: sk-...
 """
 
 # Default config.json template
@@ -179,6 +199,69 @@ def load_config_file(config_path: Path | None = None) -> dict:
     except Exception as e:
         logger.error(f"Error loading config file {config_path}: {e}")
         return {}
+
+
+def load_auth_file(auth_path: Path | None = None) -> dict:
+    """Load auth.json file.
+
+    Args:
+        auth_path: Path to auth file. If None, uses default location.
+
+    Returns:
+        Auth dictionary. Empty dict if file doesn't exist.
+    """
+    if auth_path is None:
+        auth_path = DEFAULT_AUTH_FILE
+
+    if not auth_path.exists():
+        logger.debug(f"Auth file not found: {auth_path}")
+        return {}
+
+    try:
+        with auth_path.open("r", encoding="utf-8") as f:
+            auth_data = json.load(f)
+        logger.debug(f"Loaded auth data from: {auth_path}")
+        return auth_data
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in auth file {auth_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading auth file {auth_path}: {e}")
+        return {}
+
+
+def save_auth_file(auth_data: dict, auth_path: Path | None = None) -> bool:
+    """Save auth data to auth.json file.
+
+    Args:
+        auth_data: Dictionary containing auth data
+        auth_path: Path to auth file. If None, uses default location.
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if auth_path is None:
+        auth_path = DEFAULT_AUTH_FILE
+
+    try:
+        ensure_config_dir()
+        
+        # Write to temporary file first
+        temp_path = auth_path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as f:
+            json.dump(auth_data, f, indent=2)
+        
+        # Atomic rename
+        temp_path.replace(auth_path)
+        
+        # Set permissions to 0600 (read/write only for owner)
+        auth_path.chmod(0o600)
+        
+        logger.debug(f"Saved auth data to: {auth_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving auth file {auth_path}: {e}")
+        return False
 
 
 def get_models_file_path() -> Path:
