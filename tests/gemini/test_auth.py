@@ -1,17 +1,8 @@
-import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
-import os
-import sys
 import time
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Add the parent directory to the sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from anthropic_proxy.gemini import (
-    GeminiAuth,
-    GEMINI_CODE_ASSIST_ENDPOINT,
-    handle_gemini_request,
-)
+from anthropic_proxy.gemini import GEMINI_CODE_ASSIST_ENDPOINT, GeminiAuth, handle_gemini_request
 from anthropic_proxy.types import ClaudeMessagesRequest
 
 

@@ -1,13 +1,8 @@
 import json
-import os
-import sys
 import unittest
 from unittest.mock import Mock, patch
 
 from fastapi.responses import StreamingResponse
-
-# Add the parent directory to the sys.path to allow imports from the server module
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from anthropic_proxy.server import create_message
 

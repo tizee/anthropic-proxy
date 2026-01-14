@@ -13,7 +13,8 @@ import logging
 from typing import Any
 
 from .converter import clean_gemini_schema
-from .signature_cache import get_cached_signature
+from .gemini_types import parse_gemini_request
+from .signature_cache import get_cached_signature, get_tool_signature
 from .types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -102,14 +103,20 @@ def _convert_thinking_block(block: ClaudeContentBlockThinking, is_antigravity: b
     return part
 
 
-def _convert_tool_use_block(block: ClaudeContentBlockToolUse) -> dict[str, Any]:
-    return {
+def _convert_tool_use_block(
+    block: ClaudeContentBlockToolUse,
+    signature: str | None = None,
+) -> dict[str, Any]:
+    part: dict[str, Any] = {
         "functionCall": {
             "name": _sanitize_tool_name(block.name),
             "args": block.input,
             "id": block.id,
         }
     }
+    if signature:
+        part["thoughtSignature"] = signature
+    return part
 
 
 def _convert_tool_result_block(
@@ -157,7 +164,10 @@ def _convert_message_content_to_parts(
                 part["thought"] = True
             parts.append(part)
         elif isinstance(block, ClaudeContentBlockToolUse):
-            parts.append(_convert_tool_use_block(block))
+            signature = None
+            if block.id:
+                signature = get_tool_signature(session_id, block.id)
+            parts.append(_convert_tool_use_block(block, signature))
         elif isinstance(block, ClaudeContentBlockToolResult):
             parts.append(_convert_tool_result_block(block, tool_name_mapping))
         elif isinstance(block, ClaudeContentBlockImage):
@@ -268,6 +278,13 @@ def _build_tools(request: ClaudeMessagesRequest) -> list[dict[str, Any]] | None:
     if not request.tools:
         return None
 
+    logger.debug("Gemini converter tools input: %d", len(request.tools))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Gemini converter tool names: %s",
+            [tool.name for tool in request.tools],
+        )
+
     function_declarations: list[dict[str, Any]] = []
     for tool in request.tools:
         parameters = clean_gemini_schema(tool.input_schema)
@@ -294,6 +311,10 @@ def _build_tools(request: ClaudeMessagesRequest) -> list[dict[str, Any]] | None:
     if not function_declarations:
         return None
 
+    logger.debug(
+        "Gemini converter tools output (functionDeclarations): %d",
+        len(function_declarations),
+    )
     return [{"functionDeclarations": function_declarations}]
 
 
@@ -348,12 +369,22 @@ def anthropic_to_gemini_request(
     tools = _build_tools(request)
     if tools:
         out["tools"] = tools
+        logger.debug(
+            "Gemini request tools attached: %d",
+            len(tools[0].get("functionDeclarations", [])),
+        )
 
     tool_config = _build_tool_config(request, model_id, is_antigravity)
     if tool_config:
         out["toolConfig"] = tool_config
+        function_config = tool_config.get("functionCallingConfig", {})
+        logger.debug(
+            "Gemini request toolConfig mode=%s allowed=%s",
+            function_config.get("mode"),
+            function_config.get("allowedFunctionNames"),
+        )
 
-    return out
+    return parse_gemini_request(out)
 
 
 def _camel_to_snake(name: str) -> str:

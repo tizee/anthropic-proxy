@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 
 from .gemini_converter import anthropic_to_gemini_sdk_params
+from .gemini_types import parse_gemini_response
 from .types import ClaudeMessagesRequest
 
 logger = logging.getLogger(__name__)
@@ -80,21 +81,6 @@ def _coerce_chunk_dict(chunk: Any) -> dict[str, Any]:
     return {"text": getattr(chunk, "text", "")}
 
 
-def _decode_response_body(body: Any) -> dict[str, Any] | None:
-    if body is None:
-        return None
-    if isinstance(body, dict):
-        return body
-    if isinstance(body, str):
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(payload, dict):
-            return payload
-    return None
-
-
 async def stream_gemini_sdk_request(
     *,
     request: ClaudeMessagesRequest,
@@ -121,7 +107,15 @@ async def stream_gemini_sdk_request(
     )
 
     if "tools" in config:
+        logger.debug(
+            "Gemini SDK tools (pre-coerce): %d",
+            len(config.get("tools") or []),
+        )
         config["tools"] = _coerce_tools(config["tools"])
+        logger.debug(
+            "Gemini SDK tools (post-coerce): %d",
+            len(config.get("tools") or []),
+        )
 
     extra_body = None
     if use_request_envelope:
@@ -142,6 +136,11 @@ async def stream_gemini_sdk_request(
 
         if raw_body.get("tools") and "toolConfig" not in raw_body:
             raw_body["toolConfig"] = {"functionCallingConfig": {"mode": "VALIDATED"}}
+        if raw_body.get("tools") is not None:
+            logger.debug(
+                "Code Assist tools (raw): %d",
+                len(raw_body.get("tools") or []),
+            )
 
         envelope: dict[str, Any] = {"request": raw_body}
         if project_id:
@@ -162,7 +161,12 @@ async def stream_gemini_sdk_request(
                     json=envelope,
                     timeout=60.0,
                 ) as response:
-                    if response.is_error:
+                    is_error = getattr(
+                        response,
+                        "is_error",
+                        response.status_code >= 400,
+                    )
+                    if is_error:
                         body_bytes = await response.aread()
                         body_text = body_bytes.decode("utf-8", errors="replace")
                         logger.error(
@@ -185,6 +189,10 @@ async def stream_gemini_sdk_request(
                             data = line.strip()
                         if not data or data == "[DONE]":
                             continue
+                        logger.debug(
+                            "Code Assist raw chunk: %s",
+                            data[:1000],
+                        )
                         try:
                             payload = json.loads(data)
                         except json.JSONDecodeError:
@@ -193,11 +201,7 @@ async def stream_gemini_sdk_request(
                             payload = payload["response"]
                         if not isinstance(payload, dict):
                             continue
-                        try:
-                            parsed = types.GenerateContentResponse.model_validate(payload)
-                            yield parsed.model_dump(exclude_none=True)
-                        except Exception:
-                            yield payload
+                        yield parse_gemini_response(payload)
         except httpx.HTTPStatusError as exc:
             detail = f"{exc.response.status_code} {exc.response.reason_phrase}"
             logger.error(f"Gemini SDK request failed: {detail}")
@@ -227,7 +231,7 @@ async def stream_gemini_sdk_request(
             contents=contents,
             config=config,
         ):
-            yield _coerce_chunk_dict(chunk)
+            yield parse_gemini_response(_coerce_chunk_dict(chunk))
     except Exception as exc:
         logger.error(f"Gemini SDK request failed: {exc}")
         raise HTTPException(status_code=502, detail=f"Gemini SDK error: {exc}") from exc
