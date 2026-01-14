@@ -14,12 +14,11 @@ import sys
 import threading
 import time
 import urllib.parse
+from collections.abc import AsyncGenerator
 from http.server import BaseHTTPRequestHandler
-from typing import AsyncGenerator
 
 import httpx
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
 
 from .config_manager import load_auth_file, save_auth_file
 
@@ -94,7 +93,7 @@ class CodexAuth:
     async def get_access_token(self) -> str:
         """Get a valid access token, refreshing if necessary."""
         self._load()  # Reload to ensure we have latest (in case updated by another process)
-        
+
         if not self._auth_data:
             raise HTTPException(status_code=401, detail="No Codex auth data found in auth.json")
 
@@ -107,7 +106,7 @@ class CodexAuth:
             logger.info("Codex token expired or missing, refreshing...")
             if not refresh_token:
                 raise HTTPException(status_code=401, detail="No refresh token available for Codex")
-            
+
             return await self._refresh_token(refresh_token)
 
         return access_token
@@ -128,16 +127,16 @@ class CodexAuth:
                 )
                 response.raise_for_status()
                 data = response.json()
-            
+
             new_access = data["access_token"]
             new_refresh = data.get("refresh_token", refresh_token) # Sometimes refresh token doesn't rotate?
             expires_in = data.get("expires_in", 3600)
-            
+
             # Update state
             self._auth_data["access"] = new_access
             self._auth_data["refresh"] = new_refresh
             self._auth_data["expires"] = int(time.time() + expires_in)
-            
+
             # Extract account ID if not present or just update it
             try:
                 account_id = self._extract_account_id(new_access)
@@ -149,7 +148,7 @@ class CodexAuth:
             self._save()
             logger.info("Codex token refreshed successfully")
             return new_access
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to refresh Codex token: {e}")
             if hasattr(e, "response") and e.response:
@@ -163,18 +162,18 @@ class CodexAuth:
             parts = token.split(".")
             if len(parts) < 2:
                 return None
-                
+
             payload_b64 = parts[1]
             # Add padding if needed
             payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
-            
+
             payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
             payload = json.loads(payload_json)
-            
+
             # Look for https://api.openai.com/auth claim
             auth_claim = payload.get("https://api.openai.com/auth", {})
             return auth_claim.get("chatgpt_account_id")
-            
+
         except Exception as e:
             logger.debug(f"Error extracting account ID: {e}")
             return None
@@ -186,22 +185,22 @@ class CodexAuth:
     def login(self):
         """Initiate the browser-based login flow."""
         logger.info("Starting Codex login flow...")
-        
+
         # 1. Generate PKCE
         verifier, challenge = self._generate_pkce()
         state = secrets.token_urlsafe(16)
-        
+
         # 2. Start local server
         auth_code = None
         server_error = None
-        
+
         class CallbackHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 nonlocal auth_code, server_error
                 try:
                     parsed_url = urllib.parse.urlparse(self.path)
                     query = urllib.parse.parse_qs(parsed_url.query)
-                    
+
                     if parsed_url.path != "/auth/callback":
                         self.send_error(404, "Not Found")
                         return
@@ -219,7 +218,7 @@ class CodexAuth:
                             server_error = "State mismatch"
                             self.send_error(400, "Invalid state")
                             return
-                            
+
                         auth_code = query["code"][0]
                         self.send_response(200)
                         self.send_header("Content-Type", "text/html")
@@ -227,7 +226,7 @@ class CodexAuth:
                         self.wfile.write(b"<h1>Authentication successful!</h1><p>You can close this window and return to the terminal.</p>")
                     else:
                         self.send_error(400, "No code returned")
-                        
+
                 except Exception as e:
                     server_error = str(e)
                     logger.error(f"Callback handler error: {e}")
@@ -249,7 +248,7 @@ class CodexAuth:
         server_thread = threading.Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
-        
+
         # 3. Construct Auth URL
         params = {
             "client_id": CODEX_CLIENT_ID,
@@ -264,13 +263,13 @@ class CodexAuth:
             "originator": "codex_cli_rs",
         }
         auth_url = f"https://auth.openai.com/oauth/authorize?{urllib.parse.urlencode(params)}"
-        
+
         print(f"\nOpening browser to: {auth_url}\n")
         print("If the browser doesn't open, copy the URL above.")
-        
+
         # 4. Open Browser
         self._open_browser(auth_url)
-        
+
         # 5. Wait for code
         print("Waiting for authentication...")
         try:
@@ -281,10 +280,10 @@ class CodexAuth:
             server.shutdown()
             server.server_close()
             return
-            
+
         server.shutdown()
         server.server_close()
-        
+
         if server_error:
             logger.error(f"Authentication failed: {server_error}")
             print(f"Authentication failed: {server_error}")
@@ -329,11 +328,11 @@ class CodexAuth:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             self._auth_data["access"] = data["access_token"]
             self._auth_data["refresh"] = data["refresh_token"]
             self._auth_data["expires"] = int(time.time() + data["expires_in"])
-            
+
             # Extract account ID
             try:
                 account_id = self._extract_account_id(data["access_token"])
@@ -341,9 +340,9 @@ class CodexAuth:
                     self._auth_data["accountId"] = account_id
             except Exception as e:
                 logger.warning(f"Failed to extract account ID from token: {e}")
-                
+
             self._save()
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Token exchange failed: {e}")
             if hasattr(e, "response") and e.response:
@@ -355,7 +354,11 @@ class CodexAuth:
 codex_auth = CodexAuth()
 
 
-async def handle_codex_request(openai_request: dict, model_id: str) -> StreamingResponse:
+from typing import Any
+
+# ... imports ...
+
+async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle a request to the Codex backend.
     
@@ -364,12 +367,12 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> Streaming
         model_id: The original model ID (for logging).
         
     Returns:
-        StreamingResponse: The SSE stream from Codex.
+        AsyncGenerator: Generator yielding OpenAI chunk dicts.
     """
-    
+
     # Get valid token (auto-refreshes)
     access_token = await codex_auth.get_access_token()
-    account_id = codex_auth.get_account_id()    
+    account_id = codex_auth.get_account_id()
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -377,104 +380,42 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> Streaming
         "OpenAI-Beta": "responses=experimental",
         "originator": "codex_cli_rs",
     }
-    
+
     if account_id:
         headers["chatgpt-account-id"] = account_id
 
-    # Adjust request for Codex backend
-    # Codex expects "model" to be the internal name (e.g. gpt-4o), 
-    # which should already be set in openai_request['model'] by the caller (server.py)
-    # based on models.yaml mapping.
-    
-    # Ensure stream is True (Backend requires SSE)
-    # But if client asked for stream=False, we might need to buffer?
-    # AUTH.md says: "The backend *always* returns SSE".
-    # If client asked for stream=False, server.py usually expects a JSON response.
-    # However, this function returns StreamingResponse.
-    # If client wants JSON, we should probably buffer here?
-    # server.py logic:
-    # if openai_request["stream"]:
-    #     return StreamingResponse(...)
-    # else:
-    #     client.chat.completions.create(...) -> response -> convert -> JSONResponse
-    
-    # To minimize changes in server.py, we should ideally handle both.
-    # But supporting stream=False with manual SSE buffering is complex.
-    # For now, let's assume `codex` provider implies streaming or we just stream anyway.
-    # Actually, `server.py` decides whether to stream based on `request.stream`.
-    
-    # If we are called, we are replacing the `client.chat.completions.create` call.
-    # Let's enforce streaming for now, or handle buffering if needed.
-    
-    # NOTE: The AUTH.md says "If the client requested stream: false, you must consume the entire SSE stream...".
-    # Given we are a proxy, we should respect the client's wish.
-    
-    want_stream = openai_request.get("stream", False)
-    
-    # Always tell backend we want stream (implicit in the endpoint/accept header)
-    # But we don't need to set "stream": true in body?
-    # OpenAI API usually requires it.
-    # AUTH.md says "Body Adjustments: ... handling stream flags".
-    # Let's assume we pass "stream": true to backend always.
     openai_request["stream"] = True
-    
+
     client = httpx.AsyncClient(timeout=60.0)
-    
-    async def request_generator():
-        try:
-            async with client.stream("POST", CODEX_API_URL, json=openai_request, headers=headers) as response:
-                if response.status_code != 200:
-                    error_text = await response.read()
-                    logger.error(f"Codex API error {response.status_code}: {error_text.decode('utf-8', errors='replace')}")
-                    yield f"event: error\ndata: {json.dumps({'error': {'message': f'Codex API error: {response.status_code}'}})}\n\n"
-                    return
 
-                async for line in response.aiter_lines():
-                    if line:
-                        yield f"{line}\n"
-                        
-        except Exception as e:
-            logger.error(f"Error during Codex streaming: {e}")
-            yield f"event: error\ndata: {json.dumps({'error': {'message': str(e)}})}\n\n"
-        finally:
-            await client.aclose()
+    try:
+        async with client.stream("POST", CODEX_API_URL, json=openai_request, headers=headers) as response:
+            if response.status_code != 200:
+                error_text = await response.read()
+                logger.error(f"Codex API error {response.status_code}: {error_text.decode('utf-8', errors='replace')}")
+                raise HTTPException(status_code=response.status_code, detail=f"Codex API Error: {response.status_code}")
 
-    if want_stream:
-        return StreamingResponse(
-            request_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            }
-        )
-    else:
-        # Buffer the stream and return JSON
-        # This is non-trivial because we need to parse SSE deltas and merge them.
-        # For this task, let's start with supporting streaming, and throw an error for non-streaming 
-        # or just return the stream (which might break the client if it expects JSON).
-        # Actually, `server.py` expects `handle_codex_request` to return a Response (JSON or Streaming).
-        
-        # Let's implement basic buffering.
-        full_content = ""
-        finish_reason = None
-        tool_calls = []
-        
-        # We need to accumulate the response.
-        # This is quite complex to do correctly for all fields (tools, etc.).
-        # For now, let's raise error if stream=False, asking user to use stream=True.
-        # Or just return the stream and hope the client handles it (it won't).
-        
-        # Given "codex plan" is usually used with CLI which uses streaming, maybe it's fine.
-        # But `claude-code-proxy` converts.
-        
-        # Let's return StreamingResponse even if stream=False? No, that violates protocol.
-        
-        # I'll implement a simple buffer-er if I have time, but for now let's stick to Streaming.
-        # Most modern clients use streaming.
-        
-        logger.warning("Non-streaming request to Codex provider. Forcing streaming response.")
-        return StreamingResponse(
-            request_generator(),
-            media_type="text/event-stream"
-        )
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    if not payload:
+                        continue
+
+                    try:
+                        chunk = json.loads(payload)
+                        yield chunk
+                    except json.JSONDecodeError:
+                        pass
+
+    except httpx.RequestError as e:
+        logger.error(f"Codex network error: {e}")
+        raise HTTPException(status_code=502, detail=f"Codex network error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Codex unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Codex unexpected error: {e}")
+    finally:
+        await client.aclose()

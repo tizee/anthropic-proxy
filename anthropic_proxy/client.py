@@ -10,8 +10,14 @@ import httpx
 import yaml
 from openai import AsyncOpenAI
 
-from .codex import DEFAULT_CODEX_MODELS, CODEX_API_URL, codex_auth
+from .antigravity import (
+    ANTIGRAVITY_ENDPOINT,
+    DEFAULT_ANTIGRAVITY_MODELS,
+    antigravity_auth,
+)
+from .codex import CODEX_API_URL, DEFAULT_CODEX_MODELS, codex_auth
 from .config import config, parse_token_value
+from .gemini import DEFAULT_GEMINI_MODELS, GEMINI_CODE_ASSIST_ENDPOINT, gemini_auth
 from .types import ModelDefaults
 
 logger = logging.getLogger(__name__)
@@ -46,17 +52,31 @@ def load_models_config(config_file=None):
 
         for model in models:
             model_id = model.get("model_id")
-            
+
             # Apply defaults for Codex provider models
             if model.get("provider") == "codex":
                 if "api_base" not in model:
                     model["api_base"] = CODEX_API_URL
                 if "api_key" not in model:
                     model["api_key"] = "codex-auth" # Placeholder to pass validation
-                
+
                 # Apply default reasoning effort if known model and not specified
                 if "reasoning_effort" not in model and model_id in DEFAULT_CODEX_MODELS:
                     model["reasoning_effort"] = DEFAULT_CODEX_MODELS[model_id].get("reasoning_effort")
+
+            # Apply defaults for Gemini provider models
+            if model.get("provider") == "gemini":
+                if "api_base" not in model:
+                    model["api_base"] = GEMINI_CODE_ASSIST_ENDPOINT
+                if "api_key" not in model:
+                    model["api_key"] = "gemini-auth" # Placeholder
+
+            # Apply defaults for Antigravity provider models
+            if model.get("provider") == "antigravity":
+                if "api_base" not in model:
+                    model["api_base"] = ANTIGRAVITY_ENDPOINT
+                if "api_key" not in model:
+                    model["api_key"] = "antigravity-auth" # Placeholder
 
             if "model_id" not in model or "api_base" not in model:
                 logger.warning(
@@ -69,7 +89,7 @@ def load_models_config(config_file=None):
 
             # Determine if this model should use direct Claude API mode
             is_direct_mode = model.get("direct", False) or "anthropic.com" in model["api_base"].lower()
-            
+
             # Determine provider (default to openai if direct=false, anthropic if direct=true)
             provider = model.get("provider")
             if not provider:
@@ -114,17 +134,17 @@ def load_models_config(config_file=None):
 def load_codex_models():
     """Auto-register default Codex models if authentication is available."""
     # Check if we have auth data (access or refresh token)
-    # We don't need to validate it here, just check existence to avoid cluttering 
+    # We don't need to validate it here, just check existence to avoid cluttering
     # the model list for users who don't use Codex.
     # Accessing internal _auth_data is a bit hacky but efficient.
     # Better to ask the auth object.
     has_auth = bool(codex_auth.get_account_id() or codex_auth._auth_data.get("refresh"))
-    
+
     if not has_auth:
         return
 
     logger.info("Codex authentication detected. Registering default Codex models...")
-    
+
     for model_id, details in DEFAULT_CODEX_MODELS.items():
         # User defined config in models.yaml takes precedence
         if model_id in CUSTOM_OPENAI_MODELS:
@@ -135,11 +155,10 @@ def load_codex_models():
             "model_id": model_id,
             "model_name": details["model_name"],
             "api_base": CODEX_API_URL,
-            "api_key": "dummy", # Not used for Codex, but required by some checks? 
-                               # Actually server.py checks is_codex_model first.
+            "api_key": "dummy",
             "can_stream": True,
-            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS, # Default 100k
-            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD, # Default 128k
+            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS,
+            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD,
             "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
             "extra_headers": {},
             "extra_body": {},
@@ -150,6 +169,69 @@ def load_codex_models():
         }
         logger.debug(f"Registered default Codex model: {model_id}")
 
+def load_gemini_models():
+    """Auto-register default Gemini models if authentication is available."""
+    has_auth = bool(gemini_auth._auth_data.get("refresh"))
+
+    if not has_auth:
+        return
+
+    logger.info("Gemini authentication detected. Registering default Gemini models...")
+
+    for model_id, details in DEFAULT_GEMINI_MODELS.items():
+        if model_id in CUSTOM_OPENAI_MODELS:
+            logger.debug(f"Skipping default Gemini model {model_id} (overridden by user config)")
+            continue
+
+        CUSTOM_OPENAI_MODELS[model_id] = {
+            "model_id": model_id,
+            "model_name": details["model_name"],
+            "api_base": GEMINI_CODE_ASSIST_ENDPOINT,
+            "api_key": "dummy",
+            "can_stream": True,
+            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS,
+            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD,
+            "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
+            "extra_headers": {},
+            "extra_body": {},
+            "temperature": 1.0,
+            "direct": False,
+            "provider": "gemini",
+        }
+        logger.debug(f"Registered default Gemini model: {model_id}")
+
+
+def load_antigravity_models():
+    """Auto-register default Antigravity models if authentication is available."""
+    has_auth = bool(antigravity_auth._auth_data.get("refresh"))
+
+    if not has_auth:
+        return
+
+    logger.info("Antigravity authentication detected. Registering default Antigravity models...")
+
+    for model_id, details in DEFAULT_ANTIGRAVITY_MODELS.items():
+        if model_id in CUSTOM_OPENAI_MODELS:
+            logger.debug(f"Skipping default Antigravity model {model_id} (overridden by user config)")
+            continue
+
+        CUSTOM_OPENAI_MODELS[model_id] = {
+            "model_id": model_id,
+            "model_name": details["model_name"],
+            "api_base": ANTIGRAVITY_ENDPOINT,
+            "api_key": "dummy",
+            "can_stream": True,
+            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS,
+            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD,
+            "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
+            "extra_headers": {},
+            "extra_body": {},
+            "temperature": 1.0,
+            "direct": False,
+            "provider": "antigravity",
+        }
+        logger.debug(f"Registered default Antigravity model: {model_id}")
+
 
 def initialize_custom_models():
     """Initialize custom models. Called when running as main.
@@ -159,6 +241,8 @@ def initialize_custom_models():
     """
     load_models_config()
     load_codex_models()
+    load_gemini_models()
+    load_antigravity_models()
 
 
 def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
@@ -279,3 +363,17 @@ def is_codex_model(model_id: str) -> bool:
     if model_id not in CUSTOM_OPENAI_MODELS:
         return False
     return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "codex"
+
+
+def is_gemini_model(model_id: str) -> bool:
+    """Check if a model is a Gemini model."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return False
+    return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "gemini"
+
+
+def is_antigravity_model(model_id: str) -> bool:
+    """Check if a model is an Antigravity model."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return False
+    return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "antigravity"

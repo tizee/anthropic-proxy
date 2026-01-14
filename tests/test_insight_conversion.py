@@ -25,7 +25,7 @@ from anthropic_proxy.types import (
     ClaudeMessage,
     ClaudeMessagesRequest,
 )
-from anthropic_proxy.converter import convert_openai_response_to_anthropic
+from anthropic_proxy.openai_converter import convert_openai_response_to_anthropic
 from anthropic_proxy.streaming import AnthropicStreamingConverter
 
 

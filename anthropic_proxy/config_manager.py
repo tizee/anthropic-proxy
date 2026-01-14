@@ -245,18 +245,18 @@ def save_auth_file(auth_data: dict, auth_path: Path | None = None) -> bool:
 
     try:
         ensure_config_dir()
-        
+
         # Write to temporary file first
         temp_path = auth_path.with_suffix(".tmp")
         with temp_path.open("w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
-        
+
         # Atomic rename
         temp_path.replace(auth_path)
-        
+
         # Set permissions to 0600 (read/write only for owner)
         auth_path.chmod(0o600)
-        
+
         logger.debug(f"Saved auth data to: {auth_path}")
         return True
     except Exception as e:

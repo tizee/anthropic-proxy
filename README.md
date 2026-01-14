@@ -212,6 +212,35 @@ If you have a Codex model ID but want to use it with a standard OpenAI API key (
   api_key: sk-...
 ```
 
+## 💎 Gemini Subscription Support (Google)
+
+Use your **Gemini Code Assist plan (including the Free Tier)** directly, bypassing separate API billing.
+
+This authenticates with your Google account and connects to the **Code Assist API** (`cloudcode-pa`), consuming your user quota/subscription rather than per-token Cloud API credits.
+
+### 1. Login
+
+```bash
+anthropic-proxy login --gemini
+```
+This authenticates with your Google account. It will automatically resolve a Google Cloud Project context required for the connection (defaulting to the Free tier if available).
+
+### 2. Available Models
+
+The following models are automatically available:
+- `gemini-2.5-flash`
+- `gemini-3-pro-preview`
+
+### 3. Customizing Gemini Models
+
+To override settings, specify `provider: gemini`:
+
+```yaml
+- model_id: gemini-2.5-flash
+  provider: gemini
+  reasoning_effort: medium  # if applicable
+```
+
 ## Quick Start
 
 ### Prerequisites

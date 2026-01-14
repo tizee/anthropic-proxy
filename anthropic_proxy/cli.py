@@ -450,12 +450,23 @@ This command opens a browser to authenticate with supported providers.
 
 Examples:
   anthropic-proxy login --codex      Login to OpenAI Codex subscription
+  anthropic-proxy login --gemini     Login to Google Gemini subscription
         """,
     )
     login_parser.add_argument(
         "--codex",
         action="store_true",
         help="Login to OpenAI Codex subscription",
+    )
+    login_parser.add_argument(
+        "--gemini",
+        action="store_true",
+        help="Login to Google Gemini subscription",
+    )
+    login_parser.add_argument(
+        "--antigravity",
+        action="store_true",
+        help="Login to Google Antigravity (Internal) subscription",
     )
     login_parser.set_defaults(func=cmd_login)
 
@@ -473,12 +484,24 @@ def cmd_login(args: argparse.Namespace) -> None:
         codex_auth.login()
         return
 
+    if args.gemini:
+        from .gemini import gemini_auth
+        gemini_auth.login()
+        return
+
+    if args.antigravity:
+        from .antigravity import antigravity_auth
+        antigravity_auth.login()
+        return
+
     # Default behavior if no flags (or show help)
     # For now, if no flags are provided, we can default to codex OR show help.
     # Given the request is to make it an optional parameter, implies explicit selection.
     print(f"{Colors.YELLOW}Please specify a provider to login.{Colors.RESET}")
     print("Available providers:")
-    print(f"  {Colors.GREEN}--codex{Colors.RESET}   Login to OpenAI Codex subscription")
+    print(f"  {Colors.GREEN}--codex{Colors.RESET}       Login to OpenAI Codex subscription")
+    print(f"  {Colors.GREEN}--gemini{Colors.RESET}      Login to Google Gemini subscription")
+    print(f"  {Colors.GREEN}--antigravity{Colors.RESET} Login to Google Antigravity subscription")
     sys.exit(1)
 
 

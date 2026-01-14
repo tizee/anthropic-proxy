@@ -21,21 +21,26 @@ from openai.types.chat import (
     ChatCompletionChunk,
 )
 
+from .antigravity import handle_antigravity_request
 from .client import (
     CUSTOM_OPENAI_MODELS,
     create_claude_client,
     create_openai_client,
     initialize_custom_models,
-    is_direct_mode_model,
+    is_antigravity_model,
     is_codex_model,
+    is_direct_mode_model,
+    is_gemini_model,
 )
 from .codex import handle_codex_request
 from .config import config, setup_logging
 from .converter import (
     convert_openai_response_to_anthropic,
 )
+from .gemini import handle_gemini_request
 from .hook import hook_manager, load_all_plugins
 from .streaming import convert_openai_streaming_response_to_anthropic
+from .gemini_streaming import convert_gemini_streaming_response_to_anthropic
 from .types import (
     ClaudeMessagesRequest,
     ClaudeTokenCountRequest,
@@ -110,9 +115,7 @@ async def log_requests(request: Request, call_next):
 
 async def hook_streaming_response(response_generator, request, model_id):
     """Wraps a streaming response generator to apply response hooks to each event."""
-    async for event_str in convert_openai_streaming_response_to_anthropic(
-        response_generator, request, model_id
-    ):
+    async for event_str in response_generator:
         try:
             # The event string is like "event: <type>\ndata: <json>\n\n"
             if "data: " not in event_str:
@@ -452,7 +455,7 @@ async def create_message(raw_request: Request):
                 request, model_id, model_config, raw_request
             )
 
-        # Convert Anthropic request to OpenAI format
+        # Convert Anthropic request to OpenAI format (default path)
         openai_request = request.to_openai_request()
         openai_request['store'] = False
 
@@ -469,10 +472,47 @@ async def create_message(raw_request: Request):
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
 
-        # Check for Codex provider
+        # Check for Codex/Gemini/Antigravity provider
+        provider_generator = None
         if is_codex_model(model_id):
             logger.info(f"🔗 CODEX MODE: Model={model_id}")
-            return await handle_codex_request(openai_request, model_id)
+            provider_generator = await handle_codex_request(openai_request, model_id)
+        elif is_gemini_model(model_id):
+            logger.info(f"🔗 GEMINI MODE: Model={model_id}")
+            provider_generator = await handle_gemini_request(request, model_id)
+        elif is_antigravity_model(model_id):
+            logger.info(f"🔗 ANTIGRAVITY MODE: Model={model_id}")
+            provider_generator = await handle_antigravity_request(request, model_id)
+
+        if provider_generator:
+            # Gemini/Antigravity produce Gemini chunks, not OpenAI chunks.
+            if is_gemini_model(model_id) or is_antigravity_model(model_id):
+                hooked_generator = hook_streaming_response(
+                    convert_gemini_streaming_response_to_anthropic(
+                        provider_generator, request, model_id
+                    ),
+                    request,
+                    model_id,
+                )
+            else:
+                hooked_generator = hook_streaming_response(
+                    convert_openai_streaming_response_to_anthropic(
+                        provider_generator, request, model_id
+                    ),
+                    request,
+                    model_id,
+                )
+            return StreamingResponse(
+                hooked_generator,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
 
         # Create OpenAI client for the model with the extracted API key
         client = create_openai_client(model_id, api_key)
@@ -567,9 +607,13 @@ async def create_message(raw_request: Request):
                 ] = await client.chat.completions.create(**openai_request)
                 logger.debug("🔧 TOOL_DEBUG: Successfully created streaming response generator")
 
-                # Wrap the generator to apply response hooks
+                # Convert OpenAI chunks to Anthropic SSE, then apply hooks
                 hooked_generator = hook_streaming_response(
-                    response_generator, request, model_id
+                    convert_openai_streaming_response_to_anthropic(
+                        response_generator, request, model_id
+                    ),
+                    request,
+                    model_id,
                 )
                 return StreamingResponse(
                     hooked_generator,
