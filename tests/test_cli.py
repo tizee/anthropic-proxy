@@ -19,6 +19,7 @@ from anthropic_proxy.cli import (
     _get_host_port,
     build_parser,
     cmd_init,
+    cmd_provider,
     cmd_restart,
     cmd_start,
     cmd_status,
@@ -230,6 +231,19 @@ class TestBuildParser(unittest.TestCase):
         args = parser.parse_args(["status"])
 
         self.assertEqual(args.command, "status")
+
+    def test_build_parser_has_provider_subcommand(self):
+        """Test build_parser has provider subcommand with flags."""
+        parser = build_parser()
+
+        args = parser.parse_args(["provider", "--list"])
+        self.assertEqual(args.command, "provider")
+        self.assertTrue(args.list)
+        self.assertFalse(args.list_models)
+
+        args = parser.parse_args(["provider", "--models"])
+        self.assertEqual(args.command, "provider")
+        self.assertTrue(args.list_models)
 
 
 class TestCmdStart(unittest.TestCase):
@@ -523,6 +537,45 @@ class TestParseArgs(unittest.TestCase):
             args = parse_args()
             self.assertEqual(args.command, "start")
             self.assertEqual(args.port, 9000)
+
+
+class TestCmdProvider(unittest.TestCase):
+    """Test cases for cmd_provider function."""
+
+    def test_cmd_provider_requires_flags(self):
+        """Test cmd_provider exits when no flags are provided."""
+        args = argparse.Namespace(list=False, list_models=False, models=None)
+
+        with self.assertRaises(SystemExit) as cm:
+            with patch("builtins.print"):
+                cmd_provider(args)
+
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("anthropic_proxy.cli._provider_status_lines", return_value=["Codex AUTHED"])
+    def test_cmd_provider_list(self, mock_status):
+        """Test cmd_provider prints provider status lines."""
+        args = argparse.Namespace(list=True, list_models=False, models=None)
+
+        with patch("builtins.print") as mock_print:
+            cmd_provider(args)
+
+        mock_status.assert_called_once()
+        mock_print.assert_any_call("Codex AUTHED")
+
+    @patch("anthropic_proxy.cli._default_provider_model_ids", return_value=["codex/a", "gemini/b"])
+    @patch("anthropic_proxy.cli._load_model_ids", return_value=["custom-1", "codex/a"])
+    def test_cmd_provider_models(self, mock_load, mock_defaults):
+        """Test cmd_provider prints custom models then provider defaults."""
+        args = argparse.Namespace(list=False, list_models=True, models=Path("/tmp/models.yaml"))
+
+        with patch("builtins.print") as mock_print:
+            cmd_provider(args)
+
+        mock_load.assert_called_once()
+        mock_defaults.assert_called_once()
+        printed = [call.args[0] for call in mock_print.call_args_list]
+        self.assertEqual(printed, ["custom-1", "codex/a", "gemini/b"])
 
 
 if __name__ == "__main__":

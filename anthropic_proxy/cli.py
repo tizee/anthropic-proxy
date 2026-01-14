@@ -110,6 +110,89 @@ def print_config(models_path: Path, config_path: Path, show_api_keys: bool = Fal
     print("=" * 60 + "\n")
 
 
+def _provider_status_lines() -> list[str]:
+    from .antigravity import antigravity_auth
+    from .codex import codex_auth
+    from .gemini import gemini_auth
+
+    providers = [
+        ("Codex", codex_auth.has_auth()),
+        ("Gemini", gemini_auth.has_auth()),
+        ("Antigravity", antigravity_auth.has_auth()),
+    ]
+
+    lines = []
+    for name, authed in providers:
+        status = f"{Colors.GREEN}AUTHED{Colors.RESET}" if authed else f"{Colors.RED}NOT AUTHED{Colors.RESET}"
+        lines.append(f"{name} {status}")
+    return lines
+
+
+def _default_provider_model_ids() -> list[str]:
+    from .antigravity import DEFAULT_ANTIGRAVITY_MODELS
+    from .codex import DEFAULT_CODEX_MODELS
+    from .gemini import DEFAULT_GEMINI_MODELS
+
+    model_ids = []
+    model_ids.extend([f"codex/{model_id}" for model_id in DEFAULT_CODEX_MODELS.keys()])
+    model_ids.extend([f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS.keys()])
+    model_ids.extend([f"antigravity/{model_id}" for model_id in DEFAULT_ANTIGRAVITY_MODELS.keys()])
+    return model_ids
+
+
+def _load_model_ids(models_path: Path) -> list[str]:
+    if not models_path.exists():
+        return []
+
+    try:
+        with models_path.open("r", encoding="utf-8") as f:
+            models_data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"{Colors.RED}Error loading models.yaml:{Colors.RESET} {e}", file=sys.stderr)
+        return []
+
+    if not models_data:
+        return []
+
+    if not isinstance(models_data, list):
+        return []
+
+    model_ids = []
+    for model in models_data:
+        if isinstance(model, dict) and "model_id" in model:
+            model_ids.append(str(model["model_id"]))
+    return model_ids
+
+
+def cmd_provider(args: argparse.Namespace) -> None:
+    """List auth providers or available model IDs."""
+    did_output = False
+
+    if args.list:
+        for line in _provider_status_lines():
+            print(line)
+        did_output = True
+
+    if args.list_models:
+        models_path = args.models or DEFAULT_MODELS_FILE
+        model_ids = _load_model_ids(models_path)
+        seen = set(model_ids)
+        for model_id in _default_provider_model_ids():
+            if model_id not in seen:
+                model_ids.append(model_id)
+                seen.add(model_id)
+        for model_id in model_ids:
+            print(model_id)
+        did_output = True
+
+    if not did_output:
+        print(f"{Colors.YELLOW}Please specify --list and/or --models.{Colors.RESET}")
+        print("Examples:")
+        print("  anthropic-proxy provider --list")
+        print("  anthropic-proxy provider --models")
+        sys.exit(1)
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize config directory with default files.
 
@@ -469,6 +552,30 @@ Examples:
         help="Login to Google Antigravity (Internal) subscription",
     )
     login_parser.set_defaults(func=cmd_login)
+
+    # provider subcommand
+    provider_parser = subparsers.add_parser(
+        "provider",
+        help="Show auth providers and available models",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  anthropic-proxy provider --list
+  anthropic-proxy provider --models
+        """,
+    )
+    provider_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List auth providers and their OAuth status",
+    )
+    provider_parser.add_argument(
+        "--models",
+        dest="list_models",
+        action="store_true",
+        help="List available model IDs (custom + provider defaults)",
+    )
+    provider_parser.set_defaults(func=cmd_provider)
 
     return parser
 

@@ -444,6 +444,8 @@ anthropic-proxy --print-config                # View configuration (API keys red
 anthropic-proxy --print-config --show-api-keys  # View with API keys visible
 anthropic-proxy --init                         # Initialize config (skips if files exist)
 anthropic-proxy --init-force                   # Force reinitialize (overwrites existing files)
+anthropic-proxy provider --list                # List auth providers and OAuth status
+anthropic-proxy provider --models              # List available model IDs (custom + provider defaults)
 anthropic-proxy --models PATH                  # Use custom models file
 anthropic-proxy --config PATH                  # Use custom config file
 ```
