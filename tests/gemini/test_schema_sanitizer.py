@@ -36,6 +36,22 @@ class TestGeminiSchemaSanitizer(unittest.TestCase):
         self.assertNotIn("propertyNames", cleaned)
         self.assertIn("exclusiveMinimum: 0", cleaned["properties"]["value"]["description"])
 
+    def test_clean_gemini_schema_normalizes_type_names(self):
+        schema = {
+            "type": "OBJECT",
+            "properties": {
+                "count": {"type": "INTEGER", "enum": [1, 2]},
+                "items": {"type": "ARRAY"},
+            },
+        }
+
+        cleaned = clean_gemini_schema(schema)
+
+        self.assertEqual(cleaned["type"], "object")
+        self.assertEqual(cleaned["properties"]["count"]["type"], "string")
+        self.assertEqual(cleaned["properties"]["count"]["enum"], ["1", "2"])
+        self.assertEqual(cleaned["properties"]["items"]["items"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

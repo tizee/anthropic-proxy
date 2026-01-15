@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import uuid
-from collections import deque
 from typing import Any, AsyncGenerator
 
 from .gemini_types import parse_gemini_response
@@ -30,7 +28,11 @@ logger = logging.getLogger(__name__)
 class GeminiStreamingConverter:
     """Convert Gemini streaming responses into Anthropic SSE events."""
 
-    def __init__(self, original_request: ClaudeMessagesRequest, session_id: str | None):
+    def __init__(
+        self,
+        original_request: ClaudeMessagesRequest,
+        session_id: str | None,
+    ):
         self.original_request = original_request
         self.session_id = session_id
         self.message_id = f"msg_{uuid.uuid4().hex[:24]}"
@@ -39,8 +41,9 @@ class GeminiStreamingConverter:
         self.text_block_started = False
         self.thinking_block_started = False
         self.tool_block_started = False
-        self.pending_tool_calls: dict[str, deque[str]] = {}
+        self.pending_tool_calls: dict[str, dict[str, Any]] = {}
         self.seen_tool_ids: set[str] = set()
+        self.current_tool_id: str | None = None
         self.accumulated_text = ""
         self.accumulated_thinking = ""
         self.has_sent_stop_reason = False
@@ -48,9 +51,6 @@ class GeminiStreamingConverter:
         self.output_tokens = 0
         self.expected_tool_count = len(original_request.tools or [])
         self.last_thought_signature: str | None = None
-        self.tool_code_buffer = ""
-        self.in_tool_code = False
-        self.pending_tool_signature_ids: deque[str] = deque()
 
     def _send_message_start_event(self) -> str:
         message_data = {
@@ -157,96 +157,99 @@ class GeminiStreamingConverter:
         )
 
     def _get_tool_id(self, tool_id: str | None) -> str:
-        if tool_id and tool_id not in self.seen_tool_ids:
-            self.seen_tool_ids.add(tool_id)
+        if tool_id:
+            if tool_id not in self.seen_tool_ids:
+                self.seen_tool_ids.add(tool_id)
             return tool_id
         new_id = generate_unique_id("toolu")
         self.seen_tool_ids.add(new_id)
         return new_id
 
+    def _get_stream_tool_id(self, tool_id: str | None) -> str:
+        if tool_id:
+            self.current_tool_id = tool_id
+            return self._get_tool_id(tool_id)
+        if self.current_tool_id:
+            return self.current_tool_id
+        new_id = self._get_tool_id(None)
+        self.current_tool_id = new_id
+        return new_id
+
+    def _append_partial_arg(self, target: dict[str, Any], json_path: str, fragment: str) -> None:
+        path = json_path.strip()
+        if path.startswith("$."):
+            path = path[2:]
+        if not path:
+            return
+        keys = path.split(".")
+        current = target
+        for key in keys[:-1]:
+            value = current.get(key)
+            if not isinstance(value, dict):
+                value = {}
+                current[key] = value
+            current = value
+        leaf = keys[-1]
+        existing = current.get(leaf)
+        if existing is None:
+            current[leaf] = fragment
+        elif isinstance(existing, str):
+            current[leaf] = existing + fragment
+        else:
+            current[leaf] = f"{existing}{fragment}"
+
+    def _record_partial_args(self, tool_id: str, tool_name: str, partial_args: list[dict[str, Any]]) -> None:
+        state = self.pending_tool_calls.get(tool_id)
+        if not state:
+            state = {"name": tool_name, "args": {}}
+            self.pending_tool_calls[tool_id] = state
+        elif tool_name and not state.get("name"):
+            state["name"] = tool_name
+        args = state["args"]
+        for entry in partial_args:
+            if not isinstance(entry, dict):
+                continue
+            json_path = entry.get("jsonPath") or entry.get("json_path")
+            if not isinstance(json_path, str) or not json_path:
+                continue
+            fragment = entry.get("stringValue")
+            if fragment is None:
+                continue
+            self._append_partial_arg(args, json_path, str(fragment))
+
+    def _emit_tool_use_events(self, tool_id: str, tool_name: str, args: dict[str, Any]) -> list[str]:
+        args_json = json.dumps(args, ensure_ascii=False)
+        events: list[str] = []
+        events.extend(self._close_current_block())
+        events.append(self._open_tool_block(tool_id, tool_name))
+        events.append(self._send_content_block_delta_event("input_json_delta", args_json))
+        events.append(self._send_content_block_stop_event())
+        self.content_block_index += 1
+        self.tool_block_started = False
+        return events
+
+    def _flush_pending_tool_calls(self) -> list[str]:
+        events: list[str] = []
+        for tool_id, state in list(self.pending_tool_calls.items()):
+            tool_name = state.get("name") or ""
+            args = state.get("args") or {}
+            if not tool_name and not args:
+                self.pending_tool_calls.pop(tool_id, None)
+                continue
+            if self.last_thought_signature:
+                cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+            events.extend(self._emit_tool_use_events(tool_id, tool_name, args))
+            self.pending_tool_calls.pop(tool_id, None)
+        self.current_tool_id = None
+        return events
+
     def _remember_thought_signature(self, signature: str | None) -> None:
         if not signature:
             return
         self.last_thought_signature = signature
-        while self.pending_tool_signature_ids:
-            pending_id = self.pending_tool_signature_ids.popleft()
-            cache_tool_signature(self.session_id, pending_id, signature)
-
-    def _infer_tool_name(self, payload: dict[str, Any]) -> str:
-        tool_name = payload.get("tool_name") or payload.get("name")
-        if tool_name:
-            return str(tool_name)
-
-        if not self.original_request.tools:
-            return ""
-
-        keys = set(payload.keys())
-        if "todos" in keys:
-            return "TodoWrite"
-        if "file_path" in keys and "content" in keys:
-            return "Write"
-        if "command" in keys:
-            return "Bash"
-
-        best_name = ""
-        best_score = -1
-        for tool in self.original_request.tools:
-            schema = getattr(tool, "input_schema", None)
-            if not isinstance(schema, dict):
-                continue
-            properties = schema.get("properties")
-            if not isinstance(properties, dict):
-                continue
-            required = schema.get("required")
-            required_set = set(required) if isinstance(required, list) else set()
-            if required_set and not required_set.issubset(keys):
-                continue
-            matched = len(keys & set(properties.keys()))
-            unknown = len(keys - set(properties.keys()))
-            score = matched - unknown
-            if score > best_score:
-                best_score = score
-                best_name = tool.name
-        return best_name
-
-    def _extract_tool_code_calls(self, text: str) -> tuple[str, list[dict[str, Any]]]:
-        combined = f"{self.tool_code_buffer}{text}"
-        emitted: list[str] = []
-        calls: list[dict[str, Any]] = []
-
-        while combined:
-            if not self.in_tool_code:
-                start = combined.find("<tool_code>")
-                if start == -1:
-                    emitted.append(combined)
-                    combined = ""
-                    continue
-                emitted.append(combined[:start])
-                combined = combined[start + len("<tool_code>") :]
-                self.in_tool_code = True
-                self.tool_code_buffer = ""
-                continue
-
-            end = combined.find("</tool_code>")
-            if end == -1:
-                self.tool_code_buffer = combined
-                combined = ""
-                continue
-
-            block = f"{self.tool_code_buffer}{combined[:end]}".strip()
-            self.tool_code_buffer = ""
-            self.in_tool_code = False
-            combined = combined[end + len("</tool_code>") :]
-            try:
-                payload = json.loads(block)
-            except json.JSONDecodeError:
-                payload = None
-            if isinstance(payload, dict):
-                calls.append(payload)
-
-        return "".join(emitted), calls
 
     async def process_chunk(self, gemini_chunk: dict[str, Any]) -> AsyncGenerator[str, None]:
+        # Streaming chunks are expected to follow Vertex AI response shape (camelCase).
         gemini_chunk = parse_gemini_response(gemini_chunk)
         candidates = gemini_chunk.get("candidates", [])
         if not candidates:
@@ -276,13 +279,43 @@ class GeminiStreamingConverter:
             if "functionCall" in part:
                 call = part.get("functionCall", {})
                 tool_name = call.get("name", "")
-                tool_id = self._get_tool_id(call.get("id"))
-                args = call.get("args", {})
+                tool_id = self._get_stream_tool_id(call.get("id"))
+                args = call.get("args", {}) or {}
+                partial_args = call.get("partialArgs") or []
+                will_continue = call.get("willContinue")
                 signature = part.get("thoughtSignature")
                 if signature:
                     self.last_thought_signature = signature
-                if self.last_thought_signature:
-                    cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+                if args:
+                    if self.last_thought_signature:
+                        cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+                    if self.expected_tool_count:
+                        logger.debug(
+                            "Gemini functionCall name=%s id=%s args_keys=%s",
+                            tool_name,
+                            tool_id,
+                            list(args.keys()) if isinstance(args, dict) else type(args).__name__,
+                        )
+                    for event in self._emit_tool_use_events(tool_id, tool_name, args):
+                        yield event
+                    self.pending_tool_calls.pop(tool_id, None)
+                    self.current_tool_id = None
+                    continue
+
+                if partial_args:
+                    self._record_partial_args(tool_id, tool_name, partial_args)
+                    if will_continue is not True:
+                        state = self.pending_tool_calls.get(tool_id, {})
+                        pending_args = state.get("args") or {}
+                        pending_name = state.get("name") or tool_name
+                        if self.last_thought_signature:
+                            cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+                        for event in self._emit_tool_use_events(tool_id, pending_name, pending_args):
+                            yield event
+                        self.pending_tool_calls.pop(tool_id, None)
+                        self.current_tool_id = None
+                    continue
+
                 if self.expected_tool_count:
                     logger.debug(
                         "Gemini functionCall name=%s id=%s args_keys=%s",
@@ -290,20 +323,10 @@ class GeminiStreamingConverter:
                         tool_id,
                         list(args.keys()) if isinstance(args, dict) else type(args).__name__,
                     )
-                args_json = json.dumps(args, ensure_ascii=False)
-
-                for event in self._close_current_block():
-                    yield event
-
-                yield self._open_tool_block(tool_id, tool_name)
-                yield self._send_content_block_delta_event("input_json_delta", args_json)
-                yield self._send_content_block_stop_event()
-                self.content_block_index += 1
-                self.tool_block_started = False
                 continue
 
             if self._is_thinking_part(part):
-                signature = part.get("thoughtSignature") or part.get("thought_signature")
+                signature = part.get("thoughtSignature")
                 text = part.get("text", "")
                 if signature:
                     self._remember_thought_signature(signature)
@@ -321,32 +344,13 @@ class GeminiStreamingConverter:
 
             text = part.get("text")
             if text:
-                remaining_text, tool_calls = self._extract_tool_code_calls(text)
-                for call_payload in tool_calls:
-                    tool_name = self._infer_tool_name(call_payload)
-                    tool_id = self._get_tool_id(None)
-                    if self.last_thought_signature:
-                        cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
-                    else:
-                        self.pending_tool_signature_ids.append(tool_id)
-
-                    for event in self._close_current_block():
-                        yield event
-
-                    yield self._open_tool_block(tool_id, tool_name)
-                    args_json = json.dumps(call_payload, ensure_ascii=False)
-                    yield self._send_content_block_delta_event("input_json_delta", args_json)
-                    yield self._send_content_block_stop_event()
-                    self.content_block_index += 1
-                    self.tool_block_started = False
-
-                if remaining_text:
+                if text:
                     if not self.text_block_started:
                         for event in self._close_current_block():
                             yield event
                         yield self._open_text_block()
-                    self.accumulated_text += remaining_text
-                    yield self._send_content_block_delta_event("text_delta", remaining_text)
+                    self.accumulated_text += text
+                    yield self._send_content_block_delta_event("text_delta", text)
 
         if finish_reason:
             if finish_reason == "STOP":
@@ -358,6 +362,9 @@ class GeminiStreamingConverter:
                     isinstance(p, dict) and p.get("functionCall")
                     for p in parts
                 ) else "end_turn"
+
+            for event in self._flush_pending_tool_calls():
+                yield event
 
             for event in self._close_current_block():
                 yield event
@@ -379,7 +386,10 @@ async def convert_gemini_streaming_response_to_anthropic(
 ):
     if session_id is None:
         session_id = _extract_session_id(original_request)
-    converter = GeminiStreamingConverter(original_request, session_id)
+    converter = GeminiStreamingConverter(
+        original_request,
+        session_id,
+    )
 
     try:
         logger.debug(
@@ -395,6 +405,8 @@ async def convert_gemini_streaming_response_to_anthropic(
                 yield event
 
         if not converter.has_sent_stop_reason:
+            for event in converter._flush_pending_tool_calls():
+                yield event
             for event in converter._close_current_block():
                 yield event
             yield converter._send_message_delta_event("end_turn", converter.output_tokens)

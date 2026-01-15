@@ -49,7 +49,12 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         async def gen():
             yield chunk
 
-        events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
+        events = [
+            event
+            async for event in convert_gemini_streaming_response_to_anthropic(
+                gen(), request
+            )
+        ]
         block_starts = _extract_event_payloads(events, "content_block_start")
         tool_blocks = [b for b in block_starts if b["content_block"]["type"] == "tool_use"]
         self.assertEqual(len(tool_blocks), 1)
@@ -83,12 +88,17 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         async def gen():
             yield chunk
 
-        events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
+        events = [
+            event
+            async for event in convert_gemini_streaming_response_to_anthropic(
+                gen(), request
+            )
+        ]
         message_deltas = _extract_event_payloads(events, "message_delta")
         self.assertTrue(message_deltas)
         self.assertEqual(message_deltas[-1]["delta"]["stop_reason"], "tool_use")
 
-    async def test_streaming_reads_usage_metadata_snake_case(self):
+    async def test_streaming_reads_usage_metadata(self):
         request = ClaudeMessagesRequest(
             model="gemini-2.5-pro",
             max_tokens=16,
@@ -99,16 +109,21 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
             "candidates": [
                 {
                     "content": {"parts": [{"text": "hi"}]},
-                    "finish_reason": genai_types.FinishReason.STOP,
+                    "finishReason": genai_types.FinishReason.STOP,
                 }
             ],
-            "usage_metadata": {"candidates_token_count": 7},
+            "usageMetadata": {"candidatesTokenCount": 7},
         }
 
         async def gen():
             yield chunk
 
-        events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
+        events = [
+            event
+            async for event in convert_gemini_streaming_response_to_anthropic(
+                gen(), request
+            )
+        ]
         message_deltas = _extract_event_payloads(events, "message_delta")
         self.assertTrue(message_deltas)
         self.assertEqual(message_deltas[-1]["usage"]["output_tokens"], 7)
@@ -146,50 +161,80 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_tool_signature("sess-1", "tool-abc"), "sig-123")
         clear_all_cache()
 
-    async def test_streaming_parses_tool_code_blocks(self):
+    async def test_streaming_emits_partial_args_on_finish(self):
         request = ClaudeMessagesRequest(
             model="gemini-2.5-pro",
             max_tokens=16,
             messages=[{"role": "user", "content": "hi"}],
             tools=[
                 {
-                    "name": "TodoWrite",
+                    "name": "get_weather",
                     "description": "",
                     "input_schema": {
                         "type": "object",
-                        "properties": {"todos": {"type": "array"}},
-                        "required": ["todos"],
+                        "properties": {"location": {"type": "string"}},
                     },
                 }
             ],
         )
 
-        chunk = {
+        chunk1 = {
             "candidates": [
                 {
                     "content": {
                         "parts": [
                             {
-                                "text": "Before\n<tool_code>\n{\"todos\": [{\"content\": \"x\"}]}\n</tool_code>\nAfter",
+                                "functionCall": {
+                                    "name": "get_weather",
+                                    "id": "tool-1",
+                                    "partialArgs": [
+                                        {
+                                            "jsonPath": "$.location",
+                                            "stringValue": "San ",
+                                        }
+                                    ],
+                                    "willContinue": True,
+                                }
                             }
                         ]
                     }
                 }
             ]
         }
+        chunk2 = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "get_weather",
+                                    "id": "tool-1",
+                                    "partialArgs": [
+                                        {
+                                            "jsonPath": "$.location",
+                                            "stringValue": "Francisco",
+                                        }
+                                    ],
+                                    "willContinue": False,
+                                }
+                            }
+                        ]
+                    },
+                    "finishReason": genai_types.FinishReason.STOP,
+                }
+            ]
+        }
 
         async def gen():
-            yield chunk
+            yield chunk1
+            yield chunk2
 
         events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
-        block_starts = _extract_event_payloads(events, "content_block_start")
-        tool_blocks = [b for b in block_starts if b["content_block"]["type"] == "tool_use"]
-        self.assertEqual(len(tool_blocks), 1)
-        self.assertEqual(tool_blocks[0]["content_block"]["name"], "TodoWrite")
-
         deltas = _extract_event_payloads(events, "content_block_delta")
         input_deltas = [d for d in deltas if d["delta"]["type"] == "input_json_delta"]
         self.assertTrue(input_deltas)
+        self.assertIn("San Francisco", input_deltas[-1]["delta"]["partial_json"])
 
 
 if __name__ == "__main__":

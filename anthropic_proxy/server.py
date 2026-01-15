@@ -480,7 +480,9 @@ async def create_message(raw_request: Request):
 
             hooked_generator = hook_streaming_response(
                 convert_gemini_streaming_response_to_anthropic(
-                    provider_generator, request, model_id
+                    provider_generator,
+                    request,
+                    model_id,
                 ),
                 request,
                 model_id,

@@ -23,4 +23,4 @@ def build_response_with_parts(
     content = genai_types.Content(parts=parts)
     candidate = genai_types.Candidate(content=content, finishReason=finish_reason)
     response = genai_types.GenerateContentResponse(candidates=[candidate])
-    return response.model_dump(exclude_none=True)
+    return response.model_dump(exclude_none=True, by_alias=True)

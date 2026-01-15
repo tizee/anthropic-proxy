@@ -45,6 +45,17 @@ def _append_description_hint(description: str | None, hint: str) -> str:
     return hint
 
 
+def _normalize_schema_type(schema_type: Any) -> Any:
+    if isinstance(schema_type, str):
+        return schema_type.lower()
+    if isinstance(schema_type, list):
+        return [
+            item.lower() if isinstance(item, str) else item
+            for item in schema_type
+        ]
+    return schema_type
+
+
 def _sanitize_schema(schema: Any) -> Any:
     if schema is None:
         return None
@@ -55,7 +66,7 @@ def _sanitize_schema(schema: Any) -> Any:
     if not isinstance(schema, dict):
         return schema
 
-    schema_type = schema.get("type")
+    schema_type = _normalize_schema_type(schema.get("type"))
     cleaned: dict[str, Any] = {}
 
     base_description = schema.get("description")
@@ -64,6 +75,10 @@ def _sanitize_schema(schema: Any) -> Any:
 
     for key, value in schema.items():
         if key == "description":
+            continue
+
+        if key == "type":
+            cleaned["type"] = schema_type
             continue
 
         if key in UNSUPPORTED_CONSTRAINTS:

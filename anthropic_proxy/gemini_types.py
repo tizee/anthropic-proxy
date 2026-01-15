@@ -20,8 +20,8 @@ class GeminiFunctionCall(BaseModel):
     id: str | None = None
     name: str | None = None
     args: dict[str, Any] | None = None
-    partial_args: list[Any] | None = None
-    will_continue: bool | None = None
+    partialArgs: list[Any] | None = None
+    willContinue: bool | None = None
 
     @field_validator("args", mode="before")
     @classmethod
@@ -151,31 +151,21 @@ def _coerce_args(value: Any) -> dict[str, Any]:
 
 
 def _normalize_part(part: dict[str, Any]) -> dict[str, Any]:
-    if "function_call" in part and "functionCall" not in part:
-        part["functionCall"] = part.pop("function_call")
-    if "thought_signature" in part and "thoughtSignature" not in part:
-        part["thoughtSignature"] = part.pop("thought_signature")
+    # Expect Vertex API camelCase field names in streaming responses.
 
     call = part.get("functionCall")
     if isinstance(call, dict):
         args = _coerce_args(call.get("args"))
         call["args"] = args
-        if call.get("partialArgs") is None and "partial_args" in call:
-            call["partialArgs"] = call.pop("partial_args")
-        if call.get("willContinue") is None and "will_continue" in call:
-            call["willContinue"] = call.pop("will_continue")
 
     response = part.get("functionResponse")
     if isinstance(response, dict):
-        if response.get("willContinue") is None and "will_continue" in response:
-            response["willContinue"] = response.pop("will_continue")
+        pass
 
     return part
 
 
 def _normalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
-    if "finish_reason" in candidate and "finishReason" not in candidate:
-        candidate["finishReason"] = candidate.pop("finish_reason")
     finish_reason = candidate.get("finishReason")
     candidate["finishReason"] = _coerce_enum(finish_reason)
 
@@ -190,63 +180,14 @@ def _normalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return candidate
 
 
-def _append_function_calls(payload: dict[str, Any], calls: list[Any]) -> None:
-    parts: list[dict[str, Any]] = []
-    for call in calls:
-        if not isinstance(call, dict):
-            continue
-        args = _coerce_args(call.get("args"))
-        function_call: dict[str, Any] = {
-            "name": call.get("name", ""),
-            "args": args,
-        }
-        if call.get("id"):
-            function_call["id"] = call["id"]
-        parts.append({"functionCall": function_call})
-
-    if not parts:
-        return
-
-    candidates = payload.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        payload["candidates"] = [{"content": {"parts": parts}}]
-        return
-
-    candidate = candidates[0]
-    content = candidate.get("content")
-    if not isinstance(content, dict):
-        content = {}
-        candidate["content"] = content
-    existing_parts = content.get("parts")
-    if not isinstance(existing_parts, list):
-        existing_parts = []
-        content["parts"] = existing_parts
-    existing_parts.extend(parts)
-
-
 def normalize_gemini_response(payload: dict[str, Any]) -> dict[str, Any]:
-    calls = payload.get("functionCalls") or payload.get("function_calls")
-    if isinstance(calls, list):
-        _append_function_calls(payload, calls)
-
+    # Vertex AI response format is camelCase; we only normalize enum values and args types.
     candidates = payload.get("candidates")
     if isinstance(candidates, list):
         payload["candidates"] = [
             _normalize_candidate(candidate) if isinstance(candidate, dict) else candidate
             for candidate in candidates
         ]
-
-    if "usage_metadata" in payload and "usageMetadata" not in payload:
-        payload["usageMetadata"] = payload.pop("usage_metadata")
-
-    usage_metadata = payload.get("usageMetadata")
-    if isinstance(usage_metadata, dict):
-        if "candidates_token_count" in usage_metadata and "candidatesTokenCount" not in usage_metadata:
-            usage_metadata["candidatesTokenCount"] = usage_metadata.pop("candidates_token_count")
-        if "prompt_token_count" in usage_metadata and "promptTokenCount" not in usage_metadata:
-            usage_metadata["promptTokenCount"] = usage_metadata.pop("prompt_token_count")
-        if "total_token_count" in usage_metadata and "totalTokenCount" not in usage_metadata:
-            usage_metadata["totalTokenCount"] = usage_metadata.pop("total_token_count")
 
     return payload
 
