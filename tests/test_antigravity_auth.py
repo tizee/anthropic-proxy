@@ -1,4 +1,5 @@
 import unittest
+from contextlib import asynccontextmanager
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
 import sys
@@ -10,9 +11,32 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from anthropic_proxy.antigravity import (
     AntigravityAuth,
     ANTIGRAVITY_ENDPOINT,
+    ANTIGRAVITY_ENDPOINTS,
+    ANTIGRAVITY_THINKING_HEADER,
     handle_antigravity_request,
 )
 from anthropic_proxy.types import ClaudeMessage, ClaudeMessagesRequest
+
+
+class FakeStreamResponse:
+    def __init__(self, status_code=200, lines=None, body=b"", reason="OK"):
+        self.status_code = status_code
+        self.reason_phrase = reason
+        self._lines = lines or []
+        self._body = body
+        self.headers = {}
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self):
+        return self._body
+
+
+@asynccontextmanager
+async def stream_context(response):
+    yield response
 
 
 class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
@@ -212,8 +236,8 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         mock_thread.return_value.start.assert_called()
 
     @patch("anthropic_proxy.antigravity.antigravity_auth")
-    @patch("anthropic_proxy.antigravity.stream_gemini_sdk_request")
-    async def test_handle_antigravity_request_requires_project(self, mock_stream, mock_auth):
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_handle_antigravity_request_requires_project(self, mock_client, mock_auth):
         mock_auth.get_access_token = AsyncMock(return_value="token")
         mock_auth.get_project_id = MagicMock(return_value=None)
         mock_auth.ensure_project_context = AsyncMock()
@@ -230,7 +254,119 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
             await handle_antigravity_request(request, "claude-sonnet-4-5").__anext__()
 
         self.assertEqual(cm.exception.status_code, 400)
-        mock_stream.assert_not_called()
+        mock_client.assert_not_called()
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_handle_antigravity_request_fallback_endpoints(self, mock_client, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value="project-1")
+
+        error_response = FakeStreamResponse(
+            status_code=503,
+            body=b"error",
+            reason="Service Unavailable",
+        )
+        ok_response = FakeStreamResponse(
+            status_code=200,
+            lines=['data: {"response":{"candidates":[]}}'],
+        )
+
+        mock_http_client = MagicMock()
+        mock_http_client.stream.side_effect = [
+            stream_context(error_response),
+            stream_context(ok_response),
+        ]
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        request = ClaudeMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1,
+            messages=[ClaudeMessage(role="user", content="hi")],
+        )
+
+        gen = handle_antigravity_request(
+            request,
+            "antigravity/claude-sonnet-4-5",
+            model_name="claude-sonnet-4-5",
+        )
+        chunk = await gen.__anext__()
+
+        self.assertIn("candidates", chunk)
+        self.assertEqual(mock_http_client.stream.call_count, 2)
+        first_url = mock_http_client.stream.call_args_list[0][0][1]
+        second_url = mock_http_client.stream.call_args_list[1][0][1]
+        self.assertTrue(first_url.startswith(ANTIGRAVITY_ENDPOINTS[0]))
+        self.assertTrue(second_url.startswith(ANTIGRAVITY_ENDPOINTS[1]))
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_antigravity_thinking_header_and_config(self, mock_client, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value="project-1")
+
+        ok_response = FakeStreamResponse(
+            status_code=200,
+            lines=['data: {"response":{"candidates":[]}}'],
+        )
+
+        mock_http_client = MagicMock()
+        mock_http_client.stream.return_value = stream_context(ok_response)
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        request = ClaudeMessagesRequest(
+            model="claude-sonnet-4-5-thinking",
+            max_tokens=1,
+            messages=[ClaudeMessage(role="user", content="hi")],
+        )
+
+        gen = handle_antigravity_request(
+            request,
+            "antigravity/claude-sonnet-4-5-thinking",
+            model_name="claude-sonnet-4-5-thinking",
+        )
+        await gen.__anext__()
+
+        call_kwargs = mock_http_client.stream.call_args.kwargs
+        headers = call_kwargs["headers"]
+        payload = call_kwargs["json"]
+        thinking_config = payload["request"]["generationConfig"]["thinkingConfig"]
+
+        self.assertEqual(headers.get("anthropic-beta"), ANTIGRAVITY_THINKING_HEADER)
+        self.assertEqual(headers.get("Accept"), "text/event-stream")
+        self.assertIn("include_thoughts", thinking_config)
+        self.assertIn("thinking_budget", thinking_config)
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_antigravity_image_model_skips_identity(self, mock_client, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value="project-1")
+
+        ok_response = FakeStreamResponse(
+            status_code=200,
+            lines=['data: {"response":{"candidates":[]}}'],
+        )
+
+        mock_http_client = MagicMock()
+        mock_http_client.stream.return_value = stream_context(ok_response)
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        request = ClaudeMessagesRequest(
+            model="gemini-3-pro-image",
+            max_tokens=1,
+            messages=[ClaudeMessage(role="user", content="hi")],
+        )
+
+        gen = handle_antigravity_request(
+            request,
+            "antigravity/gemini-3-pro-image",
+            model_name="gemini-3-pro-image",
+        )
+        await gen.__anext__()
+
+        payload = mock_http_client.stream.call_args.kwargs["json"]
+        self.assertNotIn("systemInstruction", payload["request"])
 
 
 if __name__ == "__main__":

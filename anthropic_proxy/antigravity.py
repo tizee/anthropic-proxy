@@ -3,6 +3,7 @@ Antigravity (Google Internal) authentication and request handling.
 Handles authentication and request proxying for Antigravity API.
 """
 
+import json
 import logging
 import secrets
 from collections.abc import AsyncGenerator
@@ -12,7 +13,8 @@ import httpx
 from fastapi import HTTPException
 
 from .auth_provider import OAuthPKCEAuth, OAuthProviderConfig
-from .gemini_sdk import stream_gemini_sdk_request
+from .gemini_converter import anthropic_to_gemini_request
+from .gemini_types import parse_gemini_response
 from .types import ClaudeMessagesRequest
 
 logger = logging.getLogger(__name__)
@@ -26,9 +28,15 @@ ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Endpoints
 ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.sandbox.googleapis.com"
+ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com"
 ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com"
+ANTIGRAVITY_ENDPOINTS = [
+    ANTIGRAVITY_ENDPOINT_DAILY,
+    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
+    ANTIGRAVITY_ENDPOINT_PROD,
+]
 # Default to Daily Sandbox as per reference implementation
-ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY
+ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINTS[0]
 
 ANTIGRAVITY_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
@@ -125,6 +133,182 @@ DEFAULT_ANTIGRAVITY_MODELS = {
     },
 }
 
+ANTIGRAVITY_THINKING_HEADER = "interleaved-thinking-2025-05-14"
+
+
+def _is_claude_model(model_name: str) -> bool:
+    return "claude" in model_name.lower()
+
+
+def _is_thinking_model(model_name: str) -> bool:
+    return "thinking" in model_name.lower()
+
+
+def _infer_thinking_budget(model_name: str) -> int | None:
+    if not _is_thinking_model(model_name):
+        return None
+    lower = model_name.lower()
+    if "-low" in lower:
+        return 8192
+    if "-high" in lower:
+        return 32768
+    if "-medium" in lower:
+        return 16384
+    return 16384
+
+
+def _is_image_model(model_name: str) -> bool:
+    return "image" in model_name.lower()
+
+
+def _ensure_system_instruction(body: dict[str, Any], identity: str, inject_identity: bool) -> None:
+    system_instruction = body.get("systemInstruction")
+    if system_instruction is None:
+        if not inject_identity:
+            return
+        system_instruction = {"parts": []}
+        body["systemInstruction"] = system_instruction
+
+    if not isinstance(system_instruction, dict):
+        system_instruction = {"parts": []}
+        body["systemInstruction"] = system_instruction
+
+    parts = system_instruction.get("parts")
+    if not isinstance(parts, list):
+        parts = []
+        system_instruction["parts"] = parts
+
+    if inject_identity:
+        already_present = any(
+            isinstance(part, dict)
+            and isinstance(part.get("text"), str)
+            and "You are Antigravity" in part.get("text", "")
+            for part in parts
+        )
+        if not already_present:
+            parts.insert(0, {"text": identity})
+
+    system_instruction["role"] = "user"
+
+
+def _extract_thinking_budget(request: ClaudeMessagesRequest, model_name: str) -> int | None:
+    if request.thinking and request.thinking.type == "enabled":
+        if request.thinking.budget_tokens is not None:
+            return request.thinking.budget_tokens
+    return _infer_thinking_budget(model_name)
+
+
+def _build_antigravity_request(
+    request: ClaudeMessagesRequest,
+    model_name: str,
+    session_id: str,
+) -> tuple[dict[str, Any], bool]:
+    body = anthropic_to_gemini_request(
+        request,
+        model_name,
+        is_antigravity=True,
+        system_prefix=None,
+        session_id=session_id,
+    )
+
+    is_claude = _is_claude_model(model_name)
+    is_thinking = _is_thinking_model(model_name)
+    thinking_budget = _extract_thinking_budget(request, model_name)
+
+    if is_claude and is_thinking and thinking_budget:
+        generation_config = body.get("generationConfig") or {}
+        generation_config["thinkingConfig"] = {
+            "include_thoughts": True,
+            "thinking_budget": thinking_budget,
+        }
+        max_tokens = generation_config.get(
+            "maxOutputTokens",
+            generation_config.get("max_output_tokens", 0),
+        )
+        if max_tokens <= thinking_budget:
+            generation_config["maxOutputTokens"] = thinking_budget + 8192
+        body["generationConfig"] = generation_config
+
+    inject_identity = not _is_image_model(model_name)
+    _ensure_system_instruction(
+        body,
+        ANTIGRAVITY_SYSTEM_INSTRUCTION,
+        inject_identity,
+    )
+
+    return body, bool(is_claude and is_thinking and thinking_budget)
+
+
+async def _stream_antigravity_internal(
+    *,
+    envelope: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float = 60.0,
+) -> AsyncGenerator[dict[str, Any], None]:
+    last_error = None
+    async with httpx.AsyncClient() as http_client:
+        for endpoint in ANTIGRAVITY_ENDPOINTS:
+            url = f"{endpoint}/v1internal:streamGenerateContent"
+            try:
+                async with http_client.stream(
+                    "POST",
+                    url,
+                    headers=headers,
+                    params={"alt": "sse"},
+                    json=envelope,
+                    timeout=timeout,
+                ) as response:
+                    if response.status_code >= 400:
+                        body_bytes = await response.aread()
+                        body_text = body_bytes.decode("utf-8", errors="replace")
+                        detail = f"{response.status_code} {response.reason_phrase}"
+                        if body_text:
+                            detail = f"{detail}: {body_text[:1000]}"
+
+                        if response.status_code in {429, 500, 503, 529} or response.status_code >= 500:
+                            logger.warning(
+                                "Antigravity endpoint %s returned %s; trying fallback.",
+                                endpoint,
+                                detail,
+                            )
+                            last_error = detail
+                            continue
+
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Antigravity error: {detail}",
+                        )
+
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        data = line[len("data:") :].strip() if line.startswith("data:") else line.strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        logger.debug("Antigravity raw chunk: %s", data[:1000])
+                        try:
+                            payload = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload, dict) and "response" in payload:
+                            payload = payload["response"]
+                        if not isinstance(payload, dict):
+                            continue
+                        yield parse_gemini_response(payload)
+                    return
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "Antigravity endpoint %s failed: %s",
+                    endpoint,
+                    last_error,
+                )
+                continue
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Antigravity request failed after fallbacks: {last_error or 'unknown error'}",
+    )
 def _extract_session_id(request: ClaudeMessagesRequest) -> str | None:
     metadata = request.metadata
     if not isinstance(metadata, dict):
@@ -288,23 +472,39 @@ async def handle_antigravity_request(
             )
 
     session_id = _extract_session_id(request)
+    if not session_id:
+        session_id = f"antigravity-{secrets.token_hex(8)}"
+        if request.metadata is None or not isinstance(request.metadata, dict):
+            request.metadata = {}
+        request.metadata.setdefault("session_id", session_id)
 
     target_model = model_name or model_id
+    body, needs_thinking_header = _build_antigravity_request(
+        request,
+        target_model,
+        session_id,
+    )
 
-    async for chunk in stream_gemini_sdk_request(
-        request=request,
-        model_id=target_model,
-        access_token=access_token,
-        project_id=project_id,
-        base_url=ANTIGRAVITY_ENDPOINT,
-        extra_headers=ANTIGRAVITY_HEADERS,
-        is_antigravity=True,
-        system_prefix=ANTIGRAVITY_SYSTEM_INSTRUCTION,
-        request_envelope_extra={
-            "userAgent": "antigravity",
-            "requestType": "agent",
-            "requestId": f"agent-{secrets.token_hex(8)}",
-        },
-        session_id=session_id,
+    envelope = {
+        "project": project_id,
+        "model": target_model,
+        "request": body,
+        "userAgent": "antigravity",
+        "requestType": "agent",
+        "requestId": f"agent-{secrets.token_hex(8)}",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        **ANTIGRAVITY_HEADERS,
+    }
+    if needs_thinking_header:
+        headers["anthropic-beta"] = ANTIGRAVITY_THINKING_HEADER
+
+    async for chunk in _stream_antigravity_internal(
+        envelope=envelope,
+        headers=headers,
     ):
         yield chunk
