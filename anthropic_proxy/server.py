@@ -407,7 +407,7 @@ async def handle_direct_claude_request(
         ) from e
 
 
-@app.post("/v1/messages")
+@app.post("/anthropic/v1/messages")
 async def create_message(raw_request: Request):
     try:
         # Extract API key from request header (passed by ccproxy)
@@ -1110,7 +1110,7 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
         raise HTTPException(status_code=status_code, detail=error_message) from e
 
 
-@app.post("/v1/messages/count_tokens")
+@app.post("/anthropic/v1/messages/count_tokens")
 async def count_tokens(raw_request: Request):
     fallback_response = ClaudeTokenCountResponse(input_tokens=1000)
     try:
@@ -1144,13 +1144,13 @@ async def count_tokens(raw_request: Request):
         return fallback_response
 
 
-@app.get("/v1/stats")
+@app.get("/anthropic/v1/stats")
 async def get_stats():
     """Returns the comprehensive token usage statistics for the current session."""
     return global_usage_stats.get_session_summary()
 
 
-@app.post("/v1/messages/test_conversion")
+@app.post("/anthropic/v1/messages/test_conversion")
 async def test_message_conversion(raw_request: Request):
     """
     Test endpoint for direct message format conversion.
