@@ -30,28 +30,30 @@ ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
 # Antigravity Endpoints
 # ============================================================================
 #
-# Antigravity has three types of endpoints, each requiring different access:
+# Antigravity has three endpoints for different user types:
 #
-# 1. PROD Endpoint (Subscription-based):
+# 1. PROD Endpoint (Subscription):
 #    - cloudcode-pa.googleapis.com
-#    - For individual Gemini Code Assist subscribers
+#    - For: Individual Gemini Code Assist subscribers
 #    - Requires: Personal Gemini Code Assist subscription
-#    - Auth: OAuth with Gemini Code Assist scopes
+#    - Error on unauthorized: 429 Too Many Requests (quota exhausted)
 #
-# 2. DAILY Sandbox Endpoint (Enterprise/Commercial):
+# 2. DAILY Sandbox Endpoint (Free/Enterprise):
 #    - daily-cloudcode-pa.sandbox.googleapis.com
-#    - For business users with Cloud License
+#    - For: Enterprise users with Cloud License
 #    - Requires: Google Cloud license for enterprise
-#    - Returns 403 "lack a Gemini Code Assist license" for personal accounts
+#    - Error on unauthorized: 403 "lack a Gemini Code Assist license"
 #
-# 3. AUTOPUSH Sandbox Endpoint (Enterprise/Commercial):
+# 3. AUTOPUSH Sandbox Endpoint (Commercial/Testing):
 #    - autopush-cloudcode-pa.sandbox.googleapis.com
-#    - For business users with Cloud License (staging/testing)
+#    - For: Enterprise users in testing/staging environment
 #    - Requires: Google Cloud license for enterprise
-#    - Returns 403 "lack a Gemini Code Assist license" for personal accounts
+#    - Error on unauthorized: 403 "lack a Gemini Code Assist license"
 #
-# IMPORTANT: For personal Gemini Code Assist subscribers, ONLY the PROD endpoint works.
-# The sandbox endpoints are for enterprise customers with Cloud Licenses.
+# Endpoint Priority Strategy:
+# - Personal subscribers: PROD works, sandboxes return 403
+# - Enterprise users: PROD returns 429, DAILY/AUTOPUSH work
+# - Auto-fallback ensures all user types can connect
 #
 # ============================================================================
 
@@ -59,11 +61,12 @@ ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com"
 ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.sandbox.googleapis.com"
 ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com"
 
-# Primary request endpoints - PROD first for personal subscribers
+# Primary request endpoints with fallback support
+# Priority: Subscription → Free/Enterprise → Commercial/Testing
 ANTIGRAVITY_ENDPOINTS = [
-    ANTIGRAVITY_ENDPOINT_PROD,      # Personal Gemini Code Assist subscription
-    ANTIGRAVITY_ENDPOINT_DAILY,     # Fallback: Enterprise sandbox (may return 403 for personal accounts)
-    ANTIGRAVITY_ENDPOINT_AUTOPUSH,  # Fallback: Enterprise sandbox (may return 403 for personal accounts)
+    ANTIGRAVITY_ENDPOINT_PROD,      # Subscription: Works for personal subscribers
+    ANTIGRAVITY_ENDPOINT_DAILY,     # Free/Enterprise: Works for enterprise users
+    ANTIGRAVITY_ENDPOINT_AUTOPUSH,  # Commercial/Testing: Enterprise testing environment
 ]
 
 # Endpoints for quota fetching
@@ -79,7 +82,7 @@ ANTIGRAVITY_LOAD_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_AUTOPUSH,
 ]
 
-# Default to PROD endpoint (subscription-based)
+# Default to PROD endpoint (subscription-based, with fallback for enterprise users)
 ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINTS[0]
 
 ANTIGRAVITY_SCOPES = [
@@ -103,9 +106,12 @@ ANTIGRAVITY_QUOTA_HEADERS = {
 }
 
 # Reference: Antigravity system instruction required by gateway.
+# This identity is REQUIRED by the Antigravity API - requests without it will be rejected.
 ANTIGRAVITY_SYSTEM_INSTRUCTION = (
-    "You are Antigravity, a powerful agentic AI coding assistant designed by the Google DeepMind team working on Advanced Agentic Coding.\n"
-    "You are pair programming with a USER to solve their coding task.\n"
+    "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n"
+    "You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n"
+    "**Absolute paths only**\n"
+    "**Proactiveness**\n"
 )
 
 # Default models (subject to upstream changes).

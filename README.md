@@ -12,7 +12,8 @@ A proxy server that enables Claude Code to work with multiple model providers th
 - kimi official supports Anthropic API https://api.moonshot.cn/anthropic
 - deepseek supports Anthropic https://api-docs.deepseek.com/guides/anthropic_api
 - Zhipu GLM supports Anthropic API https://open.bigmodel.cn/api/anthropic
-- MiniMax supports Anthropic API https://api.minimax.io/anthropic
+- MiniMax supports Anthropic API: https://api.minimax.io/anthropic (international users), https://api.minimaxi.com/anthropic (China users) - reference: https://platform.minimax.io/docs/api-reference/text-anthropic-api
+- VolcEngine 方舟 Coding Plan supports Anthropic API https://ark.cn-beijing.volces.com/api/coding (requires Coding Plan subscription) - reference: https://www.volcengine.com/docs/82379/1928262?lang=zh
 
 This allows you to use Claude Code with OpenAI-compatible models, native Claude API endpoints, and Gemini subscriptions. For third-party models to support Claude Code image files (URL/base64), they must natively support multimodal image understanding.
 
@@ -48,7 +49,8 @@ The following providers offer native Anthropic API compatibility, allowing Anthr
 | **Moonshot AI (Kimi)** | `https://api.moonshot.cn/anthropic` | kimi-k2-0711-preview, kimi-k2-0711-chat |
 | **DeepSeek** | `https://api.deepseek.com/anthropic` | deepseek-chat, deepseek-reasoner |
 | **Zhipu AI (GLM)** | `https://open.bigmodel.cn/api/anthropic` | glm-4.7, glm-4.6 |
-| **MiniMax** | `https://api.minimax.io/anthropic` | MiniMax-M2.1 |
+| **MiniMax** | `https://api.minimax.io/anthropic` (international) / `https://api.minimaxi.com/anthropic` (China) | MiniMax-M2.1 |
+| **VolcEngine (方舟 Coding Plan)** | `https://ark.cn-beijing.volces.com/api/coding` | ark-code-latest (requires Coding Plan subscription) |
 
 
 ### Configuration Example
@@ -60,6 +62,14 @@ For providers with native Anthropic support, configure as Anthropic format:
   model_name: kimi-k2-0711-preview
   api_base: https://api.moonshot.cn/anthropic
   format: anthropic
+  max_tokens: 16k
+  max_input_tokens: 200k
+
+- model_id: volcengine-ark-code
+  model_name: ark-code-latest
+  api_base: https://ark.cn-beijing.volces.com/api/coding
+  format: anthropic
+  # Note: This requires a VolcEngine Coding Plan subscription
   max_tokens: 16k
   max_input_tokens: 200k
 ```
