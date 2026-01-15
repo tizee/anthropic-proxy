@@ -353,10 +353,33 @@ class GeminiStreamingConverter:
                     yield self._send_content_block_delta_event("text_delta", text)
 
         if finish_reason:
-            if finish_reason == "STOP":
+            normalized_finish = (
+                finish_reason[len("FINISH_REASON_") :]
+                if finish_reason.startswith("FINISH_REASON_")
+                else finish_reason
+            )
+            error_reasons = {
+                "SAFETY",
+                "RECITATION",
+                "BLOCKLIST",
+                "PROHIBITED_CONTENT",
+                "IMAGE_PROHIBITED_CONTENT",
+                "IMAGE_SAFETY",
+                "IMAGE_RECITATION",
+                "IMAGE_OTHER",
+                "NO_IMAGE",
+                "SPII",
+                "LANGUAGE",
+                "MALFORMED_FUNCTION_CALL",
+                "OTHER",
+                "UNSPECIFIED",
+            }
+            if normalized_finish == "STOP":
                 stop_reason = "end_turn"
-            elif finish_reason == "MAX_TOKENS":
+            elif normalized_finish == "MAX_TOKENS":
                 stop_reason = "max_tokens"
+            elif normalized_finish in error_reasons:
+                stop_reason = "refusal"
             else:
                 stop_reason = "tool_use" if any(
                     isinstance(p, dict) and p.get("functionCall")

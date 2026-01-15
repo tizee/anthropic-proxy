@@ -128,6 +128,26 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(message_deltas)
         self.assertEqual(message_deltas[-1]["usage"]["output_tokens"], 7)
 
+    async def test_streaming_maps_error_finish_reason_to_refusal(self):
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=16,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        chunk = build_response_with_parts(
+            parts=[genai_types.Part(text="blocked")],
+            finish_reason=genai_types.FinishReason.SAFETY,
+        )
+
+        async def gen():
+            yield chunk
+
+        events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
+        message_deltas = _extract_event_payloads(events, "message_delta")
+        self.assertTrue(message_deltas)
+        self.assertEqual(message_deltas[-1]["delta"]["stop_reason"], "refusal")
+
     async def test_streaming_caches_thought_signature_for_tool(self):
         clear_all_cache()
         request = ClaudeMessagesRequest(
