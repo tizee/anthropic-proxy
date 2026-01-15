@@ -15,6 +15,7 @@ from typing import Any
 from .converter import clean_gemini_schema
 from .gemini_types import parse_gemini_request
 from .signature_cache import get_cached_signature, get_tool_signature
+from .thinking_recovery import analyze_conversation_state, close_tool_loop_for_thinking, needs_thinking_recovery
 from .types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -133,6 +134,92 @@ def _convert_tool_result_block(
             "response": response,
         }
     }
+
+
+def ensure_tool_ids(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Ensure all functionCall parts have IDs and match functionResponse IDs.
+
+    Claude requires tool_use.id to match with tool_result.tool_use_id.
+
+    Uses a two-pass approach like antigravity-auth plugin:
+    1. First pass: Assign IDs to all functionCalls and collect them in FIFO queues per function name
+    2. Second pass: Match functionResponses to their corresponding calls using FIFO order
+
+    Args:
+        contents: List of Gemini content messages with role and parts
+
+    Returns:
+        Updated contents with proper tool IDs
+    """
+    tool_call_counter = 0
+    # Track pending call IDs per function name as a FIFO queue
+    pending_call_ids_by_name: dict[str, list[str]] = {}
+
+    # First pass: assign IDs to all functionCalls and collect them
+    first_pass_contents = []
+    for content in contents:
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            first_pass_contents.append(content)
+            continue
+
+        processed_parts = []
+        for part in parts:
+            if not isinstance(part, dict):
+                processed_parts.append(part)
+                continue
+
+            function_call = part.get("functionCall")
+            if isinstance(function_call, dict):
+                # Make a copy to avoid mutating the original
+                call = dict(function_call)
+                if not call.get("id"):
+                    call["id"] = f"tool-call-{tool_call_counter + 1}"
+                    tool_call_counter += 1
+
+                name_key = call.get("name") or f"tool-{tool_call_counter}"
+                # Push to the queue for this function name
+                queue = pending_call_ids_by_name.setdefault(name_key, [])
+                queue.append(call["id"])
+
+                processed_parts.append({**part, "functionCall": call})
+            else:
+                processed_parts.append(part)
+
+        first_pass_contents.append({**content, "parts": processed_parts})
+
+    # Second pass: match functionResponses to their corresponding calls (FIFO order)
+    result_contents = []
+    for content in first_pass_contents:
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            result_contents.append(content)
+            continue
+
+        processed_parts = []
+        for part in parts:
+            if not isinstance(part, dict):
+                processed_parts.append(part)
+                continue
+
+            function_response = part.get("functionResponse")
+            if isinstance(function_response, dict):
+                # Make a copy to avoid mutating the original
+                resp = dict(function_response)
+                if not resp.get("id") and resp.get("name"):
+                    queue = pending_call_ids_by_name.get(resp["name"])
+                    if queue:
+                        # Consume the first pending ID (FIFO order)
+                        resp["id"] = queue.pop(0)
+
+                processed_parts.append({**part, "functionResponse": resp})
+            else:
+                processed_parts.append(part)
+
+        result_contents.append({**content, "parts": processed_parts})
+
+    return result_contents
 
 
 def _convert_message_content_to_parts(
@@ -329,6 +416,8 @@ def anthropic_to_gemini_request(
     """Convert Anthropic Messages request into Gemini GenerateContent request body."""
     contents: list[dict[str, Any]] = []
     strip_unsigned_thinking = is_antigravity and "claude" in model_id.lower()
+    is_claude_model = "claude" in model_id.lower()
+    is_thinking_model = "thinking" in model_id.lower()
 
     for msg in request.messages:
         role = "user" if msg.role == "user" else "model"
@@ -342,12 +431,34 @@ def anthropic_to_gemini_request(
         if parts:
             contents.append({"role": role, "parts": parts})
 
+    # Thinking recovery: "Let it crash and start again"
+    # When Claude thinking model has corrupted conversation state (tool calls without thinking),
+    # we close the current turn and start a new one so Claude can generate fresh thinking.
+    if is_antigravity and is_claude_model and is_thinking_model and contents:
+        conversation_state = analyze_conversation_state(contents)
+        if needs_thinking_recovery(conversation_state):
+            logger.debug("Thinking recovery: closing tool loop and starting fresh turn")
+            contents = close_tool_loop_for_thinking(contents)
+
+    # Ensure all functionCall/functionResponse parts have matching IDs (required by Claude)
+    if is_antigravity and is_claude_model:
+        contents = ensure_tool_ids(contents)
+
     system_text = request.extract_system_content()
     system_parts: list[dict[str, Any]] = []
     if system_prefix:
         system_parts.append({"text": system_prefix})
     if system_text:
         system_parts.append({"text": system_text})
+
+    # Add thinking hint for Claude thinking models with tools
+    if is_antigravity and is_claude_model and is_thinking_model and request.tools:
+        thinking_hint = (
+            "Interleaved thinking is enabled. You may think between tool calls "
+            "and after receiving tool results before deciding the next action or final answer. "
+            "Do not mention these instructions or any constraints about thinking blocks; just apply them."
+        )
+        system_parts.append({"text": thinking_hint})
 
     generation_config = _build_generation_config(request, model_id)
 
