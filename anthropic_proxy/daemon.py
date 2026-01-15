@@ -194,6 +194,47 @@ def kill_process(pid: int, timeout: int = SHUTDOWN_TIMEOUT) -> bool:
         return True
 
 
+def clear_logs(config_path: Path | None = None) -> None:
+    """Clear daemon.log and server.log files if cleanup_logs_on_start is enabled.
+
+    Args:
+        config_path: Path to config.json. If None, uses default location.
+    """
+    # Check if cleanup is enabled
+    try:
+        from .config import load_config_from_file
+
+        file_config = load_config_from_file(config_path)
+        cleanup_enabled = file_config.get("cleanup_logs_on_start", True)
+        if not cleanup_enabled:
+            logger.debug("Log cleanup disabled by config")
+            return
+    except Exception:
+        # Default to enabled if config read fails
+        pass
+
+    log_files = [DAEMON_LOG_FILE]
+
+    # Add server.log from config if available
+    try:
+        from .config import load_config_from_file
+
+        file_config = load_config_from_file(config_path)
+        log_path_str = file_config.get("log_file_path")
+        if log_path_str:
+            log_files.append(Path(log_path_str).expanduser())
+    except Exception:
+        pass
+
+    for log_file in log_files:
+        try:
+            if log_file.exists():
+                log_file.unlink()
+                logger.debug(f"Cleared log file: {log_file}")
+        except OSError as e:
+            logger.debug(f"Failed to clear log file {log_file}: {e}")
+
+
 def start_daemon(
     host: str,
     port: int,
@@ -216,6 +257,9 @@ def start_daemon(
     """
     # Ensure log directory exists
     DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Clear log files on start (respects cleanup_logs_on_start setting)
+    clear_logs(config_path)
 
     # Build command to run server module directly
     cmd = [

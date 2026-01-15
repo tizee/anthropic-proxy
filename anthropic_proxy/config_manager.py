@@ -88,6 +88,7 @@ DEFAULT_CONFIG_TEMPLATE = {
     "log_file_path": str(DEFAULT_LOG_DIR / "server.log"),
     "host": ModelDefaults.DEFAULT_HOST,
     "port": ModelDefaults.DEFAULT_PORT,
+    "cleanup_logs_on_start": True,
 }
 
 

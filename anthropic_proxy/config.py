@@ -115,6 +115,9 @@ class Config:
 
         self.log_level = os.environ.get("LOG_LEVEL", file_config.get("log_level", ModelDefaults.DEFAULT_LOG_LEVEL))
 
+        # Log cleanup on start - default to True
+        self.cleanup_logs_on_start = file_config.get("cleanup_logs_on_start", True)
+
         # Custom models configuration file
         # Priority: CUSTOM_MODELS_FILE env var > default location
         self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", str(DEFAULT_MODELS_FILE))
