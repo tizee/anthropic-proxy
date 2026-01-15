@@ -26,24 +26,60 @@ ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback"
 ANTIGRAVITY_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Endpoints
+# ============================================================================
+# Antigravity Endpoints
+# ============================================================================
+#
+# Antigravity has three types of endpoints, each requiring different access:
+#
+# 1. PROD Endpoint (Subscription-based):
+#    - cloudcode-pa.googleapis.com
+#    - For individual Gemini Code Assist subscribers
+#    - Requires: Personal Gemini Code Assist subscription
+#    - Auth: OAuth with Gemini Code Assist scopes
+#
+# 2. DAILY Sandbox Endpoint (Enterprise/Commercial):
+#    - daily-cloudcode-pa.sandbox.googleapis.com
+#    - For business users with Cloud License
+#    - Requires: Google Cloud license for enterprise
+#    - Returns 403 "lack a Gemini Code Assist license" for personal accounts
+#
+# 3. AUTOPUSH Sandbox Endpoint (Enterprise/Commercial):
+#    - autopush-cloudcode-pa.sandbox.googleapis.com
+#    - For business users with Cloud License (staging/testing)
+#    - Requires: Google Cloud license for enterprise
+#    - Returns 403 "lack a Gemini Code Assist license" for personal accounts
+#
+# IMPORTANT: For personal Gemini Code Assist subscribers, ONLY the PROD endpoint works.
+# The sandbox endpoints are for enterprise customers with Cloud Licenses.
+#
+# ============================================================================
+
+ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com"
 ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.sandbox.googleapis.com"
 ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com"
-ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com"
+
+# Primary request endpoints - PROD first for personal subscribers
 ANTIGRAVITY_ENDPOINTS = [
-    ANTIGRAVITY_ENDPOINT_DAILY,
-    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-    ANTIGRAVITY_ENDPOINT_PROD,
+    ANTIGRAVITY_ENDPOINT_PROD,      # Personal Gemini Code Assist subscription
+    ANTIGRAVITY_ENDPOINT_DAILY,     # Fallback: Enterprise sandbox (may return 403 for personal accounts)
+    ANTIGRAVITY_ENDPOINT_AUTOPUSH,  # Fallback: Enterprise sandbox (may return 403 for personal accounts)
 ]
-# Preferred endpoint order for project resolution (prod first).
+
+# Endpoints for quota fetching
+ANTIGRAVITY_QUOTA_ENDPOINTS = [
+    ANTIGRAVITY_ENDPOINT_PROD,
+    ANTIGRAVITY_ENDPOINT_DAILY,
+]
+
+# Preferred endpoint order for project resolution (prod first)
 ANTIGRAVITY_LOAD_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_PROD,
     ANTIGRAVITY_ENDPOINT_DAILY,
     ANTIGRAVITY_ENDPOINT_AUTOPUSH,
 ]
-# Fallback project ID used when managed project resolution fails (opencode behavior).
-ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc"
-# Default to Daily Sandbox as per reference implementation
+
+# Default to PROD endpoint (subscription-based)
 ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINTS[0]
 
 ANTIGRAVITY_SCOPES = [
@@ -58,6 +94,12 @@ ANTIGRAVITY_HEADERS = {
   "User-Agent": "antigravity/1.11.5 windows/amd64",
   "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
   "Client-Metadata": '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}',
+}
+
+ANTIGRAVITY_QUOTA_HEADERS = {
+    "User-Agent": "antigravity",
+    "Content-Type": "application/json",
+    "Accept-Encoding": "gzip",
 }
 
 # Reference: Antigravity system instruction required by gateway.
@@ -216,6 +258,80 @@ def _is_capacity_error(body_text: str) -> bool:
     if not body_text:
         return False
     return "No capacity available" in body_text or "RESOURCE_EXHAUSTED" in body_text
+
+
+async def fetch_antigravity_quota_models(
+    access_token: str,
+    project_id: str,
+    timeout: float = 10.0,
+) -> tuple[dict[str, Any], str]:
+    """Fetch available model quota data using Antigravity OAuth token."""
+    if not project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Antigravity Project ID is missing. Re-login required.",
+        )
+    payload = {"project": project_id}
+    last_error: str | None = None
+
+    async with httpx.AsyncClient() as http_client:
+        for endpoint in ANTIGRAVITY_QUOTA_ENDPOINTS:
+            url = f"{endpoint}/v1internal:fetchAvailableModels"
+            try:
+                response = await http_client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        **ANTIGRAVITY_QUOTA_HEADERS,
+                    },
+                    json=payload,
+                    timeout=timeout,
+                )
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
+                continue
+
+            body_text = response.text
+            if response.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Antigravity quota auth expired. Run anthropic-proxy login --antigravity.",
+                )
+            if response.status_code == 403:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Antigravity quota access forbidden (403). Check subscription or project.",
+                )
+            if not response.is_success:
+                detail = f"{response.status_code} {response.reason_phrase}"
+                if body_text:
+                    detail = f"{detail}: {body_text[:1000]}"
+                if response.status_code == 429 or response.status_code >= 500:
+                    last_error = detail
+                    continue
+                raise HTTPException(status_code=response.status_code, detail=detail)
+
+            if not body_text:
+                raise HTTPException(status_code=502, detail="Antigravity quota response was empty.")
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Antigravity quota response parse failed: {exc}",
+                ) from exc
+
+            if not isinstance(data, dict):
+                raise HTTPException(
+                    status_code=502,
+                    detail="Antigravity quota response format invalid.",
+                )
+            return data, endpoint
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Antigravity quota fetch failed after fallbacks: {last_error or 'unknown error'}",
+    )
 
 
 def _extract_thinking_budget(request: ClaudeMessagesRequest, model_name: str) -> int | None:
@@ -393,27 +509,38 @@ class AntigravityAuth(OAuthPKCEAuth):
         try:
             import asyncio
 
-            asyncio.run(self.ensure_project_context())
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(self.ensure_project_context())
-            else:
-                loop.run_until_complete(self.ensure_project_context())
-        print("Project configuration resolved.")
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                loop.create_task(self.verify_quota_access())
+                return
+
+            project_id = asyncio.run(self.verify_quota_access())
+        except Exception as exc:
+            self._auth_data = {}
+            self._save()
+            print(f"Antigravity login failed: {exc}")
+            raise SystemExit(1) from None
+        print(f"Resolved Antigravity project ID: {project_id}")
 
     def get_project_id(self) -> str | None:
+        stored = self._auth_data.get("project_id")
+        if isinstance(stored, str) and stored:
+            return stored
         _, project_id = self._split_refresh()
         return project_id or None
 
-    async def ensure_project_context(self) -> None:
-        """Resolve and store project ID if missing."""
+    async def ensure_project_context(self, force: bool = False) -> None:
+        """Resolve and store project ID if missing or force refresh."""
         self._load()
         refresh_token, project_id = self._split_refresh()
         if not refresh_token:
             return
 
-        if project_id:
+        if project_id and not force:
             return
 
         access_token = self._auth_data.get("access")
@@ -449,7 +576,8 @@ class AntigravityAuth(OAuthPKCEAuth):
                     data = res.json()
                     found_id = _extract_project_id(data)
                     if found_id:
-                        self._update_refresh_with_project(refresh_token, found_id)
+                        if found_id != project_id or not self._auth_data.get("project_id"):
+                            self._update_refresh_with_project(refresh_token, found_id)
                         return
 
                 req_body["tierId"] = "FREE"
@@ -476,9 +604,22 @@ class AntigravityAuth(OAuthPKCEAuth):
         except Exception as exc:
             logger.error(f"Failed to ensure project context: {exc}")
 
+    async def verify_quota_access(self) -> str:
+        """Ensure project id exists and quota can be fetched."""
+        access_token = await self.get_access_token()
+        await self.ensure_project_context(force=True)
+        project_id = self.get_project_id()
+        if not project_id:
+            raise RuntimeError(
+                "Antigravity Project ID could not be resolved. Re-login required."
+            )
+        await fetch_antigravity_quota_models(access_token, project_id)
+        return project_id
+
     def _update_refresh_with_project(self, token: str, proj: str) -> None:
         new_refresh = f"{token}|{proj}"
         self._auth_data["refresh"] = new_refresh
+        self._auth_data["project_id"] = proj
         self._save()
         logger.info(f"Updated Antigravity project context: {proj}")
 
@@ -502,10 +643,9 @@ async def handle_antigravity_request(
         await antigravity_auth.ensure_project_context()
         project_id = antigravity_auth.get_project_id()
         if not project_id:
-            project_id = ANTIGRAVITY_DEFAULT_PROJECT_ID
-            logger.warning(
-                "Antigravity project ID missing; using default %s",
-                project_id,
+            raise HTTPException(
+                status_code=400,
+                detail="Antigravity Project ID could not be resolved. Re-login required.",
             )
 
     session_id = _extract_session_id(request)

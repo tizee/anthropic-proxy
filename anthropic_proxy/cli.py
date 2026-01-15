@@ -3,6 +3,7 @@ Command-line interface for anthropic-proxy.
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -164,9 +165,75 @@ def _load_model_ids(models_path: Path) -> list[str]:
     return model_ids
 
 
+def _format_quota_model_lines(models: dict) -> list[str]:
+    lines: list[str] = []
+    model_ids = sorted(models.keys())
+    for model_id in model_ids:
+        info = models.get(model_id) or {}
+        if not isinstance(info, dict):
+            info = {}
+        quota = info.get("quotaInfo") or {}
+        if not isinstance(quota, dict):
+            quota = {}
+        remaining = quota.get("remainingFraction")
+        remaining_text = "unknown"
+        if isinstance(remaining, (int, float)):
+            remaining_text = f"{remaining * 100:.0f}%"
+        reset_time = quota.get("resetTime") or "unknown"
+        recommended = " (recommended)" if info.get("recommended") else ""
+        lines.append(
+            f"  - {model_id}: remaining {remaining_text}, reset {reset_time}{recommended}"
+        )
+    return lines
+
+
+def _run_antigravity_test() -> tuple[str, bool, str, dict]:
+    from .antigravity import antigravity_auth, fetch_antigravity_quota_models
+
+    async def _fetch():
+        access_token = await antigravity_auth.get_access_token()
+        project_id = antigravity_auth.get_project_id()
+        await antigravity_auth.ensure_project_context(force=True)
+        project_id = antigravity_auth.get_project_id()
+        if not project_id:
+            raise RuntimeError(
+                "Antigravity Project ID could not be resolved. Re-login required."
+            )
+        data, base_url = await fetch_antigravity_quota_models(access_token, project_id)
+        return project_id, False, base_url, data
+
+    return asyncio.run(_fetch())
+
+
 def cmd_provider(args: argparse.Namespace) -> None:
     """List auth providers or available model IDs."""
     did_output = False
+    provider = getattr(args, "provider", None)
+    run_test = bool(getattr(args, "test", False))
+
+    if run_test:
+        if provider != "antigravity":
+            print(f"{Colors.RED}Provider test requires 'antigravity'.{Colors.RESET}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            project_id, _, base_url, data = _run_antigravity_test()
+        except Exception as exc:
+            print(f"{Colors.RED}Antigravity test failed:{Colors.RESET} {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        print("Antigravity quota test")
+        print(f"Project ID: {project_id}")
+        print(f"Base URL: {base_url}")
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, dict) or not models:
+            print("Models: 0")
+            print("No models returned.")
+        else:
+            recommended_count = sum(1 for info in models.values() if isinstance(info, dict) and info.get("recommended"))
+            print(f"Models: {len(models)} (recommended: {recommended_count})")
+            for line in _format_quota_model_lines(models):
+                print(line)
+        did_output = True
 
     if args.list:
         for line in _provider_status_lines():
@@ -562,7 +629,13 @@ Examples:
 Examples:
   anthropic-proxy provider --list
   anthropic-proxy provider --models
+  anthropic-proxy provider antigravity --test
         """,
+    )
+    provider_parser.add_argument(
+        "provider",
+        nargs="?",
+        help="Provider name (e.g. antigravity) for provider-specific actions",
     )
     provider_parser.add_argument(
         "--list",
@@ -574,6 +647,11 @@ Examples:
         dest="list_models",
         action="store_true",
         help="List available model IDs (custom + provider defaults)",
+    )
+    provider_parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Test provider account/quota (e.g. antigravity)",
     )
     provider_parser.set_defaults(func=cmd_provider)
 
