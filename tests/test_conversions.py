@@ -34,8 +34,8 @@ from anthropic_proxy.types import (
     ClaudeTool,
     generate_unique_id,
 )
-from anthropic_proxy.streaming import AnthropicStreamingConverter
-from anthropic_proxy.openai_converter import (
+from anthropic_proxy.converters import AnthropicStreamingConverter
+from anthropic_proxy.converters import (
     convert_openai_response_to_anthropic,
     parse_function_calls_from_thinking,
 )
@@ -784,7 +784,7 @@ Let me create a new MultiEdit operation with these precise changes for the first
 
     def test_function_call_parsing_with_whitespace(self):
         """Test function call parsing with realistic whitespace/newlines from logs."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         # Test realistic format with newlines and whitespace (like from actual logs)
         thinking_with_whitespace = """I need to update the README to include the MAX_RETRIES environment variable configuration.
@@ -826,7 +826,7 @@ Let me proceed with this edit."""
 
     def test_function_call_parsing_edge_cases(self):
         """Test function call parsing with various edge cases and malformed JSON."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         # Test case 1: Multi-line parameters (the main issue from the bug report)
         multiline_content = """I need to ensure the indentation matches. Looking at the surrounding code, the line is indented with 8 spaces (2 levels
@@ -914,7 +914,7 @@ This should fix the issue."""
 
     def test_function_call_parsing_malformed_recovery(self):
         """Test function call parsing with severe malformations that require regex fallback."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         # Test case 1: Severely malformed JSON that needs regex extraction
         severely_malformed = """I'll use the tool now.<|FunctionCallBegin|>
@@ -960,7 +960,7 @@ Finally this valid one:<|FunctionCallBegin|>[
 
     def test_function_call_parsing_real_world_scenarios(self):
         """Test function call parsing with real-world scenarios that caused issues."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         # Test case 1: Complex file path and multi-line strings (based on actual bug report)
         real_world_1 = """Looking at the code, I need to add proper cleanup for the draggable instance.
@@ -1022,7 +1022,7 @@ These changes should resolve all the issues."""
 
     def test_function_call_parsing_multiple_blocks(self):
         """Test function call parsing with multiple separate tool call blocks in thinking."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         # Test the exact scenario from the user's example
         multiple_blocks_content = """I need to start implementing the fixes for the drag-and-drop issue in monitor.js. Let me work through the todo list
@@ -1100,7 +1100,7 @@ These changes should resolve all the issues."""
 
     def test_function_call_parsing_mixed_single_and_multiple(self):
         """Test parsing with mix of single-call blocks and multi-call blocks."""
-        from anthropic_proxy.openai_converter import parse_function_calls_from_thinking
+        from anthropic_proxy.converters import parse_function_calls_from_thinking
 
         mixed_content = """First, a single call block:
 

@@ -12,11 +12,11 @@ import json
 import logging
 from typing import Any
 
-from .converter import clean_gemini_schema
-from .gemini_types import parse_gemini_request
-from .signature_cache import get_cached_signature, get_tool_signature
-from .thinking_recovery import analyze_conversation_state, close_tool_loop_for_thinking, needs_thinking_recovery
-from .types import (
+from ..gemini_schema_sanitizer import clean_gemini_schema
+from ..gemini_types import parse_gemini_request
+from ..signature_cache import get_cached_signature, get_tool_signature
+from ..thinking_recovery import analyze_conversation_state, close_tool_loop_for_thinking, needs_thinking_recovery
+from ..types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
     ClaudeContentBlockImageURLSource,

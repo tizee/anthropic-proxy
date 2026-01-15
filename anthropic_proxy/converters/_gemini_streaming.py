@@ -9,9 +9,9 @@ from typing import Any, AsyncGenerator
 
 from fastapi import HTTPException
 
-from .gemini_types import parse_gemini_response
-from .signature_cache import cache_signature, cache_tool_signature
-from .types import ClaudeMessagesRequest, generate_unique_id
+from ..gemini_types import parse_gemini_response
+from ..signature_cache import cache_signature, cache_tool_signature
+from ..types import ClaudeMessagesRequest, generate_unique_id
 
 
 def _extract_session_id(request: ClaudeMessagesRequest) -> str | None:

@@ -4,7 +4,7 @@ import unittest
 from google.genai import types as genai_types
 from fastapi import HTTPException
 
-from anthropic_proxy.gemini_streaming import convert_gemini_streaming_response_to_anthropic
+from anthropic_proxy.converters import convert_gemini_streaming_response_to_anthropic
 from anthropic_proxy.signature_cache import clear_all_cache, get_tool_signature
 from anthropic_proxy.types import ClaudeMessagesRequest
 

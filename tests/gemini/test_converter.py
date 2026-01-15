@@ -2,8 +2,8 @@ import unittest
 
 from anthropic_proxy.signature_cache import cache_tool_signature, clear_all_cache
 from anthropic_proxy.types import ClaudeContentBlockToolUse, ClaudeMessage
-from anthropic_proxy.gemini_converter import ensure_tool_ids
-from anthropic_proxy.gemini_converter import anthropic_to_gemini_sdk_params
+from anthropic_proxy.converters import ensure_tool_ids
+from anthropic_proxy.converters import anthropic_to_gemini_sdk_params
 from anthropic_proxy.types import ClaudeMessagesRequest
 
 

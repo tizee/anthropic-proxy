@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from google import genai
 from google.genai import types
 
-from .gemini_converter import anthropic_to_gemini_sdk_params
+from .converters import anthropic_to_gemini_sdk_params
 from .gemini_types import parse_gemini_response
 from .types import ClaudeMessagesRequest
 

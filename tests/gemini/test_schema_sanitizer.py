@@ -1,6 +1,6 @@
 import unittest
 
-from anthropic_proxy.converter import clean_gemini_schema
+from anthropic_proxy.converters import clean_gemini_schema
 
 
 class TestGeminiSchemaSanitizer(unittest.TestCase):

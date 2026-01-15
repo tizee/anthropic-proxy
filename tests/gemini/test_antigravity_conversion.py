@@ -7,7 +7,7 @@ Claude MessagesRequest -> anthropic_to_gemini_request (is_antigravity=True) -> G
 
 import unittest
 
-from anthropic_proxy.gemini_converter import anthropic_to_gemini_request, ensure_tool_ids, _clean_malformed_parts
+from anthropic_proxy.converters import anthropic_to_gemini_request, ensure_tool_ids, _clean_malformed_parts
 from anthropic_proxy.types import (
     ClaudeContentBlockText,
     ClaudeContentBlockThinking,
@@ -246,7 +246,7 @@ class TestAntigravityConversionPipeline(unittest.TestCase):
 
     def test_clean_malformed_parts_fixes_nested_text(self):
         """Test that _clean_malformed_parts fixes nested text structures."""
-        from anthropic_proxy.gemini_converter import _clean_malformed_parts
+        from anthropic_proxy.converters import _clean_malformed_parts
 
         contents = [
             {

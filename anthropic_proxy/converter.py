@@ -7,7 +7,7 @@ Gemini schema helpers and re-exports OpenAI converters for compatibility.
 
 from typing import Any
 
-from .openai_converter import (
+from .converters import (
     convert_openai_response_to_anthropic,
     extract_usage_from_openai_response,
     parse_function_calls_from_thinking,

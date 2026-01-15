@@ -13,7 +13,7 @@ import httpx
 from fastapi import HTTPException
 
 from .auth_provider import OAuthPKCEAuth, OAuthProviderConfig
-from .gemini_converter import anthropic_to_gemini_request
+from .converters import anthropic_to_gemini_request
 from .gemini_types import parse_gemini_response
 from .types import ClaudeMessagesRequest
 

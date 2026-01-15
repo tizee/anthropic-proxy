@@ -11,7 +11,7 @@ This tests the scenario where:
 
 import unittest
 
-from anthropic_proxy.gemini_converter import anthropic_to_gemini_request
+from anthropic_proxy.converters import anthropic_to_gemini_request
 from anthropic_proxy.types import (
     ClaudeContentBlockText,
     ClaudeContentBlockToolUse,

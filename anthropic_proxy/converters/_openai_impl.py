@@ -14,7 +14,7 @@ import uuid
 from openai import AsyncStream
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from .types import (
+from ..types import (
     ClaudeContentBlockText,
     ClaudeContentBlockThinking,
     ClaudeContentBlockToolUse,
@@ -23,7 +23,7 @@ from .types import (
     ClaudeUsage,
     generate_unique_id,
 )
-from .utils import log_openai_api_error
+from ..utils import log_openai_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,7 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
 
 def extract_usage_from_openai_response(openai_response) -> ClaudeUsage:
     """Extract usage data from OpenAI API response and convert to ClaudeUsage format."""
-    from .types import CompletionTokensDetails, PromptTokensDetails
+    from ..types import CompletionTokensDetails, PromptTokensDetails
 
     usage = (
         openai_response.usage
@@ -1107,7 +1107,7 @@ def _log_streaming_completion(
         input_tokens = 0
 
         # Update global usage stats
-        from .types import ClaudeUsage, global_usage_stats
+        from ..types import ClaudeUsage, global_usage_stats
 
         usage = ClaudeUsage(
             input_tokens=input_tokens,

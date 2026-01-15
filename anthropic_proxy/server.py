@@ -34,13 +34,17 @@ from .client import (
 )
 from .codex import handle_codex_request
 from .config import config, setup_logging
-from .converter import (
+from .converters import (
+    GeminiConverter,
+    GeminiStreamingConverter,
+    OpenAIConverter,
+    OpenAIToAnthropicStreamingConverter,
     convert_openai_response_to_anthropic,
+    convert_openai_streaming_response_to_anthropic,
+    convert_gemini_streaming_response_to_anthropic,
 )
 from .gemini import handle_gemini_request
 from .hook import hook_manager, load_all_plugins
-from .streaming import convert_openai_streaming_response_to_anthropic
-from .gemini_streaming import convert_gemini_streaming_response_to_anthropic
 from .types import (
     ClaudeMessagesRequest,
     ClaudeTokenCountRequest,
@@ -721,6 +725,386 @@ async def create_message(raw_request: Request):
         error_details = _extract_error_details(e)
         logger.error(f"Error processing request: {json.dumps(error_details, indent=2)}")
 
+        error_message = _format_error_message(e, error_details)
+        status_code = error_details.get("status_code", 500)
+        raise HTTPException(status_code=status_code, detail=error_message) from e
+
+
+@app.post("/openai/v1/chat/completions")
+async def create_chat_completion(raw_request: Request):
+    """
+    OpenAI-compatible Chat Completions endpoint.
+
+    Accepts requests in OpenAI format, converts to Anthropic format internally,
+    routes through the configured model, and returns the response in OpenAI format.
+    """
+    try:
+        # Extract API key from request header
+        api_key = extract_api_key(raw_request)
+
+        # Parse OpenAI request body
+        body = await raw_request.body()
+        openai_payload = json.loads(body)
+
+        model_id = openai_payload.get("model", "")
+        stream = openai_payload.get("stream", False)
+
+        if model_id not in CUSTOM_OPENAI_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown model '{model_id}'. Check models.yaml for available models.",
+            )
+
+        model_config = CUSTOM_OPENAI_MODELS[model_id]
+
+        # Check API key
+        if not model_config.get("api_key") and not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+            )
+
+        # Convert OpenAI request to Anthropic format
+        openai_converter = OpenAIConverter()
+        anthropic_request = openai_converter.request_to_anthropic(openai_payload)
+        # Override model to use the configured model_id for routing
+        anthropic_request.model = model_id
+
+        num_tools = len(anthropic_request.tools) if anthropic_request.tools else 0
+        logger.info(
+            f"📊 OPENAI->ANTHROPIC: Model={model_id}, Target={model_config.get('model_name')}, Stream={stream}, Tools={num_tools}"
+        )
+
+        # Route through the main pipeline - call the internal handler directly
+        # We need to reconstruct the request handling logic here
+        model_format = get_model_format(model_id) or "openai"
+
+        if model_format == "anthropic":
+            # Direct Anthropic format
+            response = await handle_direct_claude_request(
+                anthropic_request, model_id, model_config, raw_request
+            )
+
+            # For streaming, wrap the response to convert back to OpenAI format
+            if stream and isinstance(response, StreamingResponse):
+                async def convert_streaming_to_openai():
+                    streaming_converter = OpenAIToAnthropicStreamingConverter()
+                    # Get the original body iterator
+                    body_iterator = response.body_iterator
+                    async for chunk in streaming_converter.stream_from_anthropic(
+                        body_iterator, model=model_config.get("model_name", model_id)
+                    ):
+                        yield chunk
+
+                return StreamingResponse(
+                    convert_streaming_to_openai(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    },
+                )
+            elif isinstance(response, JSONResponse):
+                # Non-streaming: convert response to OpenAI format
+                anthropic_response_data = json.loads(response.body.decode())
+                from .types import ClaudeMessagesResponse
+                anthropic_response = ClaudeMessagesResponse.model_validate(anthropic_response_data)
+                openai_response = openai_converter.response_from_anthropic(anthropic_response)
+                return JSONResponse(content=openai_response)
+            return response
+
+        elif model_format == "gemini":
+            # Gemini/Antigravity format
+            provider_model_name = model_config.get("model_name", model_id)
+            if is_gemini_model(model_id):
+                provider_generator = handle_gemini_request(
+                    anthropic_request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            elif is_antigravity_model(model_id):
+                provider_generator = handle_antigravity_request(
+                    anthropic_request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                )
+
+            # Convert Gemini -> Anthropic -> OpenAI streaming
+            anthropic_stream = convert_gemini_streaming_response_to_anthropic(
+                provider_generator,
+                anthropic_request,
+                model_id,
+            )
+
+            streaming_converter = OpenAIToAnthropicStreamingConverter()
+            openai_stream = streaming_converter.stream_from_anthropic(
+                anthropic_stream, model=model_config.get("model_name", model_id)
+            )
+
+            return StreamingResponse(
+                openai_stream,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+
+        else:
+            # OpenAI format - pass through with model name substitution
+            # This is the simplest case: OpenAI -> OpenAI
+            client = create_openai_client(model_id, api_key)
+            openai_payload["model"] = model_config.get("model_name", model_id)
+            openai_payload["extra_headers"] = model_config.get("extra_headers", {})
+            openai_payload["extra_body"] = model_config.get("extra_body", {})
+
+            # Handle max_tokens
+            max_tokens = openai_payload.get("max_tokens") or openai_payload.get("max_completion_tokens")
+            if max_tokens:
+                max_tokens = min(model_config.get("max_tokens", 8192), max_tokens)
+                openai_payload["max_tokens"] = max_tokens
+
+            if stream:
+                openai_payload["stream_options"] = {"include_usage": True}
+                response_generator = await client.chat.completions.create(**openai_payload)
+                return StreamingResponse(
+                    _forward_openai_stream(response_generator),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    },
+                )
+            else:
+                response = await client.chat.completions.create(**openai_payload)
+                return JSONResponse(content=response.model_dump())
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_details = _extract_error_details(e)
+        logger.error(f"Error in /v1/chat/completions: {json.dumps(error_details, indent=2)}")
+        error_message = _format_error_message(e, error_details)
+        status_code = error_details.get("status_code", 500)
+        raise HTTPException(status_code=status_code, detail=error_message) from e
+
+
+async def _forward_openai_stream(stream):
+    """Forward OpenAI streaming response as SSE."""
+    async for chunk in stream:
+        yield f"data: {chunk.model_dump_json()}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+@app.post("/gemini/v1beta/models/{model_path:path}:generateContent")
+async def gemini_generate_content(model_path: str, raw_request: Request):
+    """
+    Gemini-compatible GenerateContent endpoint (non-streaming).
+
+    Accepts requests in Gemini format, converts to Anthropic format internally,
+    routes through the configured model, and returns the response in Gemini format.
+    """
+    return await _handle_gemini_request(model_path, raw_request, streaming=False)
+
+
+@app.post("/gemini/v1beta/models/{model_path:path}:streamGenerateContent")
+async def gemini_stream_generate_content(model_path: str, raw_request: Request):
+    """
+    Gemini-compatible StreamGenerateContent endpoint.
+
+    Accepts requests in Gemini format, converts to Anthropic format internally,
+    routes through the configured model, and returns streaming response in Gemini format.
+    """
+    return await _handle_gemini_request(model_path, raw_request, streaming=True)
+
+
+async def _handle_gemini_request(model_path: str, raw_request: Request, streaming: bool):
+    """Common handler for Gemini generateContent and streamGenerateContent."""
+    try:
+        # Extract API key from request header
+        api_key = extract_api_key(raw_request)
+
+        # Parse Gemini request body
+        body = await raw_request.body()
+        gemini_payload = json.loads(body)
+
+        # Extract model_id from path (e.g., "gemini-1.5-pro" from "gemini-1.5-pro:generateContent")
+        model_id = model_path
+        if ":" in model_id:
+            model_id = model_id.split(":")[0]
+
+        # Add model to payload if not present
+        if "model" not in gemini_payload:
+            gemini_payload["model"] = model_id
+
+        if model_id not in CUSTOM_OPENAI_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown model '{model_id}'. Check models.yaml for available models.",
+            )
+
+        model_config = CUSTOM_OPENAI_MODELS[model_id]
+
+        # Check API key
+        if not model_config.get("api_key") and not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+            )
+
+        # Convert Gemini request to Anthropic format
+        gemini_converter = GeminiConverter()
+        anthropic_request = gemini_converter.request_to_anthropic(gemini_payload)
+        # Override model to use the configured model_id for routing
+        anthropic_request.model = model_id
+        # Set stream flag
+        anthropic_request.stream = streaming
+
+        num_tools = len(anthropic_request.tools) if anthropic_request.tools else 0
+        logger.info(
+            f"📊 GEMINI->ANTHROPIC: Model={model_id}, Target={model_config.get('model_name')}, Stream={streaming}, Tools={num_tools}"
+        )
+
+        # Route through the main pipeline
+        model_format = get_model_format(model_id) or "openai"
+
+        if model_format == "anthropic":
+            # Direct Anthropic format
+            response = await handle_direct_claude_request(
+                anthropic_request, model_id, model_config, raw_request
+            )
+
+            if streaming and isinstance(response, StreamingResponse):
+                # Convert streaming response to Gemini format
+                streaming_converter = GeminiStreamingConverter()
+                body_iterator = response.body_iterator
+                gemini_stream = streaming_converter.stream_from_anthropic(
+                    body_iterator, model=model_config.get("model_name", model_id)
+                )
+                return StreamingResponse(
+                    gemini_stream,
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            elif isinstance(response, JSONResponse):
+                # Convert non-streaming response to Gemini format
+                anthropic_response_data = json.loads(response.body.decode())
+                from .types import ClaudeMessagesResponse
+                anthropic_response = ClaudeMessagesResponse.model_validate(anthropic_response_data)
+                gemini_response = gemini_converter.response_from_anthropic(anthropic_response)
+                return JSONResponse(content=gemini_response)
+            return response
+
+        elif model_format == "gemini":
+            # Gemini/Antigravity format - pass through with conversion
+            provider_model_name = model_config.get("model_name", model_id)
+            if is_gemini_model(model_id):
+                provider_generator = handle_gemini_request(
+                    anthropic_request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            elif is_antigravity_model(model_id):
+                provider_generator = handle_antigravity_request(
+                    anthropic_request,
+                    model_id,
+                    model_name=provider_model_name,
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                )
+
+            # Convert Gemini -> Anthropic -> Gemini (for consistent format)
+            anthropic_stream = convert_gemini_streaming_response_to_anthropic(
+                provider_generator,
+                anthropic_request,
+                model_id,
+            )
+
+            streaming_converter = GeminiStreamingConverter()
+            gemini_stream = streaming_converter.stream_from_anthropic(
+                anthropic_stream, model=model_config.get("model_name", model_id)
+            )
+
+            return StreamingResponse(
+                gemini_stream,
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        else:
+            # OpenAI format - convert to OpenAI, then back to Gemini
+            openai_converter = OpenAIConverter()
+            client = create_openai_client(model_id, api_key)
+            openai_request = openai_converter.request_from_anthropic(anthropic_request)
+            openai_request["model"] = model_config.get("model_name", model_id)
+            openai_request["extra_headers"] = model_config.get("extra_headers", {})
+            openai_request["extra_body"] = model_config.get("extra_body", {})
+
+            # Handle max_tokens
+            max_tokens = model_config.get("max_tokens", 4096)
+            openai_request["max_tokens"] = min(max_tokens, anthropic_request.max_tokens)
+
+            if streaming:
+                openai_request["stream"] = True
+                openai_request["stream_options"] = {"include_usage": True}
+                response_generator = await client.chat.completions.create(**openai_request)
+
+                # OpenAI -> Anthropic -> Gemini streaming
+                anthropic_stream = convert_openai_streaming_response_to_anthropic(
+                    response_generator, anthropic_request, model_id
+                )
+                streaming_converter = GeminiStreamingConverter()
+                gemini_stream = streaming_converter.stream_from_anthropic(
+                    anthropic_stream, model=model_config.get("model_name", model_id)
+                )
+
+                return StreamingResponse(
+                    gemini_stream,
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            else:
+                openai_request["stream"] = False
+                response = await client.chat.completions.create(**openai_request)
+                # OpenAI -> Anthropic -> Gemini response
+                anthropic_response = openai_converter.response_to_anthropic(response, anthropic_request)
+                gemini_response = gemini_converter.response_from_anthropic(anthropic_response)
+                return JSONResponse(content=gemini_response)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_details = _extract_error_details(e)
+        logger.error(f"Error in Gemini endpoint: {json.dumps(error_details, indent=2)}")
         error_message = _format_error_message(e, error_details)
         status_code = error_details.get("status_code", 500)
         raise HTTPException(status_code=status_code, detail=error_message) from e
