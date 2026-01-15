@@ -2,6 +2,7 @@ import json
 import unittest
 
 from google.genai import types as genai_types
+from fastapi import HTTPException
 
 from anthropic_proxy.gemini_streaming import convert_gemini_streaming_response_to_anthropic
 from anthropic_proxy.signature_cache import clear_all_cache, get_tool_signature
@@ -255,6 +256,22 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         input_deltas = [d for d in deltas if d["delta"]["type"] == "input_json_delta"]
         self.assertTrue(input_deltas)
         self.assertIn("San Francisco", input_deltas[-1]["delta"]["partial_json"])
+
+    async def test_streaming_emits_error_event_on_http_exception(self):
+        request = ClaudeMessagesRequest(
+            model="gemini-2.5-pro",
+            max_tokens=16,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        async def gen():
+            raise HTTPException(status_code=502, detail="Antigravity error: 403 Forbidden")
+            yield  # pragma: no cover
+
+        events = [event async for event in convert_gemini_streaming_response_to_anthropic(gen(), request)]
+        error_events = _extract_event_payloads(events, "error")
+        self.assertTrue(error_events)
+        self.assertIn("Antigravity error", error_events[0]["error"]["message"])
 
 
 if __name__ == "__main__":

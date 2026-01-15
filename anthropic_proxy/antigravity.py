@@ -35,6 +35,14 @@ ANTIGRAVITY_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_AUTOPUSH,
     ANTIGRAVITY_ENDPOINT_PROD,
 ]
+# Preferred endpoint order for project resolution (prod first).
+ANTIGRAVITY_LOAD_ENDPOINTS = [
+    ANTIGRAVITY_ENDPOINT_PROD,
+    ANTIGRAVITY_ENDPOINT_DAILY,
+    ANTIGRAVITY_ENDPOINT_AUTOPUSH,
+]
+# Fallback project ID used when managed project resolution fails (opencode behavior).
+ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc"
 # Default to Daily Sandbox as per reference implementation
 ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINTS[0]
 
@@ -191,6 +199,25 @@ def _ensure_system_instruction(body: dict[str, Any], identity: str, inject_ident
     system_instruction["role"] = "user"
 
 
+def _extract_project_id(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    project = payload.get("cloudaicompanionProject")
+    if isinstance(project, str) and project:
+        return project
+    if isinstance(project, dict):
+        project_id = project.get("id")
+        if isinstance(project_id, str) and project_id:
+            return project_id
+    return None
+
+
+def _is_capacity_error(body_text: str) -> bool:
+    if not body_text:
+        return False
+    return "No capacity available" in body_text or "RESOURCE_EXHAUSTED" in body_text
+
+
 def _extract_thinking_budget(request: ClaudeMessagesRequest, model_name: str) -> int | None:
     if request.thinking and request.thinking.type == "enabled":
         if request.thinking.budget_tokens is not None:
@@ -265,7 +292,11 @@ async def _stream_antigravity_internal(
                         if body_text:
                             detail = f"{detail}: {body_text[:1000]}"
 
-                        if response.status_code in {429, 500, 503, 529} or response.status_code >= 500:
+                        if (
+                            response.status_code in {403, 404, 429, 500, 503, 529}
+                            or response.status_code >= 500
+                            or _is_capacity_error(body_text)
+                        ):
                             logger.warning(
                                 "Antigravity endpoint %s returned %s; trying fallback.",
                                 endpoint,
@@ -402,40 +433,45 @@ class AntigravityAuth(OAuthPKCEAuth):
                         "pluginType": "GEMINI",
                     }
                 }
-                res = await client.post(
-                    f"{ANTIGRAVITY_ENDPOINT}/v1internal:loadCodeAssist",
-                    json=req_body,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        **ANTIGRAVITY_HEADERS,
-                    },
-                )
+                load_endpoints = list(dict.fromkeys(ANTIGRAVITY_LOAD_ENDPOINTS + ANTIGRAVITY_ENDPOINTS))
+                for endpoint in load_endpoints:
+                    res = await client.post(
+                        f"{endpoint}/v1internal:loadCodeAssist",
+                        json=req_body,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            **ANTIGRAVITY_HEADERS,
+                        },
+                    )
 
-                if res.status_code == 200:
+                    if res.status_code != 200:
+                        continue
                     data = res.json()
-                    found_id = data.get("cloudaicompanionProject")
+                    found_id = _extract_project_id(data)
                     if found_id:
                         self._update_refresh_with_project(refresh_token, found_id)
                         return
 
                 req_body["tierId"] = "FREE"
-                res = await client.post(
-                    f"{ANTIGRAVITY_ENDPOINT}/v1internal:onboardUser",
-                    json=req_body,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        **ANTIGRAVITY_HEADERS,
-                    },
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    new_id = (
-                        data.get("response", {})
-                        .get("cloudaicompanionProject", {})
-                        .get("id")
+                for endpoint in ANTIGRAVITY_ENDPOINTS:
+                    res = await client.post(
+                        f"{endpoint}/v1internal:onboardUser",
+                        json=req_body,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            **ANTIGRAVITY_HEADERS,
+                        },
                     )
-                    if new_id:
-                        self._update_refresh_with_project(refresh_token, new_id)
+                    if res.status_code == 200:
+                        data = res.json()
+                        new_id = (
+                            data.get("response", {})
+                            .get("cloudaicompanionProject", {})
+                            .get("id")
+                        )
+                        if new_id:
+                            self._update_refresh_with_project(refresh_token, new_id)
+                            return
 
         except Exception as exc:
             logger.error(f"Failed to ensure project context: {exc}")
@@ -466,9 +502,10 @@ async def handle_antigravity_request(
         await antigravity_auth.ensure_project_context()
         project_id = antigravity_auth.get_project_id()
         if not project_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Antigravity Project ID could not be resolved. Try re-login.",
+            project_id = ANTIGRAVITY_DEFAULT_PROJECT_ID
+            logger.warning(
+                "Antigravity project ID missing; using default %s",
+                project_id,
             )
 
     session_id = _extract_session_id(request)

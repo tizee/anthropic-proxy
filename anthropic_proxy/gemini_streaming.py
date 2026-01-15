@@ -7,6 +7,8 @@ import logging
 import uuid
 from typing import Any, AsyncGenerator
 
+from fastapi import HTTPException
+
 from .gemini_types import parse_gemini_response
 from .signature_cache import cache_signature, cache_tool_signature
 from .types import ClaudeMessagesRequest, generate_unique_id
@@ -435,6 +437,26 @@ async def convert_gemini_streaming_response_to_anthropic(
             yield converter._send_message_delta_event("end_turn", converter.output_tokens)
             yield converter._send_message_stop_event()
             yield converter._send_done_event()
+    except HTTPException as http_exc:
+        logger.error("Gemini streaming error: %s", http_exc.detail)
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": str(http_exc.detail or http_exc),
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    except Exception as exc:
+        logger.error("Gemini streaming error: %s", exc)
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "unexpected_error",
+                "message": f"Unexpected error: {exc}",
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
     finally:
         logger.debug(
             "Gemini streaming completed for model %s (text=%d, thinking=%d)",

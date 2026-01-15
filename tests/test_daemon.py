@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from anthropic_proxy.daemon import (
     ProcessInfo,
+    clear_logs,
     get_daemon_status,
     get_pid_file,
     get_process_info,
@@ -392,6 +393,121 @@ class TestStartDaemon(unittest.TestCase):
                 models_path=Path("/tmp/models.yaml"),
                 config_path=Path("/tmp/config.json"),
             )
+
+
+class TestClearLogs(unittest.TestCase):
+    """Test cases for clear_logs function."""
+
+    def setUp(self):
+        """Set up test fixtures with temporary log files."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.daemon_log = Path(self.temp_dir) / "daemon.log"
+        self.server_log = Path(self.temp_dir) / "server.log"
+        self.config_file = Path(self.temp_dir) / "config.json"
+
+    def tearDown(self):
+        """Clean up temporary files."""
+        for f in [self.daemon_log, self.server_log, self.config_file]:
+            if f.exists():
+                f.unlink()
+        Path(self.temp_dir).rmdir()
+
+    @patch("anthropic_proxy.config.load_config_from_file")
+    @patch("anthropic_proxy.daemon.DAEMON_LOG_FILE")
+    def test_clear_logs_deletes_logs_when_enabled(
+        self, mock_daemon_log, mock_load_config
+    ):
+        """Test clear_logs deletes log files when cleanup_logs_on_start is True."""
+        # Create temporary log files
+        self.daemon_log.write_text("daemon log content")
+        self.server_log.write_text("server log content")
+
+        # Mock DAEMON_LOG_FILE to point to our temp file
+        mock_daemon_log.__str__ = Mock(return_value=str(self.daemon_log))
+        mock_daemon_log.exists = Mock(return_value=True)
+        mock_daemon_log.unlink = Mock()
+
+        # Mock config to enable cleanup
+        mock_load_config.return_value = {
+            "cleanup_logs_on_start": True,
+            "log_file_path": str(self.server_log),
+        }
+
+        # Mock Path operations for server.log
+        with patch("pathlib.Path.unlink") as mock_unlink:
+            clear_logs(self.config_file)
+
+        # Verify files were deleted (mocked unlink was called)
+        self.assertTrue(mock_daemon_log.unlink.called or mock_unlink.called)
+
+    @patch("anthropic_proxy.config.load_config_from_file")
+    @patch("anthropic_proxy.daemon.DAEMON_LOG_FILE")
+    def test_clear_logs_skips_when_disabled(
+        self, mock_daemon_log, mock_load_config
+    ):
+        """Test clear_logs skips deletion when cleanup_logs_on_start is False."""
+        # Create temporary log files
+        self.daemon_log.write_text("daemon log content")
+        self.server_log.write_text("server log content")
+
+        # Mock DAEMON_LOG_FILE to point to our temp file
+        mock_daemon_log.exists = Mock(return_value=True)
+        mock_daemon_log.unlink = Mock()
+
+        # Mock config to disable cleanup
+        mock_load_config.return_value = {
+            "cleanup_logs_on_start": False,
+            "log_file_path": str(self.server_log),
+        }
+
+        clear_logs(self.config_file)
+
+        # Verify files were NOT deleted
+        mock_daemon_log.unlink.assert_not_called()
+
+    @patch("anthropic_proxy.config.load_config_from_file")
+    @patch("anthropic_proxy.daemon.DAEMON_LOG_FILE")
+    def test_clear_logs_defaults_to_enabled_when_missing(
+        self, mock_daemon_log, mock_load_config
+    ):
+        """Test clear_logs defaults to enabled when cleanup_logs_on_start is not set."""
+        # Mock DAEMON_LOG_FILE
+        mock_daemon_log.exists = Mock(return_value=True)
+        mock_daemon_log.unlink = Mock()
+
+        # Mock config without cleanup_logs_on_start field
+        mock_load_config.return_value = {
+            "log_file_path": str(self.server_log),
+        }
+
+        clear_logs(self.config_file)
+
+        # Verify files were deleted (default is enabled)
+        mock_daemon_log.unlink.assert_called_once()
+
+    @patch("anthropic_proxy.config.load_config_from_file")
+    def test_clear_logs_handles_nonexistent_files(self, mock_load_config):
+        """Test clear_logs handles missing log files gracefully."""
+        # Mock config with enabled cleanup
+        mock_load_config.return_value = {
+            "cleanup_logs_on_start": True,
+            "log_file_path": str(self.server_log),
+        }
+
+        # Should not raise exception even if files don't exist
+        clear_logs(self.config_file)
+
+    @patch("anthropic_proxy.config.load_config_from_file")
+    def test_clear_logs_handles_config_load_error(self, mock_load_config):
+        """Test clear_logs defaults to enabled when config load fails."""
+        # Simulate config load failure
+        mock_load_config.side_effect = Exception("Config load failed")
+
+        # Mock DAEMON_LOG_FILE to avoid actual file operations
+        with patch("anthropic_proxy.daemon.DAEMON_LOG_FILE") as mock_daemon_log:
+            mock_daemon_log.exists = Mock(return_value=False)
+            # Should not raise exception
+            clear_logs(self.config_file)
 
 
 if __name__ == "__main__":

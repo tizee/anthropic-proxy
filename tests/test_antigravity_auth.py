@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from anthropic_proxy.antigravity import (
     AntigravityAuth,
-    ANTIGRAVITY_ENDPOINT,
+    ANTIGRAVITY_DEFAULT_PROJECT_ID,
     ANTIGRAVITY_ENDPOINTS,
+    ANTIGRAVITY_LOAD_ENDPOINTS,
     ANTIGRAVITY_THINKING_HEADER,
     handle_antigravity_request,
 )
@@ -146,11 +147,36 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         called_url = mock_http_client.post.call_args[0][0]
         self.assertEqual(
             called_url,
-            f"{ANTIGRAVITY_ENDPOINT}/v1internal:loadCodeAssist",
+            f"{ANTIGRAVITY_LOAD_ENDPOINTS[0]}/v1internal:loadCodeAssist",
         )
 
         saved_data = mock_save.call_args[0][0]
         self.assertEqual(saved_data["antigravity"]["refresh"], "refresh_token|project-321")
+
+    @patch("anthropic_proxy.auth_provider.load_auth_file")
+    @patch("anthropic_proxy.auth_provider.save_auth_file")
+    @patch("httpx.AsyncClient")
+    async def test_ensure_project_context_load_object_id(self, mock_client, mock_save, mock_load):
+        auth_data = {
+            "antigravity": {
+                "access": "access",
+                "refresh": "refresh_token",
+                "expires": time.time() + 3600,
+            }
+        }
+        mock_load.return_value = auth_data
+
+        mock_http_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"cloudaicompanionProject": {"id": "project-obj"}}
+        mock_http_client.post.return_value = mock_response
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        await self.auth.ensure_project_context()
+
+        saved_data = mock_save.call_args[0][0]
+        self.assertEqual(saved_data["antigravity"]["refresh"], "refresh_token|project-obj")
 
     @patch("anthropic_proxy.auth_provider.load_auth_file")
     @patch("anthropic_proxy.auth_provider.save_auth_file")
@@ -176,16 +202,18 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         }
 
         mock_http_client = AsyncMock()
-        mock_http_client.post.side_effect = [load_response, onboard_response]
+        mock_http_client.post.side_effect = (
+            [load_response for _ in ANTIGRAVITY_LOAD_ENDPOINTS] + [onboard_response]
+        )
         mock_client.return_value.__aenter__.return_value = mock_http_client
 
         await self.auth.ensure_project_context()
 
-        self.assertEqual(mock_http_client.post.call_count, 2)
-        called_url = mock_http_client.post.call_args_list[1][0][0]
+        self.assertEqual(mock_http_client.post.call_count, len(ANTIGRAVITY_LOAD_ENDPOINTS) + 1)
+        called_url = mock_http_client.post.call_args_list[-1][0][0]
         self.assertEqual(
             called_url,
-            f"{ANTIGRAVITY_ENDPOINT}/v1internal:onboardUser",
+            f"{ANTIGRAVITY_ENDPOINTS[0]}/v1internal:onboardUser",
         )
 
         saved_data = mock_save.call_args[0][0]
@@ -237,10 +265,19 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
 
     @patch("anthropic_proxy.antigravity.antigravity_auth")
     @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
-    async def test_handle_antigravity_request_requires_project(self, mock_client, mock_auth):
+    async def test_handle_antigravity_request_uses_default_project(self, mock_client, mock_auth):
         mock_auth.get_access_token = AsyncMock(return_value="token")
         mock_auth.get_project_id = MagicMock(return_value=None)
         mock_auth.ensure_project_context = AsyncMock()
+
+        ok_response = FakeStreamResponse(
+            status_code=200,
+            lines=['data: {"response":{"candidates":[]}}'],
+        )
+
+        mock_http_client = MagicMock()
+        mock_http_client.stream.return_value = stream_context(ok_response)
+        mock_client.return_value.__aenter__.return_value = mock_http_client
 
         request = ClaudeMessagesRequest(
             model="claude-sonnet-4-5",
@@ -248,13 +285,11 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
             messages=[ClaudeMessage(role="user", content="hi")],
         )
 
-        from fastapi import HTTPException
+        gen = handle_antigravity_request(request, "claude-sonnet-4-5")
+        await gen.__anext__()
 
-        with self.assertRaises(HTTPException) as cm:
-            await handle_antigravity_request(request, "claude-sonnet-4-5").__anext__()
-
-        self.assertEqual(cm.exception.status_code, 400)
-        mock_client.assert_not_called()
+        payload = mock_http_client.stream.call_args.kwargs["json"]
+        self.assertEqual(payload["project"], ANTIGRAVITY_DEFAULT_PROJECT_ID)
 
     @patch("anthropic_proxy.antigravity.antigravity_auth")
     @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
@@ -263,9 +298,9 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         mock_auth.get_project_id = MagicMock(return_value="project-1")
 
         error_response = FakeStreamResponse(
-            status_code=503,
-            body=b"error",
-            reason="Service Unavailable",
+            status_code=403,
+            body=b"forbidden",
+            reason="Forbidden",
         )
         ok_response = FakeStreamResponse(
             status_code=200,
@@ -298,6 +333,85 @@ class TestAntigravityAuth(unittest.IsolatedAsyncioTestCase):
         second_url = mock_http_client.stream.call_args_list[1][0][1]
         self.assertTrue(first_url.startswith(ANTIGRAVITY_ENDPOINTS[0]))
         self.assertTrue(second_url.startswith(ANTIGRAVITY_ENDPOINTS[1]))
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_handle_antigravity_request_capacity_fallback(self, mock_client, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value="project-1")
+
+        error_response = FakeStreamResponse(
+            status_code=400,
+            body=b"No capacity available",
+            reason="Bad Request",
+        )
+        ok_response = FakeStreamResponse(
+            status_code=200,
+            lines=['data: {"response":{"candidates":[]}}'],
+        )
+
+        mock_http_client = MagicMock()
+        mock_http_client.stream.side_effect = [
+            stream_context(error_response),
+            stream_context(ok_response),
+        ]
+        mock_client.return_value.__aenter__.return_value = mock_http_client
+
+        request = ClaudeMessagesRequest(
+            model="claude-sonnet-4-5",
+            max_tokens=1,
+            messages=[ClaudeMessage(role="user", content="hi")],
+        )
+
+        gen = handle_antigravity_request(
+            request,
+            "antigravity/claude-sonnet-4-5",
+            model_name="claude-sonnet-4-5",
+        )
+        chunk = await gen.__anext__()
+
+        self.assertIn("candidates", chunk)
+        self.assertEqual(mock_http_client.stream.call_count, 2)
+
+    @patch("anthropic_proxy.antigravity.antigravity_auth")
+    @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
+    async def test_handle_antigravity_request_rate_limit_fallback(self, mock_client, mock_auth):
+        mock_auth.get_access_token = AsyncMock(return_value="token")
+        mock_auth.get_project_id = MagicMock(return_value="project-1")
+
+        for status_code, reason in ((429, "Too Many Requests"), (503, "Service Unavailable")):
+            error_response = FakeStreamResponse(
+                status_code=status_code,
+                body=b"error",
+                reason=reason,
+            )
+            ok_response = FakeStreamResponse(
+                status_code=200,
+                lines=['data: {"response":{"candidates":[]}}'],
+            )
+
+            mock_http_client = MagicMock()
+            mock_http_client.stream.side_effect = [
+                stream_context(error_response),
+                stream_context(ok_response),
+            ]
+            mock_client.return_value.__aenter__.return_value = mock_http_client
+
+            request = ClaudeMessagesRequest(
+                model="claude-sonnet-4-5",
+                max_tokens=1,
+                messages=[ClaudeMessage(role="user", content="hi")],
+            )
+
+            gen = handle_antigravity_request(
+                request,
+                "antigravity/claude-sonnet-4-5",
+                model_name="claude-sonnet-4-5",
+            )
+            chunk = await gen.__anext__()
+
+            self.assertIn("candidates", chunk)
+            self.assertEqual(mock_http_client.stream.call_count, 2)
 
     @patch("anthropic_proxy.antigravity.antigravity_auth")
     @patch("anthropic_proxy.antigravity.httpx.AsyncClient")
