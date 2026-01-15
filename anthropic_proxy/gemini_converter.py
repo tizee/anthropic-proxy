@@ -247,8 +247,6 @@ def _convert_message_content_to_parts(
             part: dict[str, Any] = {"text": block.thinking}
             if signature:
                 part["thoughtSignature"] = signature
-            if is_antigravity:
-                part["thought"] = True
             parts.append(part)
         elif isinstance(block, ClaudeContentBlockToolUse):
             signature = None
@@ -405,6 +403,61 @@ def _build_tools(request: ClaudeMessagesRequest) -> list[dict[str, Any]] | None:
     return [{"functionDeclarations": function_declarations}]
 
 
+def _clean_malformed_parts(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Clean up any malformed parts that Antigravity doesn't recognize.
+
+    Filters out parts with unexpected "thinking" field (nested format that's not supported).
+    Also fixes nested "text" structures like {"text": {"text": "..."}} -> {"text": "..."}.
+    This can happen if incoming requests have malformed structure from previous responses.
+    """
+    cleaned_contents = []
+    for content in contents:
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            cleaned_contents.append(content)
+            continue
+
+        cleaned_parts = []
+        for part in parts:
+            if not isinstance(part, dict):
+                cleaned_parts.append(part)
+                continue
+
+            # Handle nested text structure: {"text": {"text": "..."}} -> {"text": "..."}
+            if "text" in part and isinstance(part["text"], dict):
+                nested_text = part["text"]
+                # Extract the actual text value
+                if "text" in nested_text:
+                    cleaned_parts.append({"text": nested_text["text"]})
+                    logger.warning("Fixed nested text structure: {'text': {'text': '...'}}")
+                elif "thinking" in nested_text:
+                    # This is a nested thinking structure, extract the thinking text
+                    cleaned_parts.append({"text": nested_text.get("thinking", "")})
+                    logger.warning("Fixed nested thinking in text field")
+                else:
+                    # Unknown nested structure, skip this part
+                    logger.warning(f"Skipping malformed part with nested text: {list(part.keys())}")
+                continue
+
+            # Filter out parts with nested "thinking" field
+            if "thinking" in part and isinstance(part.get("thinking"), dict):
+                logger.warning("Skipping part with nested 'thinking' field")
+                continue
+
+            # Keep valid parts as-is
+            cleaned_parts.append(part)
+
+        if not cleaned_parts:
+            # All parts were filtered or cleaned, skip this content
+            logger.warning("All parts were filtered/cleaned from content due to malformed structure")
+            continue
+
+        cleaned_contents.append({**content, "parts": cleaned_parts})
+
+    return cleaned_contents
+
+
 def anthropic_to_gemini_request(
     request: ClaudeMessagesRequest,
     model_id: str,
@@ -443,6 +496,10 @@ def anthropic_to_gemini_request(
     # Ensure all functionCall/functionResponse parts have matching IDs (required by Claude)
     if is_antigravity and is_claude_model:
         contents = ensure_tool_ids(contents)
+
+    # Clean up any malformed parts for Antigravity (filter out parts with unexpected "thinking" field)
+    if is_antigravity:
+        contents = _clean_malformed_parts(contents)
 
     system_text = request.extract_system_content()
     system_parts: list[dict[str, Any]] = []

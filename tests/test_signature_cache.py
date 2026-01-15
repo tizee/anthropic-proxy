@@ -60,7 +60,6 @@ class TestSignatureCache(unittest.TestCase):
         parts = body["contents"][0]["parts"]
         self.assertEqual(parts[0]["thoughtSignature"], "sig-3")
         self.assertEqual(parts[0]["text"], "thought-text")
-        self.assertTrue(parts[0]["thought"])
         self.assertEqual(body["sessionId"], "sess-3")
 
     def test_unsigned_thinking_dropped_without_cache(self):

@@ -29,7 +29,13 @@ class ConversationState:
 
 
 def _is_thinking_part(part: dict[str, Any]) -> bool:
-    return part.get("thought") is True
+    # Check for standard format: {"text": "...", "thought": true}
+    if part.get("thought") is True:
+        return True
+    # Also check for nested format (should not exist, but handle for robustness): {"thinking": {...}}
+    if isinstance(part.get("thinking"), dict):
+        return True
+    return False
 
 
 def _is_function_response_part(part: dict[str, Any]) -> bool:
@@ -114,7 +120,7 @@ def analyze_conversation_state(contents: list[dict[str, Any]]) -> ConversationSt
 
 
 def _strip_all_thinking_blocks(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Strips all thinking blocks from messages."""
+    """Strips all thinking blocks from messages, including nested format."""
     result = []
     for content in contents:
         parts = content.get("parts")
