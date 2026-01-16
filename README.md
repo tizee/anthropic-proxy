@@ -3,11 +3,13 @@
 [![GitHub latest commit](https://img.shields.io/github/last-commit/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy)
 [![License](https://img.shields.io/github/license/tizee/anthropic-proxy)](https://github.com/tizee/anthropic-proxy/blob/main/LICENSE)
 
-A proxy server that enables Claude Code to work with multiple model providers through format-based routing:
+A proxy server that enables Claude Code to work with multiple model providers through **multi-format endpoints** and format-based routing:
 
 1. **OpenAI-Compatible Format** (`format: openai`): Translates Anthropic API requests to OpenAI-compatible endpoints
 2. **Anthropic-Compatible Format** (`format: anthropic`): Routes requests directly to official Claude API or compatible endpoints
 3. **Gemini Format** (`format: gemini`): Routes requests through Gemini-compatible backends (Gemini/Antigravity subscriptions)
+
+**Multi-Format Support**: The proxy accepts requests in Anthropic, OpenAI, or Gemini format and automatically converts between them as needed. Each format has its own endpoint prefix (`/anthropic/v1/...`, `/openai/v1/...`, `/gemini/v1beta/...`).
 
 - kimi official supports Anthropic API https://api.moonshot.cn/anthropic
 - deepseek supports Anthropic https://api-docs.deepseek.com/guides/anthropic_api
@@ -74,12 +76,66 @@ For providers with native Anthropic support, configure as Anthropic format:
   max_input_tokens: 200k
 ```
 
+## API Endpoints
+
+The proxy provides multiple endpoint formats to accept requests in different API styles:
+
+### Anthropic Format Endpoints
+
+**`POST /anthropic/v1/messages`**
+- Primary endpoint for Anthropic Messages API format
+- Accepts requests in Anthropic format, routes to configured providers
+- Returns responses in Anthropic format
+
+**`POST /anthropic/v1/messages/count_tokens`**
+- Token counting endpoint
+- Returns local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice
+
+**`GET /anthropic/v1/stats`**
+- Returns comprehensive token usage statistics for the current session
+
+**`POST /anthropic/v1/messages/test_conversion`**
+- Test endpoint for direct message format conversion
+- Sends requests directly to specified model without server-side model switching
+
+### OpenAI Format Endpoints
+
+**`POST /openai/v1/chat/completions`**
+- OpenAI Chat Completions API compatible endpoint
+- Accepts requests in OpenAI format
+- Converts to appropriate provider format internally
+- Returns responses in OpenAI format
+
+### Gemini Format Endpoints
+
+**`POST /gemini/v1beta/models/{model}:generateContent`**
+- Gemini GenerateContent API compatible endpoint (non-streaming)
+- Accepts requests in Gemini format
+- Converts to appropriate provider format internally
+- Returns responses in Gemini format
+
+**`POST /gemini/v1beta/models/{model}:streamGenerateContent`**
+- Gemini StreamGenerateContent API compatible endpoint
+- Same as above but returns streaming responses in Gemini format
+
+### Utility Endpoints
+
+**`GET /test-connection`**
+- Test API connectivity to configured providers
+- Returns configuration status and model count
+
 ## Key Features
 
 ### 🔄 Format-Based Operation
 - **OpenAI-Compatible Format**: Convert Anthropic API requests to OpenAI format for third-party providers
 - **Anthropic-Compatible Format**: Route requests directly to official Anthropic API with native format preservation
 - **Gemini Format**: Route requests via Gemini Code Assist (subscription-backed)
+
+**Converter Architecture**: The proxy uses a unified converter package (`anthropic_proxy/converters/`) with:
+- Base classes (`BaseConverter`, `BaseStreamingConverter`) for consistent converter interfaces
+- Format-specific converters (OpenAI, Anthropic, Gemini) that inherit from base classes
+- Factory functions (`get_converter()`, `get_streaming_converter()`) for dynamic converter selection
+- Legacy implementation modules (`_openai_impl.py`, `_gemini_impl.py`) for backward compatibility
 
 ### 🔗 ccproxy Integration (Recommended)
 This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper script):
@@ -125,10 +181,12 @@ Then select the variant by setting `model` in your ccproxy provider config (or s
 - Enhanced client reliability with automatic retry mechanisms
 
 ### 📊 Advanced Features
-- Streaming support for both modes with proper error handling
-- Usage statistics tracking (from provider-reported usage)
-- Custom model configuration with per-model settings
-- Support for thinking mode and reasoning effort parameters
+- **Multi-format endpoints**: Accept requests in Anthropic, OpenAI, or Gemini format
+- **Streaming support**: SSE-based streaming with state machine for chunk conversion
+- **Usage statistics tracking**: Provider-reported usage tracking via global stats
+- **Custom model configuration**: Per-model settings with `reasoning_effort` support
+- **Converter factory pattern**: Dynamic format conversion based on model configuration
+- **Thinking mode support**: Configurable thinking/reasoning effort per model
 
 ### 🔌 Plugin System (Extensibility)
 The proxy includes a plugin system that allows you to modify request and response payloads. Plugins are automatically loaded from the `anthropic_proxy/plugins/` directory.
@@ -495,9 +553,15 @@ tail -f ~/.anthropic-proxy/daemon.log
 
 ### Connecting Claude Code
 
+For Claude Code, use the Anthropic-format endpoint:
+
 ```bash
-ANTHROPIC_BASE_URL=http://localhost:8082 claude
+ANTHROPIC_BASE_URL=http://localhost:8082/anthropic/v1 claude
 ```
+
+**Note**: The `/anthropic/v1` prefix is required for Anthropic-format requests. The proxy also supports:
+- OpenAI format: `http://localhost:8082/openai/v1`
+- Gemini format: `http://localhost:8082/gemini/v1beta`
 
 ## Debugging & Logging
 
@@ -587,6 +651,23 @@ For detailed information on the architecture, features, and testing of this proj
 - **[Features](./docs/features.md)**: A description of the key features of the proxy.
 - **[Testing](./docs/testing.md)**: Instructions on how to run the unit and performance tests.
 - **[API Response Formats](./docs/api-response-formats.md)**: Reference documentation for API response formats used by different providers.
+
+### Core Module Structure
+
+- **`anthropic_proxy/server.py`**: FastAPI endpoints with prefixed paths (`/anthropic/v1/...`, `/openai/v1/...`, `/gemini/v1beta/...`)
+- **`anthropic_proxy/client.py`**: Loads `models.yaml` and creates provider-specific clients
+- **`anthropic_proxy/converters/`**: Unified converter package with base classes and format-specific converters
+  - `base.py`: Base converter classes (`BaseConverter`, `BaseStreamingConverter`)
+  - `anthropic.py`: Anthropic format converter (identity pass-through)
+  - `openai.py`: OpenAI format converter
+  - `gemini.py`: Gemini format converter
+  - `_openai_impl.py`: Legacy OpenAI implementation functions
+  - `_gemini_impl.py`: Gemini implementation functions
+  - `_gemini_streaming.py`: Gemini streaming implementation
+- **`anthropic_proxy/converter.py`**: Converter facade (re-exports format-specific converters)
+- **`anthropic_proxy/streaming.py`**: Streaming conversion facade
+- **`anthropic_proxy/types.py`**: Pydantic models and API schemas
+- **`anthropic_proxy/utils.py`**: Usage tracking and error helpers
 
 Additionally, the `CLAUDE.md` file provides guidance for both developers and AI assistants working with this project:
 

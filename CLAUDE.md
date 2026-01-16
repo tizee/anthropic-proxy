@@ -10,13 +10,14 @@ Guidance for working on this repository.
 - Uninstall with: `uv pip uninstall anthropic-proxy`
 
 ## Project Summary
-This proxy converts Anthropic API requests to OpenAI-compatible APIs (and back). It is designed to sit behind **ccproxy**, which provides API keys via request headers.
+This proxy converts API requests between multiple formats (Anthropic, OpenAI, Gemini) and routes them to various providers. It is designed to sit behind **ccproxy**, which provides API keys via request headers.
 
 Key points:
+- **Multi-format endpoints**: The proxy accepts requests in Anthropic, OpenAI, or Gemini format via prefixed endpoints (`/anthropic/v1/...`, `/openai/v1/...`, `/gemini/v1beta/...`).
 - **API keys** come from the `Authorization` header (ccproxy sets `ANTHROPIC_AUTH_TOKEN`). The proxy does not read API keys from `.env`.
-- **Model selection** is driven by the incoming request model. The server does not perform routing or model switching.
+- **Model selection** is driven by the incoming request model. The server routes based on `format` field in models.yaml.
 - **models.yaml** defines model → API URL mappings and per-model options (no `api_key_name`, no pricing fields).
-- **/v1/messages/count_tokens** returns a local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice.
+- **/anthropic/v1/messages/count_tokens** returns a local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice.
 - **Default auth-provider models may drift**: Codex/Gemini/Antigravity default model IDs are best-effort and can become invalid if upstream providers change or disable support. Keep docs/tests in sync when updating.
 - **Auth default model IDs are prefixed**: Codex/Gemini/Antigravity defaults use `codex/`, `gemini/`, `antigravity/` prefixes to avoid collisions; user-defined IDs take precedence.
 
@@ -29,11 +30,18 @@ The proxy routes requests based on the `format` field in models.yaml (with `dire
 ## Architecture Reference
 
 ### Core Modules
-- `anthropic_proxy/server.py`: FastAPI endpoints, request handling, and response conversion.
+- `anthropic_proxy/server.py`: FastAPI endpoints with prefixed paths (`/anthropic/v1/...`, `/openai/v1/...`, `/gemini/v1beta/...`), request handling, and response conversion.
 - `anthropic_proxy/client.py`: Loads `models.yaml` and creates provider-specific clients.
-- `anthropic_proxy/openai_converter.py`: Anthropic ↔ OpenAI request/response conversion.
-- `anthropic_proxy/gemini_converter.py`: Anthropic ↔ Gemini request/response conversion.
-- `anthropic_proxy/converter.py`: Converter facade (re-exports format-specific converters).
+- `anthropic_proxy/converters/`: Unified converter package with base classes and format-specific converters:
+  - `base.py`: Base converter classes (`BaseConverter`, `BaseStreamingConverter`)
+  - `anthropic.py`: Anthropic format converter (identity pass-through)
+  - `openai.py`: OpenAI format converter
+  - `gemini.py`: Gemini format converter
+  - `_openai_impl.py`: Legacy OpenAI implementation functions (for backward compatibility)
+  - `_gemini_impl.py`: Gemini implementation functions
+  - `_gemini_streaming.py`: Gemini streaming implementation
+  - `__init__.py`: Factory functions (`get_converter()`, `get_streaming_converter()`)
+- `anthropic_proxy/converter.py`: Converter facade (re-exports from converters package).
 - `anthropic_proxy/streaming.py`: Streaming conversion facade.
 - `anthropic_proxy/types.py`: Pydantic models and API schemas.
 - `anthropic_proxy/utils.py`: Usage tracking and error helpers.
@@ -58,6 +66,26 @@ The proxy routes requests based on the `format` field in models.yaml (with `dire
 
 ### Documentation
 - `docs/api-response-formats.md`: Reference documentation for API response formats used by different providers (Claude, OpenAI, DeepSeek, VolcEngine).
+- `docs/endpoints/anthropic-messages.md`: Detailed documentation for Anthropic Messages API endpoints.
+
+### API Endpoints
+The proxy provides multiple endpoint formats to accept requests in different API styles:
+
+**Anthropic Format Endpoints:**
+- `POST /anthropic/v1/messages` - Primary endpoint for Anthropic Messages API format
+- `POST /anthropic/v1/messages/count_tokens` - Token counting endpoint (local tiktoken-based estimate)
+- `GET /anthropic/v1/stats` - Comprehensive token usage statistics for current session
+- `POST /anthropic/v1/messages/test_conversion` - Test endpoint for direct message format conversion
+
+**OpenAI Format Endpoints:**
+- `POST /openai/v1/chat/completions` - OpenAI Chat Completions API compatible endpoint
+
+**Gemini Format Endpoints:**
+- `POST /gemini/v1beta/models/{model}:generateContent` - Gemini GenerateContent API (non-streaming)
+- `POST /gemini/v1beta/models/{model}:streamGenerateContent` - Gemini StreamGenerateContent API (streaming)
+
+**Utility Endpoints:**
+- `GET /test-connection` - Test API connectivity to configured providers
 
 ### Plugin System
 - `anthropic_proxy/hook.py`: `HookManager` class that dynamically loads plugins from `anthropic_proxy/plugins/`
@@ -65,9 +93,12 @@ The proxy routes requests based on the `format` field in models.yaml (with `dire
 - Plugins can define `request_hook(payload)` and/or `response_hook(payload)` functions to modify payloads
 
 ### Streaming Architecture
-- `AnthropicStreamingConverter` (in `streaming.py`) manages a state machine for SSE chunk conversion
-- Handles content blocks, tool calls, thinking blocks during streaming
+- Streaming converters use base class `BaseStreamingConverter` with format-specific implementations
+- `OpenAIToAnthropicStreamingConverter` (in `converters/openai.py`): Converts OpenAI streaming to Anthropic SSE format
+- `GeminiStreamingConverter` (in `converters/gemini.py`): Converts Gemini streaming to Anthropic SSE format
+- State machine manages SSE chunk conversion, handling content blocks, tool calls, thinking blocks
 - Tracks token counts from provider responses (not local estimation)
+- Hook system applies `response_hook()` to each streaming event via `hook_streaming_response()`
 
 ## Running the Server
 
@@ -154,17 +185,25 @@ This allows creating "reasoning level" variants of the same base model:
 | `anthropic-proxy stop` | Stop running server |
 | `anthropic-proxy restart [--host HOST] [--port PORT]` | Restart server |
 | `anthropic-proxy status` | Show server status |
+| `anthropic-proxy login --codex` | Login with Codex subscription (OAuth) |
+| `anthropic-proxy login --gemini` | Login with Gemini subscription (OAuth) |
+| `anthropic-proxy login --antigravity` | Login with Antigravity subscription (OAuth) |
+| `anthropic-proxy provider --list` | List auth providers and OAuth status |
+| `anthropic-proxy provider --models` | List available model IDs (custom + provider defaults) |
 | `anthropic-proxy --init` | Initialize config files (skip if exist) |
 | `anthropic-proxy --init-force` | Force reinitialize config files |
 | `anthropic-proxy --print-config [--show-api-keys]` | Print current configuration |
+| `anthropic-proxy --models PATH` | Use custom models file |
+| `anthropic-proxy --config PATH` | Use custom config file |
 
 ## Testing
+- Use `uv run pytest` to run tests directly (preferred method for consistency with uv-based development)
 - `make test` runs the full test suite.
 - `make test-cov` generates coverage report.
 - `make test-cov-html` generates HTML coverage report.
 - Single test suites: `make test-routing`, `make test-hooks`, `make test-conversion`
 - Integration tests that require a live proxy server are intentionally removed.
- - Auth tests: `uv run -m pytest tests/test_codex_auth.py tests/test_gemini_auth.py tests/test_antigravity_auth.py`
+- Auth tests: `uv run -m pytest tests/test_codex_auth.py tests/test_gemini_auth.py tests/test_antigravity_auth.py`
 
 ### Code Quality
 - `make lint` checks and fixes code with ruff.
@@ -188,7 +227,7 @@ This allows creating "reasoning level" variants of the same base model:
 - Gemini/Antigravity require a project ID resolved via `v1internal:loadCodeAssist` (and `onboardUser` fallback).
 - Antigravity and Gemini default model IDs are best-effort; update docs/tests when upstream changes.
 - Codex default models are best-effort; usage-limit errors may be returned as 404 and are mapped to 429.
-- Antigravity Claude thinking signatures are cached in-memory per session (see `anthropic_proxy/signature_cache.py`); supply a stable `metadata.session_id` (or similar) for multi-turn recovery.
+- Antigravity Claude thinking signatures are cached in-memory per session (see `anthropic_proxy/signature_cache.py`). Supply a stable `metadata.session_id` for multi-turn recovery.
 
 ## Code Design Guidelines
 - Keep functions focused and readable (single responsibility).
@@ -197,3 +236,4 @@ This allows creating "reasoning level" variants of the same base model:
 - Maintain testability: small units are easier to verify.
 - Use `uv` for all Python package management (no pip, no venv).
 - Configuration via files (models.yaml, config.json), not environment variables.
+- For converter changes: Use base classes (`BaseConverter`, `BaseStreamingConverter`) and factory functions for consistency.
