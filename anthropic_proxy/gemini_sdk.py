@@ -152,6 +152,8 @@ async def stream_gemini_sdk_request(
 
         url = f"{base_url.rstrip('/')}/v1internal:streamGenerateContent"
         try:
+            # Use separate timeouts: short connect timeout, long read timeout for streaming
+            timeout_config = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
             async with httpx.AsyncClient() as http_client:
                 async with http_client.stream(
                     "POST",
@@ -159,7 +161,7 @@ async def stream_gemini_sdk_request(
                     headers=headers,
                     params={"alt": "sse"},
                     json=envelope,
-                    timeout=60.0,
+                    timeout=timeout_config,
                 ) as response:
                     is_error = getattr(
                         response,
@@ -169,16 +171,41 @@ async def stream_gemini_sdk_request(
                     if is_error:
                         body_bytes = await response.aread()
                         body_text = body_bytes.decode("utf-8", errors="replace")
+                        # Extract retry-after delay from 429 errors if available
+                        retry_after = ""
+                        if response.status_code == 429:
+                            try:
+                                error_data = json.loads(body_text)
+                                if isinstance(error_data, dict):
+                                    error = error_data.get("error", {})
+                                    if isinstance(error, dict):
+                                        details = error.get("details", [])
+                                        for detail in details:
+                                            if isinstance(detail, dict):
+                                                retry_info = detail.get("@type") == "type.googleapis.com/google.rpc.RetryInfo"
+                                                if retry_info and detail.get("retryDelay"):
+                                                    retry_after = f" Retry after: {detail['retryDelay']}"
+                                    elif error.get("status") == "RESOURCE_EXHAUSTED":
+                                        # Also check for quota reset info
+                                        for detail in error.get("details", []):
+                                            if detail.get("reason") == "RATE_LIMIT_EXCEEDED":
+                                                metadata = detail.get("metadata", {})
+                                                if metadata.get("quotaResetTimeStamp"):
+                                                    retry_after = f" Quota resets at: {metadata['quotaResetTimeStamp']}"
+                            except (json.JSONDecodeError, KeyError, TypeError):
+                                pass
+
                         logger.error(
-                            "Gemini Code Assist error %s: %s",
+                            "Gemini Code Assist error %s:%s %s",
                             response.status_code,
+                            retry_after,
                             body_text[:1000],
                         )
                         detail = f"{response.status_code} {response.reason_phrase}"
                         if body_text:
                             detail = f"{detail}: {body_text[:1000]}"
                         raise HTTPException(
-                            status_code=502, detail=f"Gemini SDK error: {detail}"
+                            status_code=502, detail=f"Gemini Code Assist error: {detail}"
                         )
                     async for line in response.aiter_lines():
                         if not line:
@@ -204,11 +231,11 @@ async def stream_gemini_sdk_request(
                         yield parse_gemini_response(payload)
         except httpx.HTTPStatusError as exc:
             detail = f"{exc.response.status_code} {exc.response.reason_phrase}"
-            logger.error(f"Gemini SDK request failed: {detail}")
-            raise HTTPException(status_code=502, detail=f"Gemini SDK error: {detail}") from exc
+            logger.error(f"Gemini Code Assist request failed: {detail}")
+            raise HTTPException(status_code=502, detail=f"Gemini Code Assist error: {detail}") from exc
         except Exception as exc:
-            logger.error(f"Gemini SDK request failed: {exc}")
-            raise HTTPException(status_code=502, detail=f"Gemini SDK error: {exc}") from exc
+            logger.error(f"Gemini Code Assist request failed: {exc}")
+            raise HTTPException(status_code=502, detail=f"Gemini Code Assist error: {exc}") from exc
         return
 
     http_options = _build_http_options(
