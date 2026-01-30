@@ -29,9 +29,11 @@ from .client import (
     get_model_format,
     initialize_custom_models,
     is_antigravity_model,
+    is_claude_code_model,
     is_codex_model,
     is_gemini_model,
 )
+from .claude_code import handle_claude_code_request
 from .codex import handle_codex_request
 from .config import config, setup_logging
 from .converters import (
@@ -453,6 +455,37 @@ async def create_message(raw_request: Request):
         )
 
         model_format = get_model_format(model_id) or "openai"
+
+        # Check for Claude Code subscription models first (special anthropic format)
+        if is_claude_code_model(model_id):
+            provider_model_name = model_config.get("model_name", model_id)
+            logger.info(f"🔗 CLAUDE CODE FORMAT: Model={model_id}, Target={provider_model_name}")
+
+            # Claude Code returns SSE in Anthropic format directly
+            async def claude_code_streaming():
+                async for chunk in handle_claude_code_request(
+                    request,
+                    model_id,
+                    model_name=provider_model_name,
+                ):
+                    yield chunk
+
+            hooked_generator = hook_streaming_response(
+                claude_code_streaming(),
+                request,
+                model_id,
+            )
+            return StreamingResponse(
+                hooked_generator,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
 
         if model_format == "anthropic":
             logger.info(f"🔗 ANTHROPIC FORMAT: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")

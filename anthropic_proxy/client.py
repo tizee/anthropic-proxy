@@ -15,6 +15,11 @@ from .antigravity import (
     DEFAULT_ANTIGRAVITY_MODELS,
     antigravity_auth,
 )
+from .claude_code import (
+    CLAUDE_CODE_API_URL,
+    DEFAULT_CLAUDE_CODE_MODELS,
+    claude_code_auth,
+)
 from .codex import CODEX_API_URL, DEFAULT_CODEX_MODELS, codex_auth
 from .config import config, parse_token_value
 from .gemini import DEFAULT_GEMINI_MODELS, GEMINI_CODE_ASSIST_ENDPOINT, gemini_auth
@@ -25,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 SUPPORTED_FORMATS = {"openai", "anthropic", "gemini"}
-PREFIXED_PROVIDERS = {"codex", "gemini", "antigravity"}
+PREFIXED_PROVIDERS = {"codex", "gemini", "antigravity", "claude-code"}
 
 
 def _normalize_format(value: str | None) -> str | None:
@@ -136,6 +141,13 @@ def load_models_config(config_file=None):
                     model["api_base"] = ANTIGRAVITY_ENDPOINT
                 if "api_key" not in model:
                     model["api_key"] = "antigravity-auth" # Placeholder
+
+            # Apply defaults for Claude Code provider models
+            if model.get("provider") == "claude-code":
+                if "api_base" not in model:
+                    model["api_base"] = CLAUDE_CODE_API_URL
+                if "api_key" not in model:
+                    model["api_key"] = "claude-code-auth"  # Placeholder
 
             if "model_id" not in model or "api_base" not in model:
                 logger.warning(
@@ -306,6 +318,44 @@ def load_antigravity_models():
         logger.debug(f"Registered default Antigravity model: {prefixed_id}")
 
 
+def load_claude_code_models():
+    """Auto-register default Claude Code models if authentication is available."""
+    has_auth = claude_code_auth.has_auth()
+
+    if not has_auth:
+        return
+
+    logger.info("Claude Code authentication detected. Registering default Claude Code models...")
+
+    for model_id, details in DEFAULT_CLAUDE_CODE_MODELS.items():
+        prefixed_id = _prefix_model_id("claude-code", model_id)
+        if prefixed_id in CUSTOM_OPENAI_MODELS:
+            logger.warning(
+                "Skipping default Claude Code model %s because model_id '%s' is already defined.",
+                model_id,
+                prefixed_id,
+            )
+            continue
+
+        CUSTOM_OPENAI_MODELS[prefixed_id] = {
+            "model_id": prefixed_id,
+            "model_name": details["model_name"],
+            "api_base": CLAUDE_CODE_API_URL,
+            "api_key": "dummy",
+            "can_stream": True,
+            "max_tokens": details.get("max_tokens", ModelDefaults.DEFAULT_MAX_TOKENS),
+            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD,
+            "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
+            "extra_headers": {},
+            "extra_body": {},
+            "temperature": 1.0,
+            "format": "anthropic",  # Uses Anthropic format
+            "direct": True,  # Direct mode (no OpenAI conversion)
+            "provider": "claude-code",
+        }
+        logger.debug(f"Registered default Claude Code model: {prefixed_id}")
+
+
 def initialize_custom_models():
     """Initialize custom models. Called when running as main.
 
@@ -316,6 +366,7 @@ def initialize_custom_models():
     load_codex_models()
     load_gemini_models()
     load_antigravity_models()
+    load_claude_code_models()
 
 
 def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
@@ -460,3 +511,10 @@ def is_antigravity_model(model_id: str) -> bool:
     if model_id not in CUSTOM_OPENAI_MODELS:
         return False
     return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "antigravity"
+
+
+def is_claude_code_model(model_id: str) -> bool:
+    """Check if a model is a Claude Code subscription model."""
+    if model_id not in CUSTOM_OPENAI_MODELS:
+        return False
+    return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "claude-code"

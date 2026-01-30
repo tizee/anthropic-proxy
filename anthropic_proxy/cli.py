@@ -113,6 +113,7 @@ def print_config(models_path: Path, config_path: Path, show_api_keys: bool = Fal
 
 def _provider_status_lines() -> list[str]:
     from .antigravity import antigravity_auth
+    from .claude_code import claude_code_auth
     from .codex import codex_auth
     from .gemini import gemini_auth
 
@@ -120,6 +121,7 @@ def _provider_status_lines() -> list[str]:
         ("Codex", codex_auth.has_auth()),
         ("Gemini", gemini_auth.has_auth()),
         ("Antigravity", antigravity_auth.has_auth()),
+        ("Claude Code", claude_code_auth.has_auth()),
     ]
 
     lines = []
@@ -131,6 +133,7 @@ def _provider_status_lines() -> list[str]:
 
 def _default_provider_model_ids() -> list[str]:
     from .antigravity import DEFAULT_ANTIGRAVITY_MODELS
+    from .claude_code import DEFAULT_CLAUDE_CODE_MODELS
     from .codex import DEFAULT_CODEX_MODELS
     from .gemini import DEFAULT_GEMINI_MODELS
 
@@ -138,6 +141,7 @@ def _default_provider_model_ids() -> list[str]:
     model_ids.extend([f"codex/{model_id}" for model_id in DEFAULT_CODEX_MODELS.keys()])
     model_ids.extend([f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS.keys()])
     model_ids.extend([f"antigravity/{model_id}" for model_id in DEFAULT_ANTIGRAVITY_MODELS.keys()])
+    model_ids.extend([f"claude-code/{model_id}" for model_id in DEFAULT_CLAUDE_CODE_MODELS.keys()])
     return model_ids
 
 
@@ -599,8 +603,9 @@ Examples:
 This command opens a browser to authenticate with supported providers.
 
 Examples:
-  anthropic-proxy login --codex      Login to OpenAI Codex subscription
-  anthropic-proxy login --gemini     Login to Google Gemini subscription
+  anthropic-proxy login --codex       Login to OpenAI Codex subscription
+  anthropic-proxy login --gemini      Login to Google Gemini subscription
+  anthropic-proxy login --claude-code Login with Claude Code setup-token
         """,
     )
     login_parser.add_argument(
@@ -617,6 +622,11 @@ Examples:
         "--antigravity",
         action="store_true",
         help="Login to Google Antigravity (Internal) subscription",
+    )
+    login_parser.add_argument(
+        "--claude-code",
+        action="store_true",
+        help="Login with Claude Code setup-token (from 'claude setup-token')",
     )
     login_parser.set_defaults(func=cmd_login)
 
@@ -679,6 +689,11 @@ def cmd_login(args: argparse.Namespace) -> None:
         antigravity_auth.login()
         return
 
+    if getattr(args, "claude_code", False):
+        from .claude_code import claude_code_auth
+        claude_code_auth.login()
+        return
+
     # Default behavior if no flags (or show help)
     # For now, if no flags are provided, we can default to codex OR show help.
     # Given the request is to make it an optional parameter, implies explicit selection.
@@ -687,6 +702,7 @@ def cmd_login(args: argparse.Namespace) -> None:
     print(f"  {Colors.GREEN}--codex{Colors.RESET}       Login to OpenAI Codex subscription")
     print(f"  {Colors.GREEN}--gemini{Colors.RESET}      Login to Google Gemini subscription")
     print(f"  {Colors.GREEN}--antigravity{Colors.RESET} Login to Google Antigravity subscription")
+    print(f"  {Colors.GREEN}--claude-code{Colors.RESET} Login with Claude Code setup-token")
     sys.exit(1)
 
 
