@@ -7,7 +7,6 @@ Used when both source and target formats are Anthropic Messages format.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -116,76 +115,73 @@ async def convert_anthropic_streaming_with_usage_tracking(
     """
     Wrap Anthropic SSE stream to extract and track usage.
 
+    Handles raw chunks from aiter_text() that may contain multiple SSE events
+    or partial events split across chunks.
+
     Parses SSE events to extract:
     - input_tokens, cache_creation_input_tokens, cache_read_input_tokens from message_start
-    - output_tokens from message_delta
+    - output_tokens from message_delta (cumulative, final count)
 
     Uses tiktoken fallback for counting when server doesn't provide usage.
     """
+    from ..types import SSEEventParser
+
     # Server-reported usage (full usage dict to preserve all fields)
+    # message_delta contains cumulative final counts, so we use that
     server_usage: dict = {}
     has_server_usage = False
 
     # Fallback token counting
     fallback_output_tokens = 0
 
+    # Buffer for accumulating partial SSE events
+    parser = SSEEventParser()
+
     async for chunk in stream:
-        # Pass through the chunk
+        # Pass through the chunk immediately
         yield chunk
 
-        # Parse SSE events to extract usage
-        for line in chunk.split("\n"):
-            if not line.startswith("data: "):
-                continue
+        # Parse complete SSE events from buffer
+        events = parser.feed(chunk)
 
-            try:
-                data = json.loads(line[6:])
-                event_type = data.get("type")
+        for event in events:
+            event_type = event.type
 
-                # message_start contains full usage including input_tokens and cache tokens
-                if event_type == "message_start":
-                    msg = data.get("message", {})
-                    usage = msg.get("usage", {})
-                    if usage:
-                        # Merge all usage fields from message_start
-                        server_usage.update(usage)
-                        has_server_usage = True
-                        logger.debug(f"message_start usage: {usage}")
+            # message_start contains initial usage with input_tokens
+            if event_type == "message_start" and event.message:
+                usage = event.message.get("usage", {})
+                if usage:
+                    server_usage.update(usage)
+                    has_server_usage = True
+                    logger.debug(f"message_start usage: {usage}")
 
-                # message_delta contains output_tokens (and potentially updated cache fields)
-                elif event_type == "message_delta":
-                    usage = data.get("usage", {})
-                    if usage:
-                        # Merge usage fields from message_delta (output_tokens, etc.)
-                        server_usage.update(usage)
-                        has_server_usage = True
-                        logger.debug(f"message_delta usage: {usage}")
+            # message_delta contains CUMULATIVE final usage (this is the accurate count)
+            elif event_type == "message_delta" and event.usage:
+                # message_delta.usage contains cumulative counts - use these
+                server_usage.update(event.usage)
+                has_server_usage = True
+                logger.debug(f"message_delta usage (cumulative): {event.usage}")
 
-                # content_block_delta - count tokens for fallback
-                elif event_type == "content_block_delta":
-                    delta = data.get("delta", {})
-                    delta_type = delta.get("type")
+            # content_block_delta - count tokens for fallback
+            elif event_type == "content_block_delta" and event.delta:
+                delta_type = event.delta.get("type")
 
-                    if delta_type == "text_delta":
-                        text = delta.get("text", "")
-                        fallback_output_tokens += len(_tokenizer.encode(text))
-                    elif delta_type == "thinking_delta":
-                        thinking = delta.get("thinking", "")
-                        fallback_output_tokens += len(_tokenizer.encode(thinking))
-                    elif delta_type == "input_json_delta":
-                        partial_json = delta.get("partial_json", "")
-                        fallback_output_tokens += len(_tokenizer.encode(partial_json))
+                if delta_type == "text_delta":
+                    text = event.delta.get("text", "")
+                    fallback_output_tokens += len(_tokenizer.encode(text))
+                elif delta_type == "thinking_delta":
+                    thinking = event.delta.get("thinking", "")
+                    fallback_output_tokens += len(_tokenizer.encode(thinking))
+                elif delta_type == "input_json_delta":
+                    partial_json = event.delta.get("partial_json", "")
+                    fallback_output_tokens += len(_tokenizer.encode(partial_json))
 
-                # content_block_start - count tool name tokens for fallback
-                elif event_type == "content_block_start":
-                    content_block = data.get("content_block", {})
-                    if content_block.get("type") == "tool_use":
-                        tool_name = content_block.get("name", "")
-                        if tool_name:
-                            fallback_output_tokens += len(_tokenizer.encode(tool_name))
-
-            except json.JSONDecodeError:
-                pass
+            # content_block_start - count tool name tokens for fallback
+            elif event_type == "content_block_start" and event.content_block:
+                if event.content_block.get("type") in ("tool_use", "server_tool_use"):
+                    tool_name = event.content_block.get("name", "")
+                    if tool_name:
+                        fallback_output_tokens += len(_tokenizer.encode(tool_name))
 
     # Build ClaudeUsage from server data or fallback
     if has_server_usage:

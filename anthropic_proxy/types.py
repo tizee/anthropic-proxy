@@ -520,6 +520,106 @@ class ClaudeUsage(BaseModel):
     service_tier: str | None = None  # Service tier used (standard, priority, batch)
 
 
+class MessageStartUsage(BaseModel):
+    """Usage data from message_start SSE event.
+
+    Contains initial token counts at the start of streaming.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+
+
+class MessageDeltaUsage(BaseModel):
+    """Usage data from message_delta SSE event.
+
+    Contains CUMULATIVE token counts - this is the final accurate count.
+    From the API docs: "The token counts shown in the usage field of
+    the message_delta event are cumulative."
+    """
+
+    # All fields are cumulative final counts
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    server_tool_use: ServerToolUse | None = None
+
+
+class SSEEvent(BaseModel):
+    """Parsed SSE event with type and data."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    # For message_start
+    message: dict[str, Any] | None = None
+    # For message_delta
+    delta: dict[str, Any] | None = None
+    usage: dict[str, Any] | None = None
+    # For content_block events
+    index: int | None = None
+    content_block: dict[str, Any] | None = None
+
+
+class SSEEventParser:
+    """Parser for Anthropic SSE streaming events.
+
+    Handles raw chunks from aiter_text() that may contain multiple events
+    or partial events split across chunks.
+    """
+
+    def __init__(self):
+        self.buffer = ""
+
+    def feed(self, chunk: str) -> list[SSEEvent]:
+        """Feed a chunk and return list of complete parsed events."""
+        self.buffer += chunk
+        events = []
+
+        # Process complete events (separated by double newline)
+        while "\n\n" in self.buffer:
+            event_str, self.buffer = self.buffer.split("\n\n", 1)
+            event = self._parse_event(event_str)
+            if event:
+                events.append(event)
+
+        return events
+
+    def _parse_event(self, event_str: str) -> SSEEvent | None:
+        """Parse a single SSE event string."""
+        # Extract data line
+        for line in event_str.split("\n"):
+            if line.startswith("data: "):
+                data_str = line[6:].strip()
+                if not data_str or data_str == "[DONE]":
+                    return None
+                try:
+                    data = json.loads(data_str)
+                    return SSEEvent.model_validate(data)
+                except (json.JSONDecodeError, ValueError):
+                    return None
+        return None
+
+    def extract_usage(self, event: SSEEvent) -> tuple[MessageStartUsage | None, MessageDeltaUsage | None]:
+        """Extract usage data from an SSE event.
+
+        Returns:
+            Tuple of (message_start_usage, message_delta_usage)
+        """
+        if event.type == "message_start" and event.message:
+            usage_data = event.message.get("usage", {})
+            if usage_data:
+                return MessageStartUsage.model_validate(usage_data), None
+
+        elif event.type == "message_delta" and event.usage:
+            return None, MessageDeltaUsage.model_validate(event.usage)
+
+        return None, None
+
+
 class GlobalUsageStats(BaseModel):
     """Thread-safe global usage statistics tracking for the proxy session."""
 

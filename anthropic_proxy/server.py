@@ -121,34 +121,59 @@ async def log_requests(request: Request, call_next):
 
 
 async def hook_streaming_response(response_generator, request, model_id):
-    """Wraps a streaming response generator to apply response hooks to each event."""
-    async for event_str in response_generator:
-        try:
-            # The event string is like "event: <type>\ndata: <json>\n\n"
-            if "data: " not in event_str:
-                yield event_str
-                continue
+    """Wraps a streaming response generator to apply response hooks to each event.
 
-            # Split event string to process data part
-            header, _, data_part = event_str.partition("data: ")
+    Handles raw chunks from aiter_text() that may contain multiple SSE events
+    or partial events split across chunks.
+    """
+    buffer = ""
 
-            if data_part.strip() == "[DONE]":
-                yield event_str
-                continue
+    async for chunk in response_generator:
+        # Accumulate chunks in buffer
+        buffer += chunk
 
-            if not data_part.strip():
-                yield event_str
-                continue
+        # Process complete events (separated by double newline)
+        while "\n\n" in buffer:
+            event_str, buffer = buffer.split("\n\n", 1)
+            event_str += "\n\n"  # Add back the delimiter
 
-            data_dict = json.loads(data_part)
-            hooked_data_dict = hook_manager.trigger_response_hooks(data_dict)
-            new_data_str = json.dumps(hooked_data_dict)
+            # Process this complete event
+            processed = _process_single_sse_event(event_str)
+            yield processed
 
-            yield f"{header}data: {new_data_str}\n\n"
+    # Yield any remaining buffer content
+    if buffer.strip():
+        yield buffer
 
-        except (json.JSONDecodeError, IndexError) as e:
-            logger.warning(f"Could not parse and hook streaming event. Error: {e}")
-            yield event_str
+
+def _process_single_sse_event(event_str: str) -> str:
+    """Process a single SSE event string through hooks."""
+    try:
+        # Skip events without data
+        if "data: " not in event_str:
+            return event_str
+
+        # Split event string to process data part
+        header, _, data_part = event_str.partition("data: ")
+
+        # Handle [DONE] marker
+        if data_part.strip() == "[DONE]":
+            return event_str
+
+        # Skip empty data
+        if not data_part.strip():
+            return event_str
+
+        # Parse JSON, apply hooks, and reconstruct
+        data_dict = json.loads(data_part.strip())
+        hooked_data_dict = hook_manager.trigger_response_hooks(data_dict)
+        new_data_str = json.dumps(hooked_data_dict)
+
+        return f"{header}data: {new_data_str}\n\n"
+
+    except json.JSONDecodeError:
+        # Pass through unparseable events unchanged
+        return event_str
 
 
 def parse_claude_api_error(response: httpx.Response) -> dict:
@@ -478,8 +503,15 @@ async def create_message(raw_request: Request):
                 ):
                     yield chunk
 
-            hooked_generator = hook_streaming_response(
+            # Wrap with usage tracking for stats
+            tracked_stream = convert_anthropic_streaming_with_usage_tracking(
                 claude_code_streaming(),
+                request,
+                model_id,
+            )
+
+            hooked_generator = hook_streaming_response(
+                tracked_stream,
                 request,
                 model_id,
             )

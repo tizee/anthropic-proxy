@@ -8,6 +8,7 @@ and automatic prompt caching.
 """
 
 import getpass
+import json
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -533,6 +534,8 @@ async def handle_claude_code_request(
     if thinking_enabled:
         logger.info(f"Thinking config in request: {request_data.get('thinking')}")
 
+    streaming_started = False
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
         try:
             async with client.stream(
@@ -548,7 +551,7 @@ async def handle_claude_code_request(
                         f"Claude Code API error {response.status_code}: {error_str}"
                     )
 
-                    # Check for auth errors
+                    # Check for auth errors (before streaming starts, can raise HTTPException)
                     if response.status_code == 401:
                         raise HTTPException(
                             status_code=401,
@@ -566,21 +569,80 @@ async def handle_claude_code_request(
                     )
 
                 # Stream SSE events directly (already in Anthropic format)
-                async for line in response.aiter_lines():
-                    if line:
-                        yield line + "\n"
+                # Use aiter_text() to preserve exact format including empty lines
+                async for chunk in response.aiter_text():
+                    if chunk:
+                        streaming_started = True
+                        yield chunk
+
+        except httpx.ConnectError as conn_err:
+            logger.error(f"Claude Code connection error: {conn_err}")
+            if streaming_started:
+                # After streaming started, yield SSE error event
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "type": "connection_error",
+                        "message": "Connection to Claude API lost",
+                    },
+                }
+                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Claude Code connection error: {conn_err}",
+                ) from conn_err
+
+        except httpx.TimeoutException as timeout_err:
+            logger.error(f"Claude Code timeout error: {timeout_err}")
+            if streaming_started:
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "type": "timeout_error",
+                        "message": "Request to Claude API timed out",
+                    },
+                }
+                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            else:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Claude Code timeout: {timeout_err}",
+                ) from timeout_err
 
         except httpx.RequestError as e:
             logger.error(f"Claude Code network error: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"Claude Code network error: {e}",
-            ) from e
+            if streaming_started:
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "type": "network_error",
+                        "message": f"Network error: {e}",
+                    },
+                }
+                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Claude Code network error: {e}",
+                ) from e
+
         except HTTPException:
             raise
+
         except Exception as e:
             logger.error(f"Claude Code unexpected error: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Claude Code unexpected error: {e}",
-            ) from e
+            if streaming_started:
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "type": "unexpected_error",
+                        "message": f"Unexpected error: {e}",
+                    },
+                }
+                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Claude Code unexpected error: {e}",
+                ) from e
