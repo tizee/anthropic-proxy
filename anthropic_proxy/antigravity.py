@@ -26,7 +26,7 @@ def _decode(s: str) -> str:
 
 
 # Constants from opencode-antigravity-auth.NoeFabris
-ANTIGRAVITY_CLIENT_ID = "_decode("MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==")"
+ANTIGRAVITY_CLIENT_ID = _decode("MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==")
 ANTIGRAVITY_CLIENT_SECRET = _decode("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=")
 ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback"
 ANTIGRAVITY_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"

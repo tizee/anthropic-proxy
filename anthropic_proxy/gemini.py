@@ -23,7 +23,7 @@ def _decode(s: str) -> str:
 
 
 # Constants
-GEMINI_CLIENT_ID = "_decode("NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t")"
+GEMINI_CLIENT_ID = _decode("NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t")
 GEMINI_CLIENT_SECRET = _decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=")
 GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback"
 GEMINI_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
