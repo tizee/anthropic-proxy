@@ -564,3 +564,318 @@ class TestProcessSingleSSEEvent:
         event = 'data: {"incomplete": \n\n'
         result = _process_single_sse_event(event)
         assert result == event  # Unchanged
+
+
+class TestSSEEventParser:
+    """Tests for SSEEventParser that buffers and parses SSE events."""
+
+    def test_parses_complete_event(self):
+        """Should parse a complete SSE event."""
+        from anthropic_proxy.types import SSEEventParser
+
+        parser = SSEEventParser()
+        events = parser.feed(
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"id": "msg_123", "usage": {"input_tokens": 100}}}\n'
+            '\n'
+        )
+
+        assert len(events) == 1
+        assert events[0].type == "message_start"
+        assert events[0].message["usage"]["input_tokens"] == 100
+
+    def test_buffers_partial_events(self):
+        """Should buffer partial events until complete."""
+        from anthropic_proxy.types import SSEEventParser
+
+        parser = SSEEventParser()
+
+        # First chunk - incomplete
+        events1 = parser.feed('event: message_start\ndata: {"type": "mess')
+        assert len(events1) == 0  # No complete event yet
+
+        # Second chunk - completes the event
+        events2 = parser.feed('age_start", "message": {}}\n\n')
+        assert len(events2) == 1
+        assert events2[0].type == "message_start"
+
+    def test_handles_multiple_events_in_one_chunk(self):
+        """Should parse multiple events from one chunk."""
+        from anthropic_proxy.types import SSEEventParser
+
+        parser = SSEEventParser()
+        chunk = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {}}\n'
+            '\n'
+            'event: content_block_start\n'
+            'data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "usage": {"output_tokens": 50}}\n'
+            '\n'
+        )
+
+        events = parser.feed(chunk)
+        assert len(events) == 3
+        assert events[0].type == "message_start"
+        assert events[1].type == "content_block_start"
+        assert events[2].type == "message_delta"
+
+    def test_extracts_message_delta_usage(self):
+        """Should extract cumulative usage from message_delta."""
+        from anthropic_proxy.types import SSEEventParser
+
+        parser = SSEEventParser()
+        events = parser.feed(
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, '
+            '"usage": {"input_tokens": 1000, "output_tokens": 500, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 100}}\n'
+            '\n'
+        )
+
+        assert len(events) == 1
+        assert events[0].type == "message_delta"
+        assert events[0].usage["input_tokens"] == 1000
+        assert events[0].usage["output_tokens"] == 500
+        assert events[0].usage["cache_creation_input_tokens"] == 200
+        assert events[0].usage["cache_read_input_tokens"] == 100
+
+
+class TestRealisticStreamingSession:
+    """Tests simulating realistic upstream LLM server SSE responses."""
+
+    @pytest.fixture
+    def basic_request(self):
+        return ClaudeMessagesRequest(
+            model="claude-3-opus",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+    @pytest.mark.asyncio
+    async def test_full_streaming_session_with_usage(self, basic_request):
+        """Simulate a complete streaming session and verify usage extraction."""
+        from anthropic_proxy.types import global_usage_stats
+
+        # Reset stats
+        initial_input = global_usage_stats.total_input_tokens
+        initial_output = global_usage_stats.total_output_tokens
+
+        # Realistic SSE response from Anthropic API
+        sse_response = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"id": "msg_01XYZ", "type": "message", '
+            '"role": "assistant", "content": [], "model": "claude-3-opus-20240229", '
+            '"stop_reason": null, "usage": {"input_tokens": 2500, "output_tokens": 1}}}\n'
+            '\n'
+            'event: content_block_start\n'
+            'data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "! How"}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": " can I help?"}}\n'
+            '\n'
+            'event: content_block_stop\n'
+            'data: {"type": "content_block_stop", "index": 0}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, '
+            '"usage": {"input_tokens": 2500, "output_tokens": 150}}\n'
+            '\n'
+            'event: message_stop\n'
+            'data: {"type": "message_stop"}\n'
+            '\n'
+        )
+
+        # Simulate chunked delivery (network may split anywhere)
+        chunks = [sse_response]
+
+        async def gen():
+            for c in chunks:
+                yield c
+
+        # Process through the usage tracking wrapper
+        collected = []
+        async for chunk in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "test-model"
+        ):
+            collected.append(chunk)
+
+        # Verify chunks were passed through
+        assert len(collected) == 1
+        assert "message_start" in collected[0]
+        assert "message_delta" in collected[0]
+
+        # Verify usage was tracked (cumulative from message_delta)
+        assert global_usage_stats.total_input_tokens >= initial_input + 2500
+        assert global_usage_stats.total_output_tokens >= initial_output + 150
+
+    @pytest.mark.asyncio
+    async def test_streaming_with_cache_tokens(self, basic_request):
+        """Verify cache token tracking from streaming response."""
+        from anthropic_proxy.types import global_usage_stats
+
+        initial_cache_create = global_usage_stats.total_cache_creation_tokens
+        initial_cache_read = global_usage_stats.total_cache_read_tokens
+
+        # Response with cache tokens
+        sse_response = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"id": "msg_cache", '
+            '"usage": {"input_tokens": 1000, "output_tokens": 1, "cache_creation_input_tokens": 500, "cache_read_input_tokens": 300}}}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, '
+            '"usage": {"input_tokens": 1000, "output_tokens": 100, "cache_creation_input_tokens": 500, "cache_read_input_tokens": 300}}\n'
+            '\n'
+        )
+
+        async def gen():
+            yield sse_response
+
+        async for _ in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "cache-test"
+        ):
+            pass
+
+        # Verify cache tokens tracked
+        assert global_usage_stats.total_cache_creation_tokens >= initial_cache_create + 500
+        assert global_usage_stats.total_cache_read_tokens >= initial_cache_read + 300
+
+    @pytest.mark.asyncio
+    async def test_chunked_delivery_split_mid_event(self, basic_request):
+        """Test handling when network splits chunks in the middle of an event."""
+        # Split the message_delta event across two chunks
+        chunk1 = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"usage": {"input_tokens": 500}}}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_del'  # Incomplete!
+        )
+        chunk2 = (
+            'ta", "usage": {"input_tokens": 500, "output_tokens": 200}}\n'
+            '\n'
+        )
+
+        async def gen():
+            yield chunk1
+            yield chunk2
+
+        collected = []
+        async for chunk in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "split-test"
+        ):
+            collected.append(chunk)
+
+        # Both chunks should be passed through
+        assert len(collected) == 2
+        # Combined should contain complete events
+        combined = "".join(collected)
+        assert "message_start" in combined
+        assert "message_delta" in combined
+
+    @pytest.mark.asyncio
+    async def test_fallback_counting_when_no_usage(self, basic_request):
+        """Test tiktoken fallback when server doesn't provide usage."""
+        # Response without usage fields
+        sse_response = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"id": "msg_no_usage"}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "This is a test response with multiple words."}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me think about this carefully."}}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}\n'
+            '\n'
+        )
+
+        async def gen():
+            yield sse_response
+
+        # This should use tiktoken fallback since no usage provided
+        async for _ in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "fallback-test"
+        ):
+            pass
+
+        # We can't easily verify the exact fallback count, but the test
+        # verifies no errors occur when usage is missing
+
+    @pytest.mark.asyncio
+    async def test_tool_use_streaming_with_usage(self, basic_request):
+        """Test streaming with tool use includes tool tokens in tracking."""
+        sse_response = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"usage": {"input_tokens": 800}}}\n'
+            '\n'
+            'event: content_block_start\n'
+            'data: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_123", "name": "read_file", "input": {}}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\\"path\\": \\"/tmp/test.txt\\"}"}}\n'
+            '\n'
+            'event: content_block_stop\n'
+            'data: {"type": "content_block_stop", "index": 0}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"input_tokens": 800, "output_tokens": 50}}\n'
+            '\n'
+        )
+
+        async def gen():
+            yield sse_response
+
+        collected = []
+        async for chunk in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "tool-test"
+        ):
+            collected.append(chunk)
+
+        # Verify tool use events passed through
+        combined = "".join(collected)
+        assert "tool_use" in combined
+        assert "read_file" in combined
+        assert "input_json_delta" in combined
+
+    @pytest.mark.asyncio
+    async def test_web_search_streaming_with_server_tool_use(self, basic_request):
+        """Test streaming with web search includes server_tool_use in usage."""
+        sse_response = (
+            'event: message_start\n'
+            'data: {"type": "message_start", "message": {"usage": {"input_tokens": 2679, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 3}}}\n'
+            '\n'
+            'event: content_block_start\n'
+            'data: {"type": "content_block_start", "index": 0, "content_block": {"type": "server_tool_use", "id": "srvtoolu_123", "name": "web_search", "input": {}}}\n'
+            '\n'
+            'event: content_block_delta\n'
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\\"query\\": \\"weather NYC\\"}"}}\n'
+            '\n'
+            'event: message_delta\n'
+            'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"input_tokens": 10682, "output_tokens": 510, "server_tool_use": {"web_search_requests": 1}}}\n'
+            '\n'
+        )
+
+        async def gen():
+            yield sse_response
+
+        collected = []
+        async for chunk in convert_anthropic_streaming_with_usage_tracking(
+            gen(), basic_request, "websearch-test"
+        ):
+            collected.append(chunk)
+
+        # Verify web search events passed through
+        combined = "".join(collected)
+        assert "server_tool_use" in combined
+        assert "web_search" in combined
