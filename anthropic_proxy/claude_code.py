@@ -478,12 +478,28 @@ def process_thinking_config(
     return request_data, True
 
 
+class ClaudeCodeErrorResponse:
+    """Represents an error response from Claude Code API with HTTP status preserved."""
+
+    def __init__(self, status_code: int, error_body: dict[str, Any]):
+        self.status_code = status_code
+        self.error_body = error_body
+
+    def to_json_response(self):
+        """Convert to FastAPI JSONResponse with correct status code."""
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=self.status_code,
+            content=self.error_body,
+        )
+
+
 async def handle_claude_code_request(
     request: ClaudeMessagesRequest,
     model_id: str,
     *,
     model_name: str | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str, None] | ClaudeCodeErrorResponse:
     """
     Handle a request to Claude Code subscription.
 
@@ -492,8 +508,12 @@ async def handle_claude_code_request(
         model_id: The model ID from the request
         model_name: Optional override for the actual model name
 
-    Yields:
-        SSE event strings in Anthropic format
+    Returns:
+        Either a ClaudeCodeErrorResponse (for non-200 responses) or
+        an async generator yielding SSE event strings in Anthropic format.
+
+    Note:
+        Caller MUST check if return value is ClaudeCodeErrorResponse and handle accordingly.
     """
     token = claude_code_auth.get_token()
     if not token:
@@ -540,115 +560,146 @@ async def handle_claude_code_request(
     if thinking_enabled:
         logger.info(f"Thinking config in request: {request_data.get('thinking')}")
 
-    streaming_started = False
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-        try:
-            async with client.stream(
+    # Make the request and check status before returning
+    # This allows us to return proper HTTP status codes for errors
+    try:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        response = await client.send(
+            client.build_request(
                 "POST",
                 CLAUDE_CODE_API_URL,
                 json=request_data,
                 headers=headers,
-            ) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    error_str = error_text.decode("utf-8", errors="replace")
-                    logger.error(
-                        f"Claude Code API error {response.status_code}: {error_str}"
-                    )
+            ),
+            stream=True,
+        )
 
-                    # Check for auth errors (before streaming starts, can raise HTTPException)
-                    if response.status_code == 401:
-                        raise HTTPException(
-                            status_code=401,
-                            detail="Claude Code token is invalid or revoked. Run: anthropic-proxy login --claude-code",
-                        )
-                    elif response.status_code == 403:
-                        raise HTTPException(
-                            status_code=403,
-                            detail="Claude Code access denied. Check your subscription status.",
-                        )
+        if response.status_code != 200:
+            # Read error body and close response
+            error_text = await response.aread()
+            error_str = error_text.decode("utf-8", errors="replace")
+            await response.aclose()
+            await client.aclose()
 
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Claude Code API error: {error_str}",
-                    )
+            logger.error(f"Claude Code API error {response.status_code}: {error_str}")
 
-                # Stream SSE events directly (already in Anthropic format)
-                # Use aiter_text() to preserve exact format including empty lines
-                async for chunk in response.aiter_text():
-                    if chunk:
-                        streaming_started = True
-                        yield chunk
+            # Try to parse upstream error (already in Anthropic format)
+            try:
+                error_data = json.loads(error_str)
+                if error_data.get("type") == "error":
+                    return ClaudeCodeErrorResponse(response.status_code, error_data)
+            except json.JSONDecodeError:
+                pass
 
-        except httpx.ConnectError as conn_err:
-            logger.error(f"Claude Code connection error: {conn_err}")
-            if streaming_started:
-                # After streaming started, yield SSE error event
-                error_event = {
-                    "type": "error",
-                    "error": {
-                        "type": "connection_error",
-                        "message": "Connection to Claude API lost",
-                    },
-                }
-                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-            else:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Claude Code connection error: {conn_err}",
-                ) from conn_err
+            # Construct Anthropic-format error for non-JSON responses
+            error_type_map = {
+                400: "invalid_request_error",
+                401: "authentication_error",
+                403: "permission_error",
+                404: "not_found_error",
+                429: "rate_limit_error",
+                500: "api_error",
+                502: "api_error",
+                503: "overloaded_error",
+                529: "overloaded_error",
+            }
+            error_type = error_type_map.get(response.status_code, "api_error")
+            error_body = {
+                "type": "error",
+                "error": {
+                    "type": error_type,
+                    "message": error_str or f"HTTP {response.status_code}",
+                },
+            }
+            return ClaudeCodeErrorResponse(response.status_code, error_body)
 
-        except httpx.TimeoutException as timeout_err:
-            logger.error(f"Claude Code timeout error: {timeout_err}")
-            if streaming_started:
-                error_event = {
-                    "type": "error",
-                    "error": {
-                        "type": "timeout_error",
-                        "message": "Request to Claude API timed out",
-                    },
-                }
-                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-            else:
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"Claude Code timeout: {timeout_err}",
-                ) from timeout_err
+        # Success - return streaming generator
+        return _stream_claude_code_response(client, response)
 
-        except httpx.RequestError as e:
-            logger.error(f"Claude Code network error: {e}")
-            if streaming_started:
-                error_event = {
-                    "type": "error",
-                    "error": {
-                        "type": "network_error",
-                        "message": f"Network error: {e}",
-                    },
-                }
-                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-            else:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Claude Code network error: {e}",
-                ) from e
+    except httpx.ConnectError as conn_err:
+        logger.error(f"Claude Code connection error: {conn_err}")
+        error_body = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Connection to Claude API failed: {conn_err}",
+            },
+        }
+        return ClaudeCodeErrorResponse(502, error_body)
 
-        except HTTPException:
-            raise
+    except httpx.TimeoutException as timeout_err:
+        logger.error(f"Claude Code timeout error: {timeout_err}")
+        error_body = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Request to Claude API timed out: {timeout_err}",
+            },
+        }
+        return ClaudeCodeErrorResponse(504, error_body)
 
-        except Exception as e:
-            logger.error(f"Claude Code unexpected error: {e}")
-            if streaming_started:
-                error_event = {
-                    "type": "error",
-                    "error": {
-                        "type": "unexpected_error",
-                        "message": f"Unexpected error: {e}",
-                    },
-                }
-                yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Claude Code unexpected error: {e}",
-                ) from e
+    except httpx.RequestError as e:
+        logger.error(f"Claude Code network error: {e}")
+        error_body = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Network error: {e}",
+            },
+        }
+        return ClaudeCodeErrorResponse(502, error_body)
+
+    except Exception as e:
+        logger.error(f"Claude Code unexpected error: {e}")
+        error_body = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Unexpected error: {e}",
+            },
+        }
+        return ClaudeCodeErrorResponse(500, error_body)
+
+
+async def _stream_claude_code_response(
+    client: httpx.AsyncClient,
+    response: httpx.Response,
+) -> AsyncGenerator[str, None]:
+    """
+    Stream SSE events from a successful Claude Code response.
+
+    Args:
+        client: The httpx client (will be closed when done)
+        response: The httpx response to stream from
+
+    Yields:
+        SSE event strings in Anthropic format
+    """
+    try:
+        async for chunk in response.aiter_text():
+            if chunk:
+                yield chunk
+    except httpx.ReadError as e:
+        # Error during streaming - yield SSE error event
+        logger.error(f"Claude Code streaming read error: {e}")
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Streaming read error: {e}",
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    except Exception as e:
+        logger.error(f"Claude Code unexpected streaming error: {e}")
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": f"Unexpected streaming error: {e}",
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    finally:
+        await response.aclose()
+        await client.aclose()

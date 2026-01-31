@@ -296,8 +296,8 @@ async def handle_direct_claude_request(
                     error_event = {
                         "type": "error",
                         "error": {
-                            "type": "connection_error",
-                            "message": "Unable to connect to Claude API"
+                            "type": "api_error",
+                            "message": f"Unable to connect to Claude API: {conn_err}"
                         }
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
@@ -307,8 +307,8 @@ async def handle_direct_claude_request(
                     error_event = {
                         "type": "error",
                         "error": {
-                            "type": "timeout_error",
-                            "message": "Request to Claude API timed out"
+                            "type": "api_error",
+                            "message": f"Request to Claude API timed out: {timeout_err}"
                         }
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
@@ -318,7 +318,7 @@ async def handle_direct_claude_request(
                     error_event = {
                         "type": "error",
                         "error": {
-                            "type": "unexpected_error",
+                            "type": "api_error",
                             "message": f"Unexpected error: {str(e)}"
                         }
                     }
@@ -498,21 +498,26 @@ async def create_message(raw_request: Request):
 
         # Check for Claude Code subscription models first (special anthropic format)
         if is_claude_code_model(model_id):
+            from .claude_code import ClaudeCodeErrorResponse
+
             provider_model_name = model_config.get("model_name", model_id)
             logger.info(f"🔗 CLAUDE CODE FORMAT: Model={model_id}, Target={provider_model_name}")
 
-            # Claude Code returns SSE in Anthropic format directly
-            async def claude_code_streaming():
-                async for chunk in handle_claude_code_request(
-                    request,
-                    model_id,
-                    model_name=provider_model_name,
-                ):
-                    yield chunk
+            # Make the request - may return error response or streaming generator
+            result = await handle_claude_code_request(
+                request,
+                model_id,
+                model_name=provider_model_name,
+            )
 
-            # Wrap with usage tracking for stats
+            # Check if it's an error response - return with correct HTTP status
+            if isinstance(result, ClaudeCodeErrorResponse):
+                logger.info(f"🔗 CLAUDE CODE ERROR: status={result.status_code}")
+                return result.to_json_response()
+
+            # Success - wrap streaming generator with usage tracking
             tracked_stream = convert_anthropic_streaming_with_usage_tracking(
-                claude_code_streaming(),
+                result,
                 request,
                 model_id,
             )
