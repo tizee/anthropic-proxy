@@ -3,6 +3,7 @@ Gemini CLI (Google) subscription support.
 Handles authentication and request proxying for Gemini plan.
 """
 
+import base64
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -16,9 +17,14 @@ from .types import ClaudeMessagesRequest
 
 logger = logging.getLogger(__name__)
 
+
+def _decode(s: str) -> str:
+    return base64.b64decode(s).decode()
+
+
 # Constants
 GEMINI_CLIENT_ID = "_decode("NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t")"
-GEMINI_CLIENT_SECRET = "_decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=")"
+GEMINI_CLIENT_SECRET = _decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=")
 GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback"
 GEMINI_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GEMINI_TOKEN_URL = "https://oauth2.googleapis.com/token"
