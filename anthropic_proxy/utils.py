@@ -774,3 +774,157 @@ def _extract_json_from_error_string(error_str: str, prefix: str) -> None:
                 logger.error(f"{prefix} failed_generation: {error_json['failed_generation']}")
         except json.JSONDecodeError:
             pass
+
+
+def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Sanitize messages to comply with Anthropic API requirements.
+
+    Uses single-pass validate-and-fix-on-the-fly approach:
+    - Iterates through messages assuming they're valid
+    - On first error, copies previous valid messages to result buffer
+    - Continues with fix logic from that point
+    - If no errors found, returns original list (zero-copy)
+
+    Complexity: O(N) single pass, zero allocations for valid messages.
+
+    Fixes the following issues:
+    1. User messages incorrectly inserted between tool_use and tool_result
+    2. Scattered tool_results across multiple user messages
+    3. Empty content in messages (except final assistant message)
+    4. Orphaned tool_use without corresponding tool_result
+
+    Args:
+        messages: List of message dicts in Anthropic format
+
+    Returns:
+        Original messages if valid, or sanitized copy if fixes were needed
+    """
+    if not messages:
+        return messages
+
+    # State for validation/fix
+    pending_tool_use_ids: set[str] = set()
+
+    # Fix mode state (only allocated when needed)
+    result: list[dict[str, Any]] | None = None  # None = still validating
+    buffered_tool_results: list[dict[str, Any]] = []
+    deferred_user_messages: list[dict[str, Any]] = []
+
+    def enter_fix_mode(error_index: int) -> None:
+        """Switch to fix mode, copying all valid messages up to error_index."""
+        nonlocal result
+        if result is None:
+            result = list(messages[:error_index])
+            logger.warning(f"Sanitizing messages: entering fix mode at message {error_index}")
+
+    def flush_tool_results() -> None:
+        if result is not None and buffered_tool_results:
+            result.append({"role": "user", "content": list(buffered_tool_results)})
+            buffered_tool_results.clear()
+
+    def flush_deferred() -> None:
+        if result is not None and deferred_user_messages:
+            result.extend(deferred_user_messages)
+            deferred_user_messages.clear()
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role")
+        content = msg.get("content", [])
+        is_final = i == len(messages) - 1
+
+        # Check empty content
+        if not content:
+            if is_final and role == "assistant":
+                if result is not None:
+                    result.append(msg)
+            else:
+                enter_fix_mode(i)
+            continue
+
+        if role == "assistant":
+            if pending_tool_use_ids:
+                enter_fix_mode(i)
+                for tid in pending_tool_use_ids:
+                    buffered_tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": "No result provided (tool call was interrupted)",
+                        "is_error": True,
+                    })
+                pending_tool_use_ids.clear()
+                flush_tool_results()
+                flush_deferred()
+
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_id = block.get("id")
+                        if tool_id:
+                            pending_tool_use_ids.add(tool_id)
+
+            if result is not None:
+                result.append(msg)
+
+        elif role == "user":
+            tool_result_ids: set[str] = set()
+            tool_results: list[dict[str, Any]] = []
+            other_content: list[dict[str, Any]] = []
+
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_results.append(block)
+                        tid = block.get("tool_use_id")
+                        if tid:
+                            tool_result_ids.add(tid)
+                    else:
+                        other_content.append(block)
+            elif isinstance(content, str):
+                other_content.append({"type": "text", "text": content})
+
+            if pending_tool_use_ids:
+                if not tool_result_ids:
+                    enter_fix_mode(i)
+                    deferred_user_messages.append(msg)
+                    continue
+
+                if other_content and result is None:
+                    enter_fix_mode(i)
+
+                pending_tool_use_ids -= tool_result_ids
+
+                if result is not None:
+                    buffered_tool_results.extend(tool_results)
+                    if other_content:
+                        deferred_user_messages.append({"role": "user", "content": other_content})
+                    if not pending_tool_use_ids:
+                        flush_tool_results()
+                        flush_deferred()
+                else:
+                    if pending_tool_use_ids:
+                        enter_fix_mode(i)
+                        buffered_tool_results.extend(tool_results)
+                        if other_content:
+                            deferred_user_messages.append({"role": "user", "content": other_content})
+            else:
+                if result is not None:
+                    result.append(msg)
+
+        else:
+            if result is not None:
+                result.append(msg)
+
+    if pending_tool_use_ids:
+        enter_fix_mode(len(messages))
+        for tid in pending_tool_use_ids:
+            buffered_tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tid,
+                "content": "No result provided (tool call was interrupted or context was compacted)",
+                "is_error": True,
+            })
+        flush_tool_results()
+        flush_deferred()
+
+    return messages if result is None else result

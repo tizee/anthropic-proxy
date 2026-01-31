@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 from .config_manager import load_auth_file, save_auth_file
 from .types import ClaudeMessagesRequest
+from .utils import sanitize_anthropic_messages
 
 logger = logging.getLogger(__name__)
 
@@ -503,6 +504,11 @@ async def handle_claude_code_request(
 
     # Prepare request body
     request_data = request.model_dump(exclude_none=True)
+
+    # Sanitize messages to fix orphaned tool_use and empty content issues
+    # This handles edge cases from context compaction or interrupted streams
+    if "messages" in request_data:
+        request_data["messages"] = sanitize_anthropic_messages(request_data["messages"])
 
     # Use the actual model name for the API call
     target_model = model_name or model_id

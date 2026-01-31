@@ -522,17 +522,27 @@ class AnthropicStreamingConverter:
         return event_str
 
     def _send_message_delta_event(self, stop_reason: str, output_tokens: int) -> str:
-        """Send message_delta event with output token usage information."""
+        """Send message_delta event with output token usage information.
+
+        If server usage data is available, include input_tokens to correct
+        the initial estimate sent in message_start.
+        """
+        usage_data: dict = {
+            "output_tokens": output_tokens,
+        }
+        # Include input_tokens if we have server-reported usage
+        # This corrects the locally-estimated value sent in message_start
+        if self.has_server_usage and self.input_tokens > 0:
+            usage_data["input_tokens"] = self.input_tokens
+
         event_data = {
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {
-                "output_tokens": output_tokens,
-            },
+            "usage": usage_data,
         }
         event_str = f"event: message_delta\ndata: {json.dumps(event_data)}\n\n"
         logger.debug(
-            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}"
+            f"STREAMING_EVENT: message_delta - stop_reason: {stop_reason}, output_tokens: {output_tokens}, input_tokens: {usage_data.get('input_tokens', 'N/A')}"
         )
         return event_str
 

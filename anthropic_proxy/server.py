@@ -58,6 +58,7 @@ from .utils import (
     _extract_error_details,
     _format_error_message,
     log_openai_api_error,
+    sanitize_anthropic_messages,
     update_global_usage_stats,
 )
 
@@ -235,6 +236,12 @@ async def handle_direct_claude_request(
 
         # Prepare request payload - use original Claude format
         claude_request_data = request.model_dump(exclude_none=True)
+
+        # Sanitize messages to fix orphaned tool_use and empty content issues
+        if "messages" in claude_request_data:
+            claude_request_data["messages"] = sanitize_anthropic_messages(
+                claude_request_data["messages"]
+            )
 
         # Update model name to the actual model name for the API call
         claude_request_data["model"] = model_config.get("model_name", model_id)
