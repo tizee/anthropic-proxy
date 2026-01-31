@@ -12,8 +12,8 @@ from .converters import (
     extract_usage_from_openai_response,
     parse_function_calls_from_thinking,
 )
-from .types import ClaudeUsage
 from .gemini_schema_sanitizer import clean_gemini_schema
+from .types import ClaudeUsage
 
 
 def extract_usage_from_claude_response(
@@ -116,11 +116,11 @@ def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
                     if key in unsupported_keywords:
                         return False, f"Unsupported keyword '{key}' found at {path}"
                     if not check_nested_object(value, f"{path}.{key}" if path else key):
-                        return False, f"Unsupported keyword found in nested object"
+                        return False, "Unsupported keyword found in nested object"
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
                     if not check_nested_object(item, f"{path}[{i}]"):
-                        return False, f"Unsupported keyword found in list"
+                        return False, "Unsupported keyword found in list"
             return True, ""
 
         valid, message = check_nested_object(params)

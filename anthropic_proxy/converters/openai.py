@@ -15,13 +15,6 @@ from typing import Any
 
 from openai.types.chat import ChatCompletion
 
-from ._openai_impl import (
-    convert_openai_response_to_anthropic,
-    convert_openai_streaming_response_to_anthropic,
-    AnthropicStreamingConverter,
-    extract_usage_from_openai_response,
-    parse_function_calls_from_thinking,
-)
 from ..types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -39,6 +32,10 @@ from ..types import (
     ClaudeToolChoiceNone,
     ClaudeToolChoiceTool,
     generate_unique_id,
+)
+from ._openai_impl import (
+    convert_openai_response_to_anthropic,
+    convert_openai_streaming_response_to_anthropic,
 )
 from .base import BaseConverter, BaseStreamingConverter
 
@@ -406,7 +403,6 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
         original_request: ClaudeMessagesRequest,
     ) -> AsyncIterator[str]:
         """Convert OpenAI streaming response to Anthropic SSE format."""
-        from ._openai_impl import convert_openai_streaming_response_to_anthropic
 
         async for event in convert_openai_streaming_response_to_anthropic(
             stream, original_request

@@ -11,16 +11,6 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ._gemini_impl import (
-    anthropic_to_gemini_request,
-    anthropic_to_gemini_sdk_params,
-    ensure_tool_ids,
-    _clean_malformed_parts,
-)
-from ._gemini_streaming import (
-    convert_gemini_streaming_response_to_anthropic,
-    GeminiStreamingConverter as GeminiStreamingConverterImpl,
-)
 from ..types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -41,6 +31,12 @@ from ..types import (
     ClaudeToolChoiceTool,
     ClaudeUsage,
     generate_unique_id,
+)
+from ._gemini_impl import (
+    anthropic_to_gemini_request,
+)
+from ._gemini_streaming import (
+    convert_gemini_streaming_response_to_anthropic,
 )
 from .base import BaseConverter, BaseStreamingConverter
 
@@ -404,7 +400,6 @@ class GeminiStreamingConverter(BaseStreamingConverter):
         original_request: ClaudeMessagesRequest,
     ) -> AsyncIterator[str]:
         """Convert Gemini streaming response to Anthropic SSE format."""
-        from ._gemini_streaming import convert_gemini_streaming_response_to_anthropic
 
         async for event in convert_gemini_streaming_response_to_anthropic(
             stream,

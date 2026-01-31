@@ -32,7 +32,33 @@ CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for C
 # Set CLAUDE_CODE_CACHE_RETENTION=long for 1-hour TTL, otherwise default 5 minutes
 CACHE_RETENTION_ENV = "CLAUDE_CODE_CACHE_RETENTION"
 
+# Beta headers for different features
+BETA_FEATURES_BASE = "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+BETA_THINKING_FEATURE = "interleaved-thinking-2025-05-14"
+
+# Thinking budget mapping (matches Claude Code /thinking command)
+THINKING_BUDGET_MAP = {
+    "minimal": 1024,
+    "low": 2048,
+    "medium": 8192,
+    "high": 16384,
+}
+
+# Models that support thinking/reasoning (Claude 4.5 only)
+THINKING_CAPABLE_MODELS = {
+    "claude-opus-4-5",
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+}
+
+# Minimum output space required beyond thinking budget
+MIN_OUTPUT_BUFFER = 1024
+
 # Default models available via Claude Code subscription (Claude 4.5 only).
+# max_tokens matches Claude Code behavior (64K for all 4.5 models)
 DEFAULT_CLAUDE_CODE_MODELS = {
     # Claude 4.5 Opus
     "claude-opus-4-5": {
@@ -187,12 +213,70 @@ class ClaudeCodeAuth:
 claude_code_auth = ClaudeCodeAuth()
 
 
-def build_claude_code_headers(token: str) -> dict[str, str]:
+def is_thinking_capable_model(model_name: str) -> bool:
+    """Check if a model supports thinking/reasoning mode."""
+    # Strip prefix if present
+    if model_name.startswith("claude-code/"):
+        model_name = model_name[len("claude-code/"):]
+    return model_name in THINKING_CAPABLE_MODELS
+
+
+def get_thinking_budget(thinking_config: Any) -> int | None:
+    """
+    Extract thinking budget from thinking configuration.
+
+    Supports:
+    - { type: "enabled", budget_tokens: N }
+    - { type: "enabled" } -> uses medium (8192) as default
+    - String level: "minimal", "low", "medium", "high"
+    """
+    if thinking_config is None:
+        return None
+
+    if isinstance(thinking_config, dict):
+        config_type = thinking_config.get("type")
+        if config_type == "disabled":
+            return None
+        if config_type == "enabled":
+            budget = thinking_config.get("budget_tokens")
+            if budget is not None:
+                return int(budget)
+            # Default to medium if no budget specified
+            return THINKING_BUDGET_MAP["medium"]
+
+    # Handle object with .type attribute (Pydantic model)
+    if hasattr(thinking_config, "type"):
+        if thinking_config.type == "disabled":
+            return None
+        if thinking_config.type == "enabled":
+            budget = getattr(thinking_config, "budget_tokens", None)
+            if budget is not None:
+                return int(budget)
+            return THINKING_BUDGET_MAP["medium"]
+
+    # Handle string level (minimal, low, medium, high)
+    if isinstance(thinking_config, str):
+        level = thinking_config.lower()
+        if level in THINKING_BUDGET_MAP:
+            return THINKING_BUDGET_MAP[level]
+
+    return None
+
+
+def build_claude_code_headers(token: str, thinking_enabled: bool = False) -> dict[str, str]:
     """
     Build headers required for Claude Code OAuth token requests.
 
     Must impersonate Claude CLI to avoid token rejection.
+
+    Args:
+        token: The OAuth/setup token
+        thinking_enabled: Whether thinking mode is enabled (adds beta header)
     """
+    beta_features = BETA_FEATURES_BASE
+    if thinking_enabled:
+        beta_features = f"{beta_features},{BETA_THINKING_FEATURE}"
+
     return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
@@ -200,7 +284,7 @@ def build_claude_code_headers(token: str) -> dict[str, str]:
         "user-agent": f"claude-cli/{CLAUDE_CODE_VERSION} (external, cli)",
         "x-app": "cli",
         "anthropic-dangerous-direct-browser-access": "true",
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+        "anthropic-beta": beta_features,
         "accept": "application/json",
     }
 
@@ -309,6 +393,89 @@ def inject_system_prompt(request_data: dict[str, Any]) -> dict[str, Any]:
     return inject_system_prompt_with_cache(request_data)
 
 
+def get_model_max_tokens(model_name: str) -> int:
+    """Get the max_tokens limit for a model."""
+    # Strip prefix if present
+    if model_name.startswith("claude-code/"):
+        model_name = model_name[len("claude-code/"):]
+
+    model_config = DEFAULT_CLAUDE_CODE_MODELS.get(model_name)
+    if model_config:
+        return model_config.get("max_tokens", 64000)
+
+    # Default to 64K for unknown Claude 4.5 models
+    return 64000
+
+
+def process_thinking_config(
+    request_data: dict[str, Any],
+    model_name: str,
+) -> tuple[dict[str, Any], bool]:
+    """
+    Process thinking configuration in the request.
+
+    - Validates model supports thinking
+    - Extracts/normalizes thinking budget
+    - Ensures max_tokens > thinking_budget + 1024
+    - Caps max_tokens at model's limit (64K for 4.5 models)
+
+    Args:
+        request_data: The request data dict
+        model_name: The target model name
+
+    Returns:
+        Tuple of (modified request_data, thinking_enabled)
+    """
+    model_max = get_model_max_tokens(model_name)
+
+    # Cap user's max_tokens at model limit
+    user_max_tokens = request_data.get("max_tokens")
+    if user_max_tokens is not None and user_max_tokens > model_max:
+        logger.info(f"Capping max_tokens from {user_max_tokens} to {model_max}")
+        request_data["max_tokens"] = model_max
+
+    thinking_config = request_data.get("thinking")
+    thinking_budget = get_thinking_budget(thinking_config)
+
+    if thinking_budget is None:
+        # No thinking requested, remove thinking field if present
+        request_data.pop("thinking", None)
+        return request_data, False
+
+    # Check if model supports thinking
+    if not is_thinking_capable_model(model_name):
+        logger.warning(
+            f"Model {model_name} does not support thinking mode. Disabling thinking."
+        )
+        request_data.pop("thinking", None)
+        return request_data, False
+
+    # Normalize thinking configuration to Anthropic API format
+    # API expects: { "type": "enabled", "budget_tokens": N }
+    # budget_tokens is REQUIRED when type is "enabled"
+    request_data["thinking"] = {
+        "type": "enabled",
+        "budget_tokens": thinking_budget,
+    }
+
+    logger.info(f"Thinking enabled: budget_tokens={thinking_budget}")
+
+    # Ensure max_tokens > thinking_budget + 1024
+    max_tokens = request_data.get("max_tokens") or model_max
+    min_required = thinking_budget + MIN_OUTPUT_BUFFER
+
+    if max_tokens < min_required:
+        # Adjust to minimum required, but don't exceed model limit
+        adjusted = min(min_required, model_max)
+        logger.info(
+            f"Adjusting max_tokens from {max_tokens} to {adjusted} "
+            f"(thinking_budget={thinking_budget} + buffer={MIN_OUTPUT_BUFFER})"
+        )
+        request_data["max_tokens"] = adjusted
+
+    return request_data, True
+
+
 async def handle_claude_code_request(
     request: ClaudeMessagesRequest,
     model_id: str,
@@ -333,9 +500,6 @@ async def handle_claude_code_request(
             detail="No Claude Code token found. Run: anthropic-proxy login --claude-code",
         )
 
-    # Build headers with CLI impersonation
-    headers = build_claude_code_headers(token)
-
     # Prepare request body
     request_data = request.model_dump(exclude_none=True)
 
@@ -345,6 +509,12 @@ async def handle_claude_code_request(
     if target_model.startswith("claude-code/"):
         target_model = target_model[len("claude-code/"):]
     request_data["model"] = target_model
+
+    # Process thinking configuration (validate, normalize, adjust max_tokens)
+    request_data, thinking_enabled = process_thinking_config(request_data, target_model)
+
+    # Build headers with CLI impersonation (include thinking beta if enabled)
+    headers = build_claude_code_headers(token, thinking_enabled=thinking_enabled)
 
     # Inject required system prompt with cache control
     request_data = inject_system_prompt_with_cache(request_data)
@@ -356,8 +526,12 @@ async def handle_claude_code_request(
     request_data["stream"] = True
 
     cache_ttl = get_cache_ttl() or "5m (default)"
-    logger.info(f"Claude Code request: model={target_model}, cache_ttl={cache_ttl}")
-    logger.debug(f"Claude Code headers: {list(headers.keys())}")
+    thinking_info = f", thinking_budget={request_data['thinking']['budget_tokens']}" if thinking_enabled else ""
+    logger.info(f"Claude Code request: model={target_model}, cache_ttl={cache_ttl}{thinking_info}")
+
+    # Debug: log the thinking config being sent
+    if thinking_enabled:
+        logger.info(f"Thinking config in request: {request_data.get('thinking')}")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
         try:

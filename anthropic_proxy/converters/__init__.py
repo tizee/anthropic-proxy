@@ -10,31 +10,36 @@ Supported formats:
 - Gemini GenerateContent
 """
 
-from .base import BaseConverter, BaseStreamingConverter
-from .anthropic import AnthropicConverter
-from .anthropic import AnthropicStreamingConverter as AnthropicIdentityStreamingConverter
-from .openai import OpenAIConverter, OpenAIToAnthropicStreamingConverter
-from .gemini import GeminiConverter, GeminiStreamingConverter
-
-# Re-export implementation functions for backward compatibility
-from ._openai_impl import (
-    convert_openai_response_to_anthropic,
-    convert_openai_streaming_response_to_anthropic,
-    AnthropicStreamingConverter,  # Legacy class, takes original_request arg
-    extract_usage_from_openai_response,
-    parse_function_calls_from_thinking,
-)
+from ..gemini_schema_sanitizer import clean_gemini_schema
 from ._gemini_impl import (
+    _clean_malformed_parts,
     anthropic_to_gemini_request,
     anthropic_to_gemini_sdk_params,
     ensure_tool_ids,
-    _clean_malformed_parts,
+)
+from ._gemini_streaming import (
+    GeminiStreamingConverter as GeminiStreamingConverterImpl,
 )
 from ._gemini_streaming import (
     convert_gemini_streaming_response_to_anthropic,
-    GeminiStreamingConverter as GeminiStreamingConverterImpl,
 )
-from ..gemini_schema_sanitizer import clean_gemini_schema
+
+# Re-export implementation functions for backward compatibility
+from ._openai_impl import (
+    AnthropicStreamingConverter,  # Legacy class, takes original_request arg
+    convert_openai_response_to_anthropic,
+    convert_openai_streaming_response_to_anthropic,
+    extract_usage_from_openai_response,
+    parse_function_calls_from_thinking,
+)
+from .anthropic import AnthropicConverter
+from .anthropic import (
+    AnthropicStreamingConverter as AnthropicIdentityStreamingConverter,
+)
+from .anthropic import convert_anthropic_streaming_with_usage_tracking
+from .base import BaseConverter, BaseStreamingConverter
+from .gemini import GeminiConverter, GeminiStreamingConverter
+from .openai import OpenAIConverter, OpenAIToAnthropicStreamingConverter
 
 # Format identifiers
 FORMAT_ANTHROPIC = "anthropic"
@@ -114,4 +119,6 @@ __all__ = [
     "ensure_tool_ids",
     "convert_gemini_streaming_response_to_anthropic",
     "clean_gemini_schema",
+    # Anthropic streaming with usage tracking
+    "convert_anthropic_streaming_with_usage_tracking",
 ]

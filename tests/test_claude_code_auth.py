@@ -6,14 +6,19 @@ from anthropic_proxy.claude_code import (
     CACHE_RETENTION_ENV,
     CLAUDE_CODE_SYSTEM_PREFIX,
     DEFAULT_CLAUDE_CODE_MODELS,
+    THINKING_BUDGET_MAP,
     ClaudeCodeAuth,
     build_cache_control,
     build_claude_code_headers,
     get_cache_ttl,
+    get_model_max_tokens,
+    get_thinking_budget,
     inject_message_cache_control,
     inject_system_prompt,
     inject_system_prompt_with_cache,
     is_oauth_token,
+    is_thinking_capable_model,
+    process_thinking_config,
 )
 
 

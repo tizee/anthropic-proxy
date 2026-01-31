@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-
 # In-memory cache: key -> {"signature": str, "timestamp": float}
 _SIGNATURE_CACHE: dict[str, dict[str, float | str]] = {}
 _TOOL_SIGNATURE_CACHE: dict[str, dict[str, float | str]] = {}

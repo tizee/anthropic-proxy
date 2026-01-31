@@ -22,6 +22,7 @@ from openai.types.chat import (
 )
 
 from .antigravity import handle_antigravity_request
+from .claude_code import handle_claude_code_request
 from .client import (
     CUSTOM_OPENAI_MODELS,
     create_claude_client,
@@ -33,7 +34,6 @@ from .client import (
     is_codex_model,
     is_gemini_model,
 )
-from .claude_code import handle_claude_code_request
 from .codex import handle_codex_request
 from .config import config, setup_logging
 from .converters import (
@@ -41,9 +41,10 @@ from .converters import (
     GeminiStreamingConverter,
     OpenAIConverter,
     OpenAIToAnthropicStreamingConverter,
+    convert_anthropic_streaming_with_usage_tracking,
+    convert_gemini_streaming_response_to_anthropic,
     convert_openai_response_to_anthropic,
     convert_openai_streaming_response_to_anthropic,
-    convert_gemini_streaming_response_to_anthropic,
 )
 from .gemini import handle_gemini_request
 from .hook import hook_manager, load_all_plugins
@@ -293,8 +294,15 @@ async def handle_direct_claude_request(
                 finally:
                     await claude_client.aclose()
 
-            return StreamingResponse(
+            # Wrap with usage tracking
+            tracked_stream = convert_anthropic_streaming_with_usage_tracking(
                 direct_streaming_generator(),
+                request,
+                model_id,
+            )
+
+            return StreamingResponse(
+                tracked_stream,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",

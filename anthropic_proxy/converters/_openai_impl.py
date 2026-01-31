@@ -11,6 +11,8 @@ import json
 import logging
 import re
 import uuid
+
+import tiktoken
 from openai import AsyncStream
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
@@ -26,6 +28,9 @@ from ..types import (
 from ..utils import log_openai_api_error
 
 logger = logging.getLogger(__name__)
+
+# Tokenizer for fallback token counting
+_tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list]:
@@ -426,6 +431,8 @@ class AnthropicStreamingConverter:
         self.input_tokens = original_request.calculate_tokens()
         self.completion_tokens = 0
         self.output_tokens = 0
+        self.fallback_output_tokens = 0  # Tiktoken-based fallback counter
+        self.has_server_usage = False  # Track if we received server usage data
         self.openai_chunks_received = 0
 
     def _send_message_start_event(self) -> str:
@@ -703,16 +710,7 @@ class AnthropicStreamingConverter:
                 json_acc = tool_info["json_accumulator"]
                 if self.is_malformed_tool_json(json_acc):
                     repaired, was_repaired = self.try_repair_tool_json(json_acc)
-                    if repaired:
-                        if tool_info["content_block_index"] < len(self.current_content_blocks):
-                            self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
-                        else:
-                            logger.error(
-                                "🔧 TOOL_DEBUG: content_block_index out of range during finalization (%s >= %s)",
-                                tool_info["content_block_index"],
-                                len(self.current_content_blocks),
-                            )
-                    elif was_repaired:
+                    if repaired or was_repaired:
                         if tool_info["content_block_index"] < len(self.current_content_blocks):
                             self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
                         else:
@@ -727,13 +725,17 @@ class AnthropicStreamingConverter:
         self.active_tool_indices = set()
         self.is_tool_use = False
 
-        # Calculate final tokens and send completion events
-        final_output_tokens = _calculate_accurate_output_tokens(
-            self.accumulated_text,
-            self.accumulated_thinking,
-            self.output_tokens,
-            "Finalization",
-        )
+        # Calculate final tokens: use server-reported if available, otherwise fallback
+        if self.has_server_usage and self.output_tokens > 0:
+            final_output_tokens = self.output_tokens
+            logger.debug(
+                f"Finalization - Using server-reported tokens: {final_output_tokens}"
+            )
+        else:
+            final_output_tokens = self.fallback_output_tokens
+            logger.debug(
+                f"Finalization - Using tiktoken fallback: {final_output_tokens}"
+            )
 
         yield self._send_message_delta_event(stop_reason, final_output_tokens)
         yield self._send_message_stop_event()
@@ -759,9 +761,9 @@ class AnthropicStreamingConverter:
         # Send text delta
         yield self._send_content_block_delta_event("text_delta", content)
 
-        # Update accumulated text
+        # Update accumulated text and fallback token count
         self.accumulated_text += content
-        self.output_tokens += 1
+        self.fallback_output_tokens += len(_tokenizer.encode(content))
 
     async def _handle_thinking_delta(self, content: str):
         """Handle thinking content deltas."""
@@ -789,9 +791,9 @@ class AnthropicStreamingConverter:
         # Send thinking delta
         yield self._send_content_block_delta_event("thinking_delta", content)
 
-        # Update accumulated thinking
+        # Update accumulated thinking and fallback token count
         self.accumulated_thinking += content
-        self.output_tokens += 1
+        self.fallback_output_tokens += len(_tokenizer.encode(content))
         if self.thinking_content_block_index is not None:
             self.current_content_blocks[self.thinking_content_block_index]["thinking"] += content
 
@@ -864,6 +866,10 @@ class AnthropicStreamingConverter:
             "tool_use", id=tool_call_id, name=tool_name
         )
 
+        # Count tokens for tool name
+        if tool_name:
+            self.fallback_output_tokens += len(_tokenizer.encode(tool_name))
+
         # Add tool_use block to current content blocks for tracking
         self.current_content_blocks.append(
             {"type": "tool_use", "id": tool_call_id, "name": tool_name, "input": {}}
@@ -897,6 +903,8 @@ class AnthropicStreamingConverter:
             else:
                 tool_info["json_accumulator"] += arg_str
             yield self._send_content_block_delta_event("input_json_delta", arg_str)
+            # Count tokens for tool call arguments
+            self.fallback_output_tokens += len(_tokenizer.encode(arg_str))
 
         # Try to parse partial JSON to update input
         if tool_info["json_accumulator"]:
@@ -916,6 +924,23 @@ class AnthropicStreamingConverter:
     async def process_chunk(self, chunk: ChatCompletionChunk):
         """Process a single OpenAI stream chunk and yield Anthropic events."""
         self.openai_chunks_received += 1
+
+        # Extract usage from chunk (OpenAI sends this in final chunk when stream_options.include_usage=true)
+        if hasattr(chunk, "usage") and chunk.usage:
+            usage = chunk.usage
+            self.has_server_usage = True
+            if hasattr(usage, "prompt_tokens") and usage.prompt_tokens:
+                self.input_tokens = usage.prompt_tokens
+            if hasattr(usage, "completion_tokens") and usage.completion_tokens:
+                self.output_tokens = usage.completion_tokens
+            # Store completion_tokens_details if available (for reasoning_tokens)
+            if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
+                details = usage.completion_tokens_details
+                if hasattr(details, "reasoning_tokens") and details.reasoning_tokens:
+                    self.completion_tokens = details.reasoning_tokens
+            logger.debug(
+                f"Extracted server usage: input={self.input_tokens}, output={self.output_tokens}, fallback={self.fallback_output_tokens}"
+            )
 
         # Extract delta and finish reason
         if chunk.choices and len(chunk.choices) > 0:
@@ -960,19 +985,6 @@ class AnthropicStreamingConverter:
             async for event in self._prepare_finalization(stop_reason):
                 yield event
             self.has_sent_stop_reason = True
-
-
-def _calculate_accurate_output_tokens(
-    text: str, thinking: str, reported_tokens: int, context: str
-) -> int:
-    """Use server-reported tokens for proxy service (no manual calculation needed)."""
-    # For a proxy service, always use the authoritative usage data from the API
-    final_tokens = reported_tokens
-
-    logger.debug(
-        f"{context} - Token usage - Reported: {reported_tokens}, Using: {final_tokens} (server-reported)"
-    )
-    return final_tokens
 
 
 async def convert_openai_streaming_response_to_anthropic(
@@ -1063,13 +1075,17 @@ async def convert_openai_streaming_response_to_anthropic(
                 logger.debug("STREAMING_EVENT: content_block_stop - index: 0")
                 yield converter._send_content_block_stop_event()
 
-            # Calculate final tokens and send completion events
-            final_output_tokens = _calculate_accurate_output_tokens(
-                converter.accumulated_text,
-                converter.accumulated_thinking,
-                converter.output_tokens,
-                "No finish reason received",
-            )
+            # Calculate final tokens: use server-reported if available, otherwise fallback
+            if converter.has_server_usage and converter.output_tokens > 0:
+                final_output_tokens = converter.output_tokens
+                logger.debug(
+                    f"No finish reason - Using server-reported tokens: {final_output_tokens}"
+                )
+            else:
+                final_output_tokens = converter.fallback_output_tokens
+                logger.debug(
+                    f"No finish reason - Using tiktoken fallback: {final_output_tokens}"
+                )
 
             # Determine appropriate stop_reason based on content and pending finish_reason
             if (
@@ -1095,16 +1111,14 @@ def _log_streaming_completion(
 ):
     """Log a detailed summary of the streaming completion."""
     try:
-        # Calculate final tokens for tracking
-        final_output_tokens = _calculate_accurate_output_tokens(
-            converter.accumulated_text,
-            converter.accumulated_thinking,
-            converter.output_tokens,
-            "Final streaming cleanup",
-        )
+        # Use server-reported tokens if available, otherwise fallback
+        if converter.has_server_usage and converter.output_tokens > 0:
+            final_output_tokens = converter.output_tokens
+        else:
+            final_output_tokens = converter.fallback_output_tokens
 
-        # Input token counting removed - rely on API usage data only
-        input_tokens = 0
+        # Use server-reported input tokens if available
+        input_tokens = converter.input_tokens if converter.has_server_usage else 0
 
         # Update global usage stats
         from ..types import ClaudeUsage, global_usage_stats
