@@ -1055,7 +1055,9 @@ async def convert_openai_streaming_response_to_anthropic(
                     tool_names = [tool.name for tool in original_request.tools]
                     logger.error(f"TOOL_DEBUG: Tools in request: {tool_names}")
 
-            raise streaming_error
+            # Abort stream to simulate real API behavior (triggers client retry)
+            from ..midstream_abort import MidStreamAbort
+            raise MidStreamAbort(f"upstream streaming error: {streaming_error}") from streaming_error
 
         # Handle stream completion - ensure proper cleanup regardless of how stream ended
         if not converter.has_sent_stop_reason:

@@ -439,25 +439,14 @@ async def convert_gemini_streaming_response_to_anthropic(
             yield converter._send_message_stop_event()
             yield converter._send_done_event()
     except HTTPException as http_exc:
+        # Abort stream to simulate real API behavior (triggers client retry)
         logger.error("Gemini streaming error: %s", http_exc.detail)
-        error_event = {
-            "type": "error",
-            "error": {
-                "type": "api_error",
-                "message": str(http_exc.detail or http_exc),
-            },
-        }
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        from ..midstream_abort import MidStreamAbort
+        raise MidStreamAbort(f"upstream error: {http_exc.detail}") from http_exc
     except Exception as exc:
         logger.error("Gemini streaming error: %s", exc)
-        error_event = {
-            "type": "error",
-            "error": {
-                "type": "unexpected_error",
-                "message": f"Unexpected error: {exc}",
-            },
-        }
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        from ..midstream_abort import MidStreamAbort
+        raise MidStreamAbort(f"upstream error: {exc}") from exc
     finally:
         logger.debug(
             "Gemini streaming completed for model %s (text=%d, thinking=%d)",

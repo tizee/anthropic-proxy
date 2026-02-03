@@ -121,6 +121,29 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def handle_midstream_abort(request: Request, call_next):
+    """
+    Handle MidStreamAbort exceptions to simulate real API connection drops.
+
+    When upstream API errors occur mid-stream, the real API drops the TCP
+    connection. This middleware catches MidStreamAbort and returns a response
+    that closes the connection cleanly without logging scary tracebacks.
+
+    This triggers client-side retry logic as expected by downstream agents.
+    """
+    from .midstream_abort import MidStreamAbort
+
+    try:
+        response = await call_next(request)
+        return response
+    except MidStreamAbort as e:
+        # Log clean one-liner instead of full traceback
+        logger.info(f"[mid-stream abort] {e}")
+        # Re-raise to abort the connection (triggers client retry)
+        raise
+
+
 async def hook_streaming_response(response_generator, request, model_id):
     """Wraps a streaming response generator to apply response hooks to each event.
 
