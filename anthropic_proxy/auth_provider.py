@@ -113,6 +113,7 @@ class OAuthPKCEAuth:
         if data.get("refresh_token"):
             self._auth_data["refresh"] = data["refresh_token"]
         self._auth_data["expires"] = int(time.time() + data.get("expires_in", 3600))
+        self._auth_data["last_refresh"] = int(time.time())
 
     def _post_token_exchange(self, data: dict[str, Any]) -> None:
         return None
@@ -286,6 +287,7 @@ class OAuthPKCEAuth:
 
                 self._auth_data["access"] = new_access
                 self._auth_data["expires"] = int(time.time() + expires_in)
+                self._auth_data["last_refresh"] = int(time.time())
                 if refresh_full:
                     self._auth_data["refresh"] = refresh_full
                 else:

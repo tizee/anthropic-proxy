@@ -1022,9 +1022,19 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
             current_tool_ids = {tc.get("id") for tc in tool_calls if tc.get("id")}
 
             if pending_tool_call_ids:
-                # We have pending tool calls - flush them first
+                # We have pending tool calls from previous assistant - need to resolve them
                 if result is None:
                     enter_fix_mode(i)
+
+                # Add placeholders for any unresolved tool calls
+                for tid in list(pending_tool_call_ids):
+                    if tid not in {t.get("tool_call_id") for t in buffered_tool_results}:
+                        buffered_tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": tid,
+                            "content": "No result provided (tool call was interrupted or context was compacted)",
+                        })
+
                 flush_tool_results()
                 flush_deferred()
                 pending_tool_call_ids.clear()

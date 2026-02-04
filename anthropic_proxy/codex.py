@@ -6,6 +6,7 @@ Handles authentication and request proxying for Codex plan.
 import base64
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -22,6 +23,9 @@ CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 CODEX_API_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
+
+# Token refresh interval in seconds (7 days, stricter than codex_cli_rs 8 days)
+TOKEN_REFRESH_INTERVAL = 7 * 24 * 60 * 60
 
 # Default models available via Codex subscription (subject to upstream changes).
 # These model names can become invalid if the provider updates or disables support.
@@ -134,6 +138,41 @@ class CodexAuth(OAuthPKCEAuth):
 
     def get_account_id(self) -> str | None:
         return self._auth_data.get("accountId")
+
+    def _is_token_stale(self) -> bool:
+        """Check if token needs refresh based on 8-day interval (codex_cli_rs behavior)."""
+        last_refresh = self._auth_data.get("last_refresh")
+        if not last_refresh:
+            return True
+        return time.time() > (last_refresh + TOKEN_REFRESH_INTERVAL)
+
+    async def get_access_token(self) -> str:
+        """Get access token, refreshing if stale (8-day interval) or expired."""
+        self._load()
+        if not self._auth_data:
+            raise HTTPException(
+                status_code=401,
+                detail="No Codex auth data found in auth.json",
+            )
+
+        access_token = self._auth_data.get("access")
+        refresh_full = self._auth_data.get("refresh")
+        expires = self._auth_data.get("expires", 0)
+
+        # Check if token is stale (8-day interval) or about to expire (5 min buffer)
+        needs_refresh = self._is_token_stale() or not access_token or time.time() > (expires - 300)
+
+        if needs_refresh:
+            if self._is_token_stale():
+                logger.info("Codex token is stale (8+ days since last refresh), refreshing...")
+            else:
+                logger.info("Codex token expired, refreshing...")
+            refresh_token = self._extract_refresh_token(refresh_full)
+            if not refresh_token:
+                raise HTTPException(status_code=401, detail="No refresh token available")
+            return await self._refresh_token(refresh_token, refresh_full)
+
+        return access_token
 
 
 # Global auth instance
