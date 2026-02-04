@@ -178,17 +178,68 @@ class CodexAuth(OAuthPKCEAuth):
 # Global auth instance
 codex_auth = CodexAuth()
 
+def _convert_chat_to_responses(openai_request: dict) -> dict:
+    """Convert Chat Completions format to Responses API format.
+
+    The Codex backend uses the Responses API which expects ``instructions``
+    (system prompt) and ``input`` (conversation) instead of a flat
+    ``messages`` list.
+    """
+    # Already in Responses API format
+    if "input" in openai_request or "instructions" in openai_request:
+        return openai_request
+
+    messages = openai_request.pop("messages", [])
+
+    instructions = ""
+    input_items: list[dict] = []
+
+    for msg in messages:
+        role = msg.get("role", "")
+        if role == "system":
+            # Concatenate multiple system messages
+            content = msg.get("content", "")
+            if instructions:
+                instructions += "\n\n" + content
+            else:
+                instructions = content
+        else:
+            input_items.append(msg)
+
+    responses_request: dict[str, Any] = {
+        "model": openai_request.get("model", ""),
+        "instructions": instructions or "You are a helpful assistant.",
+        "input": input_items,
+        "stream": openai_request.get("stream", True),
+    }
+
+    # Forward supported fields
+    if openai_request.get("tools"):
+        responses_request["tools"] = openai_request["tools"]
+    if openai_request.get("tool_choice"):
+        responses_request["tool_choice"] = openai_request["tool_choice"]
+    if openai_request.get("temperature") is not None:
+        responses_request["temperature"] = openai_request["temperature"]
+    if openai_request.get("max_tokens") is not None:
+        responses_request["max_output_tokens"] = openai_request["max_tokens"]
+
+    return responses_request
+
+
 async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle a request to the Codex backend.
     
     Args:
-        openai_request: The request body in OpenAI format.
+        openai_request: The request body in OpenAI/Chat Completions format.
         model_id: The original model ID (for logging).
         
     Returns:
         AsyncGenerator: Generator yielding OpenAI chunk dicts.
     """
+
+    # Convert Chat Completions format to Responses API format if needed
+    codex_request = _convert_chat_to_responses(openai_request)
 
     # Get valid token (auto-refreshes)
     access_token = await codex_auth.get_access_token()
@@ -204,12 +255,12 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
     if account_id:
         headers["chatgpt-account-id"] = account_id
 
-    openai_request["stream"] = True
+    codex_request["stream"] = True
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0))
 
     try:
-        async with client.stream("POST", CODEX_API_URL, json=openai_request, headers=headers) as response:
+        async with client.stream("POST", CODEX_API_URL, json=codex_request, headers=headers) as response:
             if response.status_code != 200:
                 error_text = await response.aread()
                 error_str = error_text.decode('utf-8', errors='replace')
