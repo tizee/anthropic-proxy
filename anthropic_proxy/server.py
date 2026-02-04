@@ -1016,6 +1016,7 @@ async def _forward_openai_stream(stream):
 
 
 @app.post("/openai/v1/responses")
+@app.post("/openai/responses")
 async def create_response(raw_request: Request):
     """
     OpenAI-compatible Responses API endpoint for Codex subscription.
