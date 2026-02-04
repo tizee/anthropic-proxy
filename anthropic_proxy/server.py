@@ -1033,6 +1033,96 @@ async def _forward_openai_stream(stream):
     yield "data: [DONE]\n\n"
 
 
+@app.post("/openai/v1/responses")
+async def create_response(raw_request: Request):
+    """
+    OpenAI-compatible Responses API endpoint for Codex subscription.
+
+    This endpoint directly forwards requests to the Codex backend without
+    format conversion. It requires a Codex subscription (OAuth) and uses
+    the stored authentication tokens.
+
+    Supports both streaming and non-streaming modes.
+    """
+    try:
+        # Parse OpenAI Responses API request body
+        body = await raw_request.body()
+        request_payload = json.loads(body)
+
+        model_id = request_payload.get("model", "")
+        stream = request_payload.get("stream", False)
+
+        # Validate model exists
+        if model_id not in CUSTOM_OPENAI_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown model '{model_id}'. Check models.yaml for available models.",
+            )
+
+        # Check if it's a Codex model - this endpoint only supports Codex
+        if not is_codex_model(model_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_id}' is not a Codex model. The /v1/responses endpoint only supports Codex subscription models.",
+            )
+
+        model_config = CUSTOM_OPENAI_MODELS[model_id]
+        provider_model_name = model_config.get("model_name", model_id)
+
+        logger.info(
+            f"📊 RESPONSES API: Model={model_id}, Target={provider_model_name}, Stream={stream}"
+        )
+
+        # Update model name in request to use the actual Codex model name
+        request_payload["model"] = provider_model_name
+
+        # Get Codex response generator
+        provider_generator = await handle_codex_request(request_payload, model_id)
+
+        if stream:
+            # Streaming mode: forward SSE chunks directly
+            async def forward_codex_stream():
+                """Forward Codex SSE stream as OpenAI Responses API format."""
+                async for chunk in provider_generator:
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                forward_codex_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+        else:
+            # Non-streaming mode: collect all chunks and construct final response
+            chunks = []
+            async for chunk in provider_generator:
+                chunks.append(chunk)
+
+            # Codex returns incremental deltas, we need to construct the final response
+            # The last chunk typically contains the complete response
+            if chunks:
+                # Return the last chunk which should have the complete response
+                final_response = chunks[-1]
+                return JSONResponse(content=final_response)
+            else:
+                raise HTTPException(status_code=500, detail="Empty response from Codex backend")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_details = _extract_error_details(e)
+        logger.error(f"Error in /v1/responses: {json.dumps(error_details, indent=2)}")
+        error_message = _format_error_message(e, error_details)
+        status_code = error_details.get("status_code", 500)
+        raise HTTPException(status_code=status_code, detail=error_message) from e
+
+
 @app.post("/gemini/v1beta/models/{model_path:path}:generateContent")
 async def gemini_generate_content(model_path: str, raw_request: Request):
     """

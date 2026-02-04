@@ -106,6 +106,13 @@ The proxy provides multiple endpoint formats to accept requests in different API
 - Converts to appropriate provider format internally
 - Returns responses in OpenAI format
 
+**`POST /openai/v1/responses`**
+- OpenAI Responses API compatible endpoint (for Codex subscription)
+- Direct passthrough to Codex backend without format conversion
+- Requires Codex authentication (`anthropic-proxy login --codex`)
+- Supports both streaming and non-streaming modes
+- **Use case**: Agents/tools that natively use OpenAI Responses API format
+
 ### Gemini Format Endpoints
 
 **`POST /gemini/v1beta/models/{model}:generateContent`**
@@ -239,6 +246,37 @@ Plugins are loaded automatically at server startup. Both request and response ho
 ## 🔑 Codex Subscription Support
 
 This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `codex/gpt-5.2-codex`) directly.
+
+### ⚠️ Important: Use Anthropic Endpoint for Codex
+
+**Codex models MUST be accessed via the `/anthropic/v1/messages` endpoint**, not `/openai/v1/chat/completions`.
+
+```bash
+# CORRECT - Use Anthropic endpoint
+ANTHROPIC_BASE_URL=http://localhost:8082/anthropic/v1 claude
+
+# INCORRECT - Do NOT use OpenAI endpoint for Codex
+# This will result in 403 Cloudflare challenge errors
+```
+
+**Why?** The Codex backend requires specific headers (`originator: codex_cli_rs`, `chatgpt-account-id`, `OpenAI-Beta: responses=experimental`) to be injected. These headers are only added when routing through the Anthropic endpoint (`/anthropic/v1/messages`). Using the OpenAI `/chat/completions` endpoint causes the request to hit Cloudflare's bot protection, returning an HTML challenge page instead of a valid API response.
+
+### Alternative: OpenAI Responses API Endpoint
+
+If your agent/tool uses OpenAI's **Responses API** format (instead of Anthropic format), you can use the dedicated `/openai/v1/responses` endpoint:
+
+```bash
+# For agents using OpenAI Responses API format
+OPENAI_BASE_URL=http://localhost:8082/openai/v1 claude
+```
+
+This endpoint:
+- Accepts standard OpenAI Responses API requests
+- Directly forwards to Codex backend without format conversion
+- Supports both streaming (`stream: true`) and non-streaming modes
+- Automatically injects required Codex authentication headers
+
+**Note**: This is different from `/openai/v1/chat/completions` - the `/responses` endpoint is specifically designed for Codex subscription access and does not trigger Cloudflare protection.
 
 ### 1. Login
 
@@ -559,9 +597,14 @@ For Claude Code, use the Anthropic-format endpoint:
 ANTHROPIC_BASE_URL=http://localhost:8082/anthropic/v1 claude
 ```
 
-**Note**: The `/anthropic/v1` prefix is required for Anthropic-format requests. The proxy also supports:
-- OpenAI format: `http://localhost:8082/openai/v1`
-- Gemini format: `http://localhost:8082/gemini/v1beta`
+**Important Notes**:
+- The `/anthropic/v1` prefix is **required** for all requests, including Codex, Gemini, and Antigravity models
+- **Do NOT use `/openai/v1`** for Codex models - this will result in 403 Cloudflare errors
+- The proxy automatically injects provider-specific headers (like `originator: codex_cli_rs` for Codex) only when using the Anthropic endpoint
+
+The proxy also supports these endpoints for other use cases:
+- OpenAI format: `http://localhost:8082/openai/v1` (for standard OpenAI-compatible providers, NOT Codex)
+- Gemini format: `http://localhost:8082/gemini/v1beta` (for Gemini SDK clients)
 
 ## Debugging & Logging
 
@@ -591,6 +634,22 @@ cat ~/.anthropic-proxy/server.log
 ```
 
 ### Common Debugging Scenarios
+
+**Codex returning 403 / Cloudflare challenge page:**
+```bash
+# If you see HTML responses with "Enable JavaScript and cookies to continue"
+# in the logs, you're using the wrong endpoint.
+
+# SOLUTION 1: Use Anthropic endpoint (for Anthropic-format agents)
+ANTHROPIC_BASE_URL=http://localhost:8082/anthropic/v1 claude
+
+# SOLUTION 2: Use OpenAI Responses API endpoint (for OpenAI-format agents)
+OPENAI_BASE_URL=http://localhost:8082/openai/v1 claude
+
+# INCORRECT: /chat/completions endpoint doesn't work with Codex
+# ANTHROPIC_BASE_URL=http://localhost:8082/openai/v1/chat/completions  # DON'T DO THIS
+```
+**Why this happens:** The Codex backend requires specific authentication headers (`originator`, `chatgpt-account-id`, `OpenAI-Beta`) that are only injected when using the `/anthropic/v1/messages` endpoint or the `/openai/v1/responses` endpoint. The `/chat/completions` endpoint doesn't add these headers, causing Cloudflare to block the request.
 
 **Server won't start:**
 ```bash
