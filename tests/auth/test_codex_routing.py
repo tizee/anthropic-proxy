@@ -45,7 +45,8 @@ class TestCodexRouting(unittest.TestCase):
         self.assertFalse(result)
 
 class TestCodexModelNameRouting(unittest.IsolatedAsyncioTestCase):
-    async def test_codex_model_name_override(self):
+    async def test_codex_model_rejected_on_anthropic_endpoint(self):
+        """Codex models must use /openai/v1/responses, not /anthropic/v1/messages."""
         model_id = "codex/gpt-5.2-codex"
         mock_models = {
             model_id: {
@@ -67,15 +68,9 @@ class TestCodexModelNameRouting(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-        async def dummy_gen():
-            if False:
-                yield None
-
         with patch.dict(
             "anthropic_proxy.server.CUSTOM_OPENAI_MODELS", mock_models, clear=True
-        ), patch("anthropic_proxy.server.handle_codex_request", new_callable=AsyncMock) as mock_handle:
-            mock_handle.return_value = dummy_gen()
-
+        ):
             body = json.dumps(
                 {
                     "model": model_id,
@@ -94,11 +89,12 @@ class TestCodexModelNameRouting(unittest.IsolatedAsyncioTestCase):
                 async def body(self):
                     return self._body
 
-            await create_message(DummyRequest(body))
+            with self.assertRaises(Exception) as context:
+                await create_message(DummyRequest(body))
 
-            called_args, _ = mock_handle.call_args
-            openai_request = called_args[0]
-            self.assertEqual(openai_request["model"], "gpt-5.2-codex")
+            error_msg = str(context.exception)
+            self.assertIn("400", error_msg)
+            self.assertIn("/openai/v1/responses", error_msg)
 
 if __name__ == "__main__":
     unittest.main()

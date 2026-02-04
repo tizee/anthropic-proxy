@@ -636,31 +636,13 @@ async def create_message(raw_request: Request):
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
 
-        # Check for Codex/Gemini/Antigravity provider
-        provider_generator = None
+        # Codex models must use /openai/v1/responses endpoint (Responses API format).
+        # The Anthropic ↔ OpenAI Responses API conversion is lossy (encrypted_content,
+        # reasoning structure), so we reject Codex models here.
         if is_codex_model(model_id):
-            logger.info(f"🔗 CODEX MODE: Model={model_id}")
-            openai_request["model"] = model_config.get("model_name", model_id)
-            provider_generator = handle_codex_request(openai_request, model_id)
-
-        if provider_generator:
-            hooked_generator = hook_streaming_response(
-                convert_openai_streaming_response_to_anthropic(
-                    provider_generator, request, model_id
-                ),
-                request,
-                model_id,
-            )
-            return StreamingResponse(
-                hooked_generator,
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "*",
-                },
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_id}' is a Codex model. Use the /openai/v1/responses endpoint instead of /anthropic/v1/messages.",
             )
 
         # Create OpenAI client for the model with the extracted API key
@@ -1077,15 +1059,23 @@ async def create_response(raw_request: Request):
         request_payload["model"] = provider_model_name
 
         # Get Codex response generator
-        provider_generator = handle_codex_request(request_payload, model_id)
+        provider_generator = handle_codex_request(
+            request_payload, model_id,
+            reasoning_effort=model_config.get("reasoning_effort"),
+        )
 
         if stream:
             # Streaming mode: forward SSE chunks directly
             async def forward_codex_stream():
                 """Forward Codex SSE stream as OpenAI Responses API format."""
-                async for chunk in provider_generator:
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                yield "data: [DONE]\n\n"
+                try:
+                    async for chunk in provider_generator:
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+                except Exception as e:
+                    logger.error("Codex streaming error in /v1/responses: %s", e, exc_info=True)
+                    error_event = {"type": "error", "error": {"message": str(e)}}
+                    yield f"data: {json.dumps(error_event)}\n\n"
 
             return StreamingResponse(
                 forward_codex_stream(),

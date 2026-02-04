@@ -178,7 +178,7 @@ class CodexAuth(OAuthPKCEAuth):
 # Global auth instance
 codex_auth = CodexAuth()
 
-def _convert_chat_to_responses(openai_request: dict) -> dict:
+def _convert_chat_to_responses(openai_request: dict, reasoning_effort: str | None = None) -> dict:
     """Convert Chat Completions format to Responses API format.
 
     The Codex backend uses the Responses API which expects ``instructions``
@@ -211,7 +211,17 @@ def _convert_chat_to_responses(openai_request: dict) -> dict:
         "instructions": instructions or "You are a helpful assistant.",
         "input": input_items,
         "stream": openai_request.get("stream", True),
+        "store": False,
+        "include": [
+            "reasoning.encrypted_content",
+            "reasoning.summary",
+        ],
     }
+
+    # Set reasoning effort (Codex models must have reasoning enabled)
+    effort = reasoning_effort or openai_request.get("reasoning_effort")
+    if effort and effort != "minimal":
+        responses_request["reasoning"] = {"effort": effort}
 
     # Forward supported fields
     if openai_request.get("tools"):
@@ -226,20 +236,25 @@ def _convert_chat_to_responses(openai_request: dict) -> dict:
     return responses_request
 
 
-async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGenerator[dict[str, Any], None]:
+async def handle_codex_request(
+    openai_request: dict,
+    model_id: str,
+    reasoning_effort: str | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle a request to the Codex backend.
     
     Args:
-        openai_request: The request body in OpenAI/Chat Completions format.
+        openai_request: The request body in OpenAI/Chat Completions or Responses API format.
         model_id: The original model ID (for logging).
+        reasoning_effort: Reasoning effort from model config (e.g. "low", "medium", "high").
         
     Returns:
         AsyncGenerator: Generator yielding OpenAI chunk dicts.
     """
 
     # Convert Chat Completions format to Responses API format if needed
-    codex_request = _convert_chat_to_responses(openai_request)
+    codex_request = _convert_chat_to_responses(openai_request, reasoning_effort=reasoning_effort)
 
     # Get valid token (auto-refreshes)
     access_token = await codex_auth.get_access_token()
@@ -256,6 +271,7 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
         headers["chatgpt-account-id"] = account_id
 
     codex_request["stream"] = True
+    codex_request["store"] = False
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0))
 
@@ -284,12 +300,12 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
                         pass
 
     except httpx.RequestError as e:
-        logger.error(f"Codex network error: {e}")
+        logger.error("Codex network error: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail=f"Codex network error: {e}")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Codex unexpected error: {e}")
+        logger.error("Codex unexpected error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Codex unexpected error: {e}")
     finally:
         await client.aclose()

@@ -166,6 +166,91 @@ class TestConvertChatToResponses(unittest.TestCase):
         self.assertEqual(result["max_output_tokens"], 2048)
         self.assertNotIn("max_tokens", result)
 
+    def test_store_always_false(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result = _convert_chat_to_responses(chat_request)
+
+        self.assertFalse(result["store"])
+
+    def test_store_overrides_true(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "store": True,
+        }
+        result = _convert_chat_to_responses(chat_request)
+
+        # Codex backend requires store=false regardless of input
+        self.assertFalse(result["store"])
+
+    # ------------------------------------------------------------------
+    # include array
+    # ------------------------------------------------------------------
+
+    def test_include_has_encrypted_content_and_summary(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result = _convert_chat_to_responses(chat_request)
+
+        self.assertIn("reasoning.encrypted_content", result["include"])
+        self.assertIn("reasoning.summary", result["include"])
+
+    # ------------------------------------------------------------------
+    # reasoning effort
+    # ------------------------------------------------------------------
+
+    def test_reasoning_effort_from_param(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result = _convert_chat_to_responses(chat_request, reasoning_effort="high")
+
+        self.assertEqual(result["reasoning"], {"effort": "high"})
+
+    def test_reasoning_effort_from_request(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "medium",
+        }
+        result = _convert_chat_to_responses(chat_request)
+
+        self.assertEqual(result["reasoning"], {"effort": "medium"})
+
+    def test_reasoning_effort_param_overrides_request(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "low",
+        }
+        result = _convert_chat_to_responses(chat_request, reasoning_effort="high")
+
+        self.assertEqual(result["reasoning"], {"effort": "high"})
+
+    def test_reasoning_effort_minimal_excluded(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result = _convert_chat_to_responses(chat_request, reasoning_effort="minimal")
+
+        self.assertNotIn("reasoning", result)
+
+    def test_no_reasoning_effort_omits_field(self):
+        chat_request = {
+            "model": "gpt-5.2-codex",
+            "messages": [{"role": "user", "content": "Hi"}],
+        }
+        result = _convert_chat_to_responses(chat_request)
+
+        self.assertNotIn("reasoning", result)
+
     def test_absent_optional_fields_not_included(self):
         chat_request = {
             "model": "gpt-5.2-codex",
