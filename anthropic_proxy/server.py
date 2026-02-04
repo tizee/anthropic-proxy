@@ -641,7 +641,7 @@ async def create_message(raw_request: Request):
         if is_codex_model(model_id):
             logger.info(f"🔗 CODEX MODE: Model={model_id}")
             openai_request["model"] = model_config.get("model_name", model_id)
-            provider_generator = await handle_codex_request(openai_request, model_id)
+            provider_generator = handle_codex_request(openai_request, model_id)
 
         if provider_generator:
             hooked_generator = hook_streaming_response(
@@ -1077,7 +1077,7 @@ async def create_response(raw_request: Request):
         request_payload["model"] = provider_model_name
 
         # Get Codex response generator
-        provider_generator = await handle_codex_request(request_payload, model_id)
+        provider_generator = handle_codex_request(request_payload, model_id)
 
         if stream:
             # Streaming mode: forward SSE chunks directly

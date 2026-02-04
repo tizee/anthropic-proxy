@@ -206,12 +206,12 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
 
     openai_request["stream"] = True
 
-    client = httpx.AsyncClient(timeout=60.0)
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0))
 
     try:
         async with client.stream("POST", CODEX_API_URL, json=openai_request, headers=headers) as response:
             if response.status_code != 200:
-                error_text = await response.read()
+                error_text = await response.aread()
                 error_str = error_text.decode('utf-8', errors='replace')
                 logger.error(f"Codex API error {response.status_code}: {error_str}")
                 if response.status_code == 404 and _is_codex_usage_limit_error(error_text):
