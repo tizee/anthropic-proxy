@@ -928,3 +928,170 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
         flush_deferred()
 
     return messages if result is None else result
+
+
+def sanitize_openai_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Sanitize OpenAI request payload by removing unsupported fields.
+
+    The OpenAI SDK only accepts specific parameters. Clients sending requests
+    with Anthropic-compatible fields (e.g., 'thinking') will fail if these
+    are passed through to the OpenAI SDK.
+
+    Args:
+        payload: OpenAI request payload dict
+
+    Returns:
+        Sanitized payload with unsupported fields removed
+    """
+    # Fields not supported by OpenAI SDK
+    unsupported_fields = ["thinking", "thinkingConfig"]
+
+    for field in unsupported_fields:
+        if field in payload:
+            logger.debug(f"Removing unsupported field '{field}' from OpenAI request")
+            del payload[field]
+
+    return payload
+
+
+def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Sanitize OpenAI messages to comply with OpenAI API requirements.
+
+    Uses single-pass validate-and-fix-on-the-fly approach:
+    - Iterates through messages assuming they're valid
+    - On first error, copies previous valid messages to result buffer
+    - Continues with fix logic from that point
+    - If no errors found, returns original list (zero-copy)
+
+    Complexity: O(N) single pass, zero allocations for valid messages.
+
+    Fixes the following issues:
+    1. User messages incorrectly inserted between tool_calls and tool results
+    2. Scattered tool results across multiple messages
+    3. Orphaned tool_calls without corresponding tool results
+
+    OpenAI format:
+    - Assistant: {role: "assistant", tool_calls: [{id: "call_xxx", ...}]}
+    - Tool result: {role: "tool", tool_call_id: "call_xxx", content: "..."}
+
+    Args:
+        messages: List of message dicts in OpenAI format
+
+    Returns:
+        Original messages if valid, or sanitized copy if fixes were needed
+    """
+    if not messages:
+        return messages
+
+    # State for validation/fix
+    pending_tool_call_ids: set[str] = set()
+
+    # Fix mode state (only allocated when needed)
+    result: list[dict[str, Any]] | None = None  # None = still validating
+    buffered_tool_results: list[dict[str, Any]] = []
+    deferred_messages: list[dict[str, Any]] = []
+
+    def enter_fix_mode(error_index: int) -> None:
+        """Switch to fix mode, copying all valid messages up to error_index."""
+        nonlocal result
+        if result is None:
+            result = list(messages[:error_index])
+            logger.warning(f"Sanitizing OpenAI messages: entering fix mode at message {error_index}")
+
+    def flush_tool_results() -> None:
+        """Flush buffered tool results as a single user message."""
+        if result is not None and buffered_tool_results:
+            result.extend(buffered_tool_results)
+            buffered_tool_results.clear()
+
+    def flush_deferred() -> None:
+        """Flush deferred non-tool messages."""
+        if result is not None and deferred_messages:
+            result.extend(deferred_messages)
+            deferred_messages.clear()
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role")
+        content = msg.get("content", "")
+
+        if role == "assistant":
+            # Check for tool_calls in assistant message
+            tool_calls = msg.get("tool_calls", [])
+            current_tool_ids = {tc.get("id") for tc in tool_calls if tc.get("id")}
+
+            if pending_tool_call_ids:
+                # We have pending tool calls - flush them first
+                if result is None:
+                    enter_fix_mode(i)
+                flush_tool_results()
+                flush_deferred()
+                pending_tool_call_ids.clear()
+
+            if result is not None:
+                result.append(msg)
+
+            # Track new pending tool calls
+            pending_tool_call_ids.update(current_tool_ids)
+
+        elif role == "tool":
+            # Tool result message
+            tool_call_id = msg.get("tool_call_id")
+
+            if not pending_tool_call_ids:
+                # Orphaned tool result (no matching tool_call)
+                if result is None:
+                    enter_fix_mode(i)
+                logger.warning(f"Orphaned tool result for {tool_call_id}, skipping")
+                continue
+
+            if tool_call_id in pending_tool_call_ids:
+                if result is not None:
+                    buffered_tool_results.append(msg)
+                pending_tool_call_ids.discard(tool_call_id)
+
+                if not pending_tool_call_ids:
+                    flush_tool_results()
+                    flush_deferred()
+            else:
+                # Tool result for unknown tool_call
+                if result is None:
+                    enter_fix_mode(i)
+                logger.warning(f"Tool result for unknown tool_call {tool_call_id}, skipping")
+
+        elif role == "user":
+            if pending_tool_call_ids:
+                # User message between tool_calls and tool results - defer it
+                if result is None:
+                    enter_fix_mode(i)
+                deferred_messages.append(msg)
+            else:
+                if result is not None:
+                    result.append(msg)
+
+        else:
+            # System or other messages
+            if pending_tool_call_ids:
+                # Non-tool message between tool_calls and tool results - defer it
+                if result is None:
+                    enter_fix_mode(i)
+                deferred_messages.append(msg)
+            else:
+                if result is not None:
+                    result.append(msg)
+
+    # Handle any remaining pending tool calls
+    if pending_tool_call_ids:
+        enter_fix_mode(len(messages))
+        # Add placeholder tool results for orphaned tool calls
+        for tid in pending_tool_call_ids:
+            buffered_tool_results.append({
+                "role": "tool",
+                "tool_call_id": tid,
+                "content": "No result provided (tool call was interrupted or context was compacted)",
+            })
+        flush_tool_results()
+        flush_deferred()
+
+    return messages if result is None else result

@@ -173,10 +173,11 @@ async def handle_codex_request(openai_request: dict, model_id: str) -> AsyncGene
         async with client.stream("POST", CODEX_API_URL, json=openai_request, headers=headers) as response:
             if response.status_code != 200:
                 error_text = await response.read()
-                logger.error(f"Codex API error {response.status_code}: {error_text.decode('utf-8', errors='replace')}")
+                error_str = error_text.decode('utf-8', errors='replace')
+                logger.error(f"Codex API error {response.status_code}: {error_str}")
                 if response.status_code == 404 and _is_codex_usage_limit_error(error_text):
-                    raise HTTPException(status_code=429, detail="Codex usage limit reached")
-                raise HTTPException(status_code=response.status_code, detail=f"Codex API Error: {response.status_code}")
+                    raise HTTPException(status_code=429, detail=f"Codex usage limit reached: {error_str}")
+                raise HTTPException(status_code=response.status_code, detail=f"Codex API error {response.status_code}: {error_str}")
 
             async for line in response.aiter_lines():
                 if line.startswith("data: "):

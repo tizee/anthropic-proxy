@@ -59,6 +59,8 @@ from .utils import (
     _format_error_message,
     log_openai_api_error,
     sanitize_anthropic_messages,
+    sanitize_openai_messages,
+    sanitize_openai_request,
     update_global_usage_stats,
 )
 
@@ -740,6 +742,11 @@ async def create_message(raw_request: Request):
         if openai_request["stream"]:
             openai_request["stream_options"] = {"include_usage": True}
 
+        # Sanitize request: remove unsupported fields and fix message ordering
+        sanitize_openai_request(openai_request)
+        if "messages" in openai_request:
+            openai_request["messages"] = sanitize_openai_messages(openai_request["messages"])
+
         # Handle streaming mode
         # Use OpenAI SDK async streaming
         if openai_request["stream"]:
@@ -982,6 +989,14 @@ async def create_chat_completion(raw_request: Request):
             if max_tokens:
                 max_tokens = min(model_config.get("max_tokens", 8192), max_tokens)
                 openai_payload["max_tokens"] = max_tokens
+
+            # Sanitize payload: remove fields not supported by OpenAI SDK
+            # These fields may be sent by clients (e.g., thinking for Anthropic compatibility)
+            sanitize_openai_request(openai_payload)
+
+            # Sanitize messages to fix tool call ordering issues
+            if "messages" in openai_payload:
+                openai_payload["messages"] = sanitize_openai_messages(openai_payload["messages"])
 
             if stream:
                 openai_payload["stream_options"] = {"include_usage": True}
