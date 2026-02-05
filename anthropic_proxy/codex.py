@@ -183,6 +183,30 @@ class CodexAuth(OAuthPKCEAuth):
 # Global auth instance
 codex_auth = CodexAuth()
 
+def _sanitize_codex_input(input_items: list[dict]) -> list[dict]:
+    """Ensure Codex Responses API input items meet backend requirements.
+
+    The Codex backend requires ``summary`` on ``function_call_output`` items.
+    If missing, a truncated copy of ``output`` is used as the default summary.
+
+    Returns the original list if no fixes are needed (zero-copy).
+    """
+    result = None
+    for i, item in enumerate(input_items):
+        needs_fix = (
+            isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and "summary" not in item
+        )
+        if needs_fix:
+            if result is None:
+                result = list(input_items[:i])
+            result.append({**item, "summary": item.get("output", "")[:200]})
+        elif result is not None:
+            result.append(item)
+    return input_items if result is None else result
+
+
 def _convert_chat_to_responses(openai_request: dict, reasoning_effort: str | None = None) -> dict:
     """Convert Chat Completions format to Responses API format.
 
@@ -190,8 +214,11 @@ def _convert_chat_to_responses(openai_request: dict, reasoning_effort: str | Non
     (system prompt) and ``input`` (conversation) instead of a flat
     ``messages`` list.
     """
-    # Already in Responses API format
+    # Already in Responses API format -- sanitize input items before passthrough
     if "input" in openai_request or "instructions" in openai_request:
+        input_items = openai_request.get("input")
+        if isinstance(input_items, list):
+            openai_request["input"] = _sanitize_codex_input(input_items)
         return openai_request
 
     messages = openai_request.pop("messages", [])
