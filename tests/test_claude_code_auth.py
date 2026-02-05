@@ -17,6 +17,7 @@ from anthropic_proxy.claude_code import (
     inject_system_prompt,
     inject_system_prompt_with_cache,
     is_oauth_token,
+    is_opus_4_6_model,
     is_thinking_capable_model,
     process_thinking_config,
 )
@@ -356,3 +357,162 @@ class TestClaudeCodeAuth:
 
         auth.clear_token()
         assert auth.has_auth() is False
+
+
+class TestIsOpus46Model:
+    """Tests for Opus 4.6 model detection."""
+
+    def test_opus_4_6(self):
+        assert is_opus_4_6_model("claude-opus-4-6") is True
+
+    def test_opus_4_6_with_prefix(self):
+        assert is_opus_4_6_model("claude-code/claude-opus-4-6") is True
+
+    def test_opus_4_5_is_not_4_6(self):
+        assert is_opus_4_6_model("claude-opus-4-5") is False
+
+    def test_sonnet_is_not_4_6(self):
+        assert is_opus_4_6_model("claude-sonnet-4-5") is False
+
+    def test_haiku_is_not_4_6(self):
+        assert is_opus_4_6_model("claude-haiku-4-5") is False
+
+
+class TestOpus46DefaultModels:
+    """Tests for Opus 4.6 default model config."""
+
+    def test_opus_4_6_has_reasoning_effort(self):
+        config = DEFAULT_CLAUDE_CODE_MODELS["claude-opus-4-6"]
+        assert "reasoning_effort" in config
+
+    def test_opus_4_5_no_reasoning_effort(self):
+        config = DEFAULT_CLAUDE_CODE_MODELS["claude-opus-4-5"]
+        assert "reasoning_effort" not in config
+
+
+class TestOpus46AdaptiveThinking:
+    """Tests for Opus 4.6 adaptive thinking behavior.
+
+    Opus 4.6 uses adaptive thinking by default instead of budget-based.
+    Budget-based is only used when explicit budget_tokens is provided.
+    """
+
+    def test_opus_4_6_default_uses_adaptive(self):
+        """When thinking is enabled without budget, Opus 4.6 uses adaptive."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+            "thinking": {"type": "enabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        assert "budget_tokens" not in result["thinking"]
+
+    def test_opus_4_6_explicit_budget_uses_budget_based(self):
+        """When explicit budget_tokens is provided, Opus 4.6 uses budget-based."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+            "thinking": {"type": "enabled", "budget_tokens": 10000},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 10000
+
+    def test_opus_4_6_disabled_stays_disabled(self):
+        """Disabled thinking remains disabled for Opus 4.6."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+            "thinking": {"type": "disabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is False
+        assert "thinking" not in result
+
+    def test_opus_4_6_no_thinking_field(self):
+        """No thinking field means no thinking for Opus 4.6."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is False
+        assert "thinking" not in result
+
+    def test_opus_4_6_string_effort_uses_adaptive(self):
+        """String effort levels (low/medium/high) use adaptive for Opus 4.6."""
+        for level in ["low", "medium", "high"]:
+            request_data = {
+                "model": "claude-opus-4-6",
+                "max_tokens": 128000,
+                "thinking": level,
+            }
+            result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+            assert enabled is True, f"Expected thinking enabled for effort={level}"
+            assert result["thinking"]["type"] == "adaptive", (
+                f"Expected adaptive for effort={level}, got {result['thinking']}"
+            )
+            assert "budget_tokens" not in result["thinking"]
+
+    def test_opus_4_6_minimal_disables_thinking(self):
+        """Minimal effort still disables thinking for Opus 4.6."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+            "thinking": "minimal",
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is False
+        assert "thinking" not in result
+
+    def test_opus_4_6_max_effort_uses_adaptive(self):
+        """Max effort level uses adaptive thinking for Opus 4.6."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 128000,
+            "thinking": "max",
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        assert "budget_tokens" not in result["thinking"]
+
+    def test_non_opus_46_max_falls_back_to_high(self):
+        """Max effort falls back to high for non-Opus 4.6 models."""
+        request_data = {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64000,
+            "thinking": "max",
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-5")
+        assert enabled is True
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == THINKING_BUDGET_MAP["high"]
+
+    def test_non_opus_46_still_uses_budget_based(self):
+        """Non-Opus 4.6 models keep using budget-based thinking."""
+        request_data = {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64000,
+            "thinking": {"type": "enabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-5")
+        assert enabled is True
+        assert result["thinking"]["type"] == "enabled"
+        assert "budget_tokens" in result["thinking"]
+
+    def test_opus_4_6_adaptive_no_max_tokens_adjustment(self):
+        """Adaptive thinking doesn't need max_tokens > budget + buffer."""
+        request_data = {
+            "model": "claude-opus-4-6",
+            "max_tokens": 4096,
+            "thinking": {"type": "enabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-opus-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        # max_tokens should stay as-is (no budget to inflate for)
+        assert result["max_tokens"] == 4096

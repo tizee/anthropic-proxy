@@ -45,11 +45,18 @@ BETA_1M_CONTEXT_FEATURE = "context-1m-2025-08-07"  # 1M token context window (be
 CONTEXT_1M_ENV = "CLAUDE_CODE_1M_CONTEXT"
 
 # Thinking budget mapping (matches Claude Code /thinking command)
+# "max" is only supported on Opus 4.6 (falls back to "high" on other models)
 THINKING_BUDGET_MAP = {
     "minimal": 1024,
     "low": 2048,
     "medium": 8192,
     "high": 16384,
+    "max": 16384,  # fallback value for non-Opus-4.6; Opus 4.6 uses adaptive instead
+}
+
+# Models that use adaptive thinking by default (no budget_tokens needed)
+ADAPTIVE_THINKING_MODELS = {
+    "claude-opus-4-6",
 }
 
 # Models that support thinking/reasoning (Claude 4.5 and 4.6)
@@ -72,10 +79,12 @@ MIN_OUTPUT_BUFFER = 1024
 # max_tokens: 128K for Opus 4.6, 64K for 4.5 models
 DEFAULT_CLAUDE_CODE_MODELS = {
     # Claude 4.6 Opus (latest) - 128K max output, 1M context window with beta header
+    # Uses adaptive thinking by default (no budget_tokens needed)
     "claude-opus-4-6": {
         "model_name": "claude-opus-4-6",
         "description": "Claude Opus 4.6 (latest)",
         "max_tokens": 128000,
+        "reasoning_effort": "high",
     },
     # Claude 4.5 Opus (backward compatibility)
     "claude-opus-4-5": {
@@ -238,6 +247,13 @@ def is_thinking_capable_model(model_name: str) -> bool:
     return model_name in THINKING_CAPABLE_MODELS
 
 
+def is_opus_4_6_model(model_name: str) -> bool:
+    """Check if a model is Opus 4.6 (uses adaptive thinking)."""
+    if model_name.startswith("claude-code/"):
+        model_name = model_name[len("claude-code/"):]
+    return model_name in ADAPTIVE_THINKING_MODELS
+
+
 def get_thinking_budget(thinking_config: Any) -> int | None:
     """
     Extract thinking budget from thinking configuration.
@@ -271,7 +287,7 @@ def get_thinking_budget(thinking_config: Any) -> int | None:
                 return int(budget)
             return THINKING_BUDGET_MAP["medium"]
 
-    # Handle string level (minimal, low, medium, high)
+    # Handle string level (minimal, low, medium, high, max)
     if isinstance(thinking_config, str):
         level = thinking_config.lower()
         if level in THINKING_BUDGET_MAP:
@@ -438,6 +454,15 @@ def get_model_max_tokens(model_name: str) -> int:
     return 64000
 
 
+def _has_explicit_budget(thinking_config: Any) -> bool:
+    """Check if the thinking config has an explicit budget_tokens value."""
+    if isinstance(thinking_config, dict):
+        return thinking_config.get("budget_tokens") is not None
+    if hasattr(thinking_config, "budget_tokens"):
+        return getattr(thinking_config, "budget_tokens", None) is not None
+    return False
+
+
 def process_thinking_config(
     request_data: dict[str, Any],
     model_name: str,
@@ -447,8 +472,10 @@ def process_thinking_config(
 
     - Validates model supports thinking
     - Extracts/normalizes thinking budget
-    - Ensures max_tokens > thinking_budget + 1024
-    - Caps max_tokens at model's limit (64K for 4.5 models)
+    - For Opus 4.6: uses adaptive thinking by default, budget-based only with explicit budget_tokens
+    - For other models: uses budget-based thinking with THINKING_BUDGET_MAP
+    - Ensures max_tokens > thinking_budget + 1024 (budget-based only)
+    - Caps max_tokens at model's limit
 
     Args:
         request_data: The request data dict
@@ -466,6 +493,15 @@ def process_thinking_config(
         request_data["max_tokens"] = model_max
 
     thinking_config = request_data.get("thinking")
+
+    # "minimal" always means no thinking, regardless of model
+    if isinstance(thinking_config, str) and thinking_config.lower() == "minimal":
+        request_data.pop("thinking", None)
+        return request_data, False
+
+    use_adaptive = is_opus_4_6_model(model_name)
+    explicit_budget = _has_explicit_budget(thinking_config)
+
     thinking_budget = get_thinking_budget(thinking_config)
 
     if thinking_budget is None:
@@ -481,9 +517,13 @@ def process_thinking_config(
         request_data.pop("thinking", None)
         return request_data, False
 
-    # Normalize thinking configuration to Anthropic API format
-    # API expects: { "type": "enabled", "budget_tokens": N }
-    # budget_tokens is REQUIRED when type is "enabled"
+    # Opus 4.6: use adaptive thinking unless explicit budget_tokens is provided
+    if use_adaptive and not explicit_budget:
+        request_data["thinking"] = {"type": "adaptive"}
+        logger.info("Thinking enabled: adaptive (Opus 4.6)")
+        return request_data, True
+
+    # Budget-based thinking (non-Opus-4.6, or Opus 4.6 with explicit budget)
     request_data["thinking"] = {
         "type": "enabled",
         "budget_tokens": thinking_budget,
@@ -582,7 +622,14 @@ async def handle_claude_code_request(
     request_data["stream"] = True
 
     cache_ttl = get_cache_ttl() or "5m (default)"
-    thinking_info = f", thinking_budget={request_data['thinking']['budget_tokens']}" if thinking_enabled else ""
+    if thinking_enabled:
+        thinking_type = request_data.get("thinking", {}).get("type", "unknown")
+        if thinking_type == "adaptive":
+            thinking_info = ", thinking=adaptive"
+        else:
+            thinking_info = f", thinking_budget={request_data['thinking'].get('budget_tokens')}"
+    else:
+        thinking_info = ""
     logger.info(f"Claude Code request: model={target_model}, cache_ttl={cache_ttl}{thinking_info}")
 
     # Debug: log the thinking config being sent

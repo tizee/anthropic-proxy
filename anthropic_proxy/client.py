@@ -337,7 +337,7 @@ def load_claude_code_models():
             )
             continue
 
-        CUSTOM_OPENAI_MODELS[prefixed_id] = {
+        model_entry = {
             "model_id": prefixed_id,
             "model_name": details["model_name"],
             "api_base": CLAUDE_CODE_API_URL,
@@ -349,10 +349,12 @@ def load_claude_code_models():
             "extra_headers": {},
             "extra_body": {},
             "temperature": 1.0,
+            "reasoning_effort": details.get("reasoning_effort"),
             "format": "anthropic",  # Uses Anthropic format
             "direct": True,  # Direct mode (no OpenAI conversion)
             "provider": "claude-code",
         }
+        CUSTOM_OPENAI_MODELS[prefixed_id] = model_entry
         logger.debug(f"Registered default Claude Code model: {prefixed_id}")
 
 

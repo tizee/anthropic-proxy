@@ -153,7 +153,7 @@ This proxy is designed to work seamlessly with **ccproxy** (Claude Code wrapper 
 ### 🎯 Model Selection
 - Model choice comes from the incoming request (ccproxy controls this)
 - Support for `openai`, `anthropic`, and `gemini` formats in `models.yaml` (with `direct` as a legacy alias)
-- Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose "reasoning level" variants. `reasoning_effort` supports `minimal|low|medium|high` (where `minimal` means no thinking).
+- Selection is by `model_id` (unique key). You can map multiple `model_id` entries to the same upstream `model_name` with different per-model settings (e.g., `extra_body`, `reasoning_effort`) to expose "reasoning level" variants. `reasoning_effort` supports `minimal|low|medium|high|max` (where `minimal` means no thinking, `max` is Opus 4.6 only and falls back to `high` on other models).
 
 Example:
 
@@ -193,7 +193,7 @@ Then select the variant by setting `model` in your ccproxy provider config (or s
 - **Usage statistics tracking**: Provider-reported usage tracking via global stats
 - **Custom model configuration**: Per-model settings with `reasoning_effort` support
 - **Converter factory pattern**: Dynamic format conversion based on model configuration
-- **Thinking mode support**: Configurable thinking/reasoning effort per model
+- **Thinking mode support**: Configurable thinking/reasoning effort per model (adaptive thinking for Opus 4.6, budget-based for others)
 
 ### 🔌 Plugin System (Extensibility)
 The proxy includes a plugin system that allows you to modify request and response payloads. Plugins are automatically loaded from the `anthropic_proxy/plugins/` directory.
@@ -422,13 +422,23 @@ The following models are automatically available (subject to upstream changes). 
 
 | Model ID | Max Output | Context Window | Description |
 |----------|------------|----------------|-------------|
-| `claude-code/claude-opus-4-6` | 128K | 200K (1M with env var) | Most capable model for complex tasks |
+| `claude-code/claude-opus-4-6` | 128K | 200K (1M with env var) | Most capable model, adaptive thinking |
 | `claude-code/claude-opus-4-5` | 64K | 200K | Claude Opus 4.5 (backward compatibility) |
 | `claude-code/claude-opus-4-5-20251101` | 64K | 200K | Claude Opus 4.5 (dated snapshot) |
 | `claude-code/claude-sonnet-4-5` | 64K | 200K (1M with env var) | Balanced performance and speed |
 | `claude-code/claude-sonnet-4-5-20250929` | 64K | 200K | Claude Sonnet 4.5 (dated snapshot) |
 | `claude-code/claude-haiku-4-5` | 64K | 200K | Fast, lightweight model |
 | `claude-code/claude-haiku-4-5-20251001` | 64K | 200K | Claude Haiku 4.5 (dated snapshot) |
+
+**Opus 4.6 Adaptive Thinking**: Claude Opus 4.6 uses adaptive thinking by default — Claude automatically determines how much reasoning to apply based on task complexity, replacing budget-based extended thinking. You don't need to estimate or tune token budgets.
+
+- When thinking is enabled without explicit `budget_tokens`, Opus 4.6 sends `thinking.type: "adaptive"` to the API
+- If you explicitly set `budget_tokens`, budget-based thinking (`thinking.type: "enabled"`) is used instead
+- A new `max` effort level is available for Opus 4.6 only (falls back to `high` on other models)
+- String effort levels (`low`/`medium`/`high`/`max`) all use adaptive thinking on Opus 4.6
+- `minimal` still disables thinking entirely on all models
+
+Other models (Opus 4.5, Sonnet 4.5, Haiku 4.5) continue to use budget-based thinking as before.
 
 **1M Context Window**: Opus 4.6 and Sonnet 4.5 support extended 1M token context via environment variable:
 
@@ -554,7 +564,7 @@ Configure your models in `~/.config/anthropic-proxy/models.yaml`:
 # - If api_key is not set, the key from the Authorization header (via ccproxy) is used.
 # - API keys stored here are in plain text - use caution in shared environments.
 #
-# reasoning_effort supports: minimal, low, medium, high (minimal = no thinking)
+# reasoning_effort supports: minimal, low, medium, high, max (minimal = no thinking, max is Opus 4.6 only)
 # format: openai | anthropic | gemini (routing format; defaults to openai)
 # direct: legacy alias (direct: true -> format=anthropic). If format is set, it wins.
 
