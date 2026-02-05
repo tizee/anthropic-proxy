@@ -30,9 +30,14 @@ TOKEN_REFRESH_INTERVAL = 7 * 24 * 60 * 60
 # Default models available via Codex subscription (subject to upstream changes).
 # These model names can become invalid if the provider updates or disables support.
 DEFAULT_CODEX_MODELS = {
+    "gpt-5.3-codex": {
+        "model_name": "gpt-5.3-codex",
+        "description": "Newest flagship Codex model",
+        "reasoning_effort": "high"
+    },
     "gpt-5.2-codex": {
         "model_name": "gpt-5.2-codex",
-        "description": "Newest flagship Codex model",
+        "description": "Previous flagship Codex model",
         "reasoning_effort": "high"
     },
     "gpt-5.1-codex-max": {

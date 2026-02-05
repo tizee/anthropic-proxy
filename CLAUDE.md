@@ -233,7 +233,7 @@ This allows creating "reasoning level" variants of the same base model:
 - Antigravity Claude thinking signatures are cached in-memory per session (see `anthropic_proxy/signature_cache.py`). Supply a stable `metadata.session_id` for multi-turn recovery.
 - Claude Code uses setup-token (from `claude setup-token`), which is permanent until revoked. No refresh needed.
 - Claude Code requires header impersonation (`user-agent: claude-cli/...`) and mandatory system prompt prefix ("You are Claude Code...").
-- Claude Code default models are Claude 4.5 series only (Opus, Sonnet, Haiku with 64K max tokens).
+- Claude Code default models: Opus 4.6 (128K max tokens), Sonnet 4.5 and Haiku 4.5 (64K max tokens). Opus 4.6 and Sonnet 4.5 support 1M context window via `CLAUDE_CODE_1M_CONTEXT=1` env var.
 - Claude Code automatically enables prompt caching (system prompt + last user message). Set `CLAUDE_CODE_CACHE_RETENTION=long` for 1-hour TTL.
 
 ## Code Design Guidelines

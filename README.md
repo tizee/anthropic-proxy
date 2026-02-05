@@ -245,7 +245,9 @@ Plugins are loaded automatically at server startup. Both request and response ho
 
 ## 🔑 Codex Subscription Support
 
-This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `codex/gpt-5.2-codex`) directly.
+This proxy supports authentication with OpenAI's Codex subscription plan, allowing you to use Codex models (like `codex/gpt-5.3-codex`) directly.
+
+**Model Reference**: [Introducing GPT-5.3 Codex](https://openai.com/index/introducing-gpt-5-3-codex/)
 
 ### ⚠️ Important: Use Anthropic Endpoint for Codex
 
@@ -291,7 +293,8 @@ This will open a browser window to log in to OpenAI. Once authenticated, your se
 
 Once logged in, the following models are **automatically available** without any configuration in `models.yaml` (subject to upstream changes). These IDs are prefixed to avoid collisions:
 
-- `codex/gpt-5.2-codex` (High reasoning)
+- `codex/gpt-5.3-codex` (High reasoning) - Newest flagship model
+- `codex/gpt-5.2-codex` (High reasoning) - Previous flagship model
 - `codex/gpt-5.1-codex-max` (High reasoning)
 - `codex/gpt-5.1-codex-mini` (Medium reasoning)
 - `codex/gpt-5.2` (High reasoning)
@@ -392,6 +395,60 @@ To override settings, specify `provider: antigravity`:
   provider: antigravity
   reasoning_effort: high
 ```
+
+## 🤖 Claude Code Subscription Support
+
+Use Claude Code subscription (setup-token based) for access to Claude Opus 4.6, Sonnet 4.5, and Haiku 4.5 models.
+
+**Model Reference**: [Claude Models Documentation](https://platform.claude.com/docs/en/about-claude/models/overview)
+
+### 1. Login
+
+```bash
+anthropic-proxy login --claude-code
+```
+
+This will prompt you for a setup token from Claude Code. Get your token by running:
+
+```bash
+claude setup-token
+```
+
+Enter the token when prompted. Unlike OAuth providers, this token is permanent until revoked - no refresh needed.
+
+### 2. Available Models
+
+The following models are automatically available (subject to upstream changes). These IDs are prefixed to avoid collisions:
+
+| Model ID | Max Output | Context Window | Description |
+|----------|------------|----------------|-------------|
+| `claude-code/claude-opus-4-6` | 128K | 200K (1M with env var) | Most capable model for complex tasks |
+| `claude-code/claude-opus-4-5` | 64K | 200K | Claude Opus 4.5 (backward compatibility) |
+| `claude-code/claude-opus-4-5-20251101` | 64K | 200K | Claude Opus 4.5 (dated snapshot) |
+| `claude-code/claude-sonnet-4-5` | 64K | 200K (1M with env var) | Balanced performance and speed |
+| `claude-code/claude-sonnet-4-5-20250929` | 64K | 200K | Claude Sonnet 4.5 (dated snapshot) |
+| `claude-code/claude-haiku-4-5` | 64K | 200K | Fast, lightweight model |
+| `claude-code/claude-haiku-4-5-20251001` | 64K | 200K | Claude Haiku 4.5 (dated snapshot) |
+
+**1M Context Window**: Opus 4.6 and Sonnet 4.5 support extended 1M token context via environment variable:
+
+```bash
+CLAUDE_CODE_1M_CONTEXT=1 anthropic-proxy start
+```
+
+**Prompt Caching**: Automatically enabled with system prompt + last user message cached. Set `CLAUDE_CODE_CACHE_RETENTION=long` for 1-hour TTL (default is 5 minutes).
+
+### 3. Customizing Claude Code Models
+
+To override settings, specify `provider: claude-code`:
+
+```yaml
+- model_id: claude-code/claude-opus-4-6
+  provider: claude-code
+  max_tokens: 64k
+```
+
+If you define the same `model_id` in `models.yaml`, your configuration takes precedence.
 
 ## Quick Start
 
