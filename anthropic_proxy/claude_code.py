@@ -37,6 +37,12 @@ CACHE_RETENTION_ENV = "CLAUDE_CODE_CACHE_RETENTION"
 # Beta headers for different features
 BETA_FEATURES_BASE = "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
 BETA_THINKING_FEATURE = "interleaved-thinking-2025-05-14"
+BETA_1M_CONTEXT_FEATURE = "context-1m-2025-08-07"  # 1M token context window (beta)
+
+# 1M context window configuration
+# Set CLAUDE_CODE_1M_CONTEXT=1 to enable 1M token context window for Opus 4.6 and Sonnet 4.5
+# Note: Long context pricing applies to requests exceeding 200K tokens
+CONTEXT_1M_ENV = "CLAUDE_CODE_1M_CONTEXT"
 
 # Thinking budget mapping (matches Claude Code /thinking command)
 THINKING_BUDGET_MAP = {
@@ -46,8 +52,11 @@ THINKING_BUDGET_MAP = {
     "high": 16384,
 }
 
-# Models that support thinking/reasoning (Claude 4.5 only)
+# Models that support thinking/reasoning (Claude 4.5 and 4.6)
 THINKING_CAPABLE_MODELS = {
+    # Claude 4.6 Opus (128K max output, 1M context window with beta)
+    "claude-opus-4-6",
+    # Claude 4.5 (kept for backward compatibility)
     "claude-opus-4-5",
     "claude-opus-4-5-20251101",
     "claude-sonnet-4-5",
@@ -59,13 +68,19 @@ THINKING_CAPABLE_MODELS = {
 # Minimum output space required beyond thinking budget
 MIN_OUTPUT_BUFFER = 1024
 
-# Default models available via Claude Code subscription (Claude 4.5 only).
-# max_tokens matches Claude Code behavior (64K for all 4.5 models)
+# Default models available via Claude Code subscription (Claude 4.5 and 4.6).
+# max_tokens: 128K for Opus 4.6, 64K for 4.5 models
 DEFAULT_CLAUDE_CODE_MODELS = {
-    # Claude 4.5 Opus
+    # Claude 4.6 Opus (latest) - 128K max output, 1M context window with beta header
+    "claude-opus-4-6": {
+        "model_name": "claude-opus-4-6",
+        "description": "Claude Opus 4.6 (latest)",
+        "max_tokens": 128000,
+    },
+    # Claude 4.5 Opus (backward compatibility)
     "claude-opus-4-5": {
         "model_name": "claude-opus-4-5",
-        "description": "Claude Opus 4.5 (latest)",
+        "description": "Claude Opus 4.5",
         "max_tokens": 64000,
     },
     "claude-opus-4-5-20251101": {
@@ -265,6 +280,18 @@ def get_thinking_budget(thinking_config: Any) -> int | None:
     return None
 
 
+def is_1m_context_enabled() -> bool:
+    """
+    Check if 1M context window beta is enabled.
+
+    Set CLAUDE_CODE_1M_CONTEXT=1 to enable 1M token context window.
+    Only affects Opus 4.6 and Sonnet 4.5 models.
+
+    Note: Long context pricing applies to requests exceeding 200K tokens.
+    """
+    return os.environ.get(CONTEXT_1M_ENV) == "1"
+
+
 def build_claude_code_headers(token: str, thinking_enabled: bool = False) -> dict[str, str]:
     """
     Build headers required for Claude Code OAuth token requests.
@@ -278,6 +305,8 @@ def build_claude_code_headers(token: str, thinking_enabled: bool = False) -> dic
     beta_features = BETA_FEATURES_BASE
     if thinking_enabled:
         beta_features = f"{beta_features},{BETA_THINKING_FEATURE}"
+    if is_1m_context_enabled():
+        beta_features = f"{beta_features},{BETA_1M_CONTEXT_FEATURE}"
 
     return {
         "Content-Type": "application/json",

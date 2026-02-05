@@ -262,10 +262,11 @@ class TestDefaultModels:
     def test_models_defined(self):
         assert len(DEFAULT_CLAUDE_CODE_MODELS) > 0
 
-    def test_claude_45_models(self):
-        # Should have Claude 4.5 Opus, Sonnet, Haiku
+    def test_claude_models(self):
+        # Should have Claude 4.6 Opus and 4.5 Sonnet, Haiku
         model_ids = list(DEFAULT_CLAUDE_CODE_MODELS.keys())
 
+        assert "claude-opus-4-6" in model_ids
         assert "claude-opus-4-5" in model_ids
         assert "claude-sonnet-4-5" in model_ids
         assert "claude-haiku-4-5" in model_ids
@@ -275,7 +276,11 @@ class TestDefaultModels:
             assert "model_name" in details
             assert "description" in details
             assert "max_tokens" in details
-            assert details["max_tokens"] == 64000  # Claude 4.5 has 64K max
+            # Opus 4.6 has 128K max output, others have 64K
+            if "opus-4-6" in model_id:
+                assert details["max_tokens"] == 128000
+            else:
+                assert details["max_tokens"] == 64000
 
 
 class TestClaudeCodeAuth:
