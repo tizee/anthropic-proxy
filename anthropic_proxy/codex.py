@@ -186,24 +186,42 @@ codex_auth = CodexAuth()
 def _sanitize_codex_input(input_items: list[dict]) -> list[dict]:
     """Ensure Codex Responses API input items meet backend requirements.
 
-    The Codex backend requires ``summary`` on ``function_call_output`` items.
-    If missing, a truncated copy of ``output`` is used as the default summary.
+    Fixes two classes of ``summary``-related 400 errors:
+
+    1. **Missing**: ``reasoning`` items require ``summary``. If absent the
+       backend returns "Missing required parameter: 'input[N].summary'".
+       Fix: add an empty ``summary`` array.
+
+    2. **Spurious**: Only ``reasoning`` items accept ``summary``. If present
+       on any other type the backend returns "Unknown parameter:
+       'input[N].summary'".  Fix: strip the field.
 
     Returns the original list if no fixes are needed (zero-copy).
     """
     result = None
     for i, item in enumerate(input_items):
-        needs_fix = (
-            isinstance(item, dict)
-            and item.get("type") == "function_call_output"
-            and "summary" not in item
-        )
-        if needs_fix:
+        if not isinstance(item, dict):
+            if result is not None:
+                result.append(item)
+            continue
+
+        is_reasoning = item.get("type") == "reasoning"
+        has_summary = "summary" in item
+
+        if is_reasoning and not has_summary:
+            # Case 1: reasoning missing summary -- add empty array
             if result is None:
                 result = list(input_items[:i])
-            result.append({**item, "summary": item.get("output", "")[:200]})
+            result.append({**item, "summary": []})
+        elif not is_reasoning and has_summary:
+            # Case 2: non-reasoning with spurious summary -- strip it
+            if result is None:
+                result = list(input_items[:i])
+            fixed = {k: v for k, v in item.items() if k != "summary"}
+            result.append(fixed)
         elif result is not None:
             result.append(item)
+
     return input_items if result is None else result
 
 

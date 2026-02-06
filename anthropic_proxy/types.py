@@ -427,6 +427,18 @@ class ClaudeThinkingConfigDisabled(BaseModel):
     type: Literal["disabled"] = "disabled"  # Configuration type identifier
 
 
+class ClaudeThinkingConfigAdaptive(BaseModel):
+    """
+    Adaptive thinking configuration.
+
+    Configuration for adaptive thinking mode where the model dynamically
+    decides when to use extended thinking based on the complexity of
+    the task. Only supported on Claude Code models.
+    """
+
+    type: Literal["adaptive"] = "adaptive"  # Configuration type identifier
+
+
 def parse_thinking_config(v):
     """Parse thinking configuration from dict to typed config objects.
 
@@ -443,13 +455,15 @@ def parse_thinking_config(v):
     if v.get("enabled") is False:
         return ClaudeThinkingConfigDisabled(type="disabled")
 
-    # Check for type: enabled/disabled format
+    # Check for type: enabled/disabled/adaptive format
     if v.get("type") == "enabled":
         return ClaudeThinkingConfigEnabled(
             type="enabled", budget_tokens=v.get("budget_tokens")
         )
     if v.get("type") == "disabled":
         return ClaudeThinkingConfigDisabled(type="disabled")
+    if v.get("type") == "adaptive":
+        return ClaudeThinkingConfigAdaptive(type="adaptive")
 
     return v
 
@@ -747,7 +761,7 @@ class ClaudeTokenCountRequest(BaseModel):
     system: str | list[ClaudeSystemContent] | None = None  # System prompt (optional)
     tools: list[ClaudeTool] | None = None  # Tools definition (optional)
     thinking: (  # Thinking configuration (optional)
-        ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | dict | None
+        ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | ClaudeThinkingConfigAdaptive | dict | None
     ) = None
     tool_choice: dict[str, Any] | None = None  # Tool choice configuration (optional)
 
@@ -994,7 +1008,7 @@ class ClaudeMessagesRequest(BaseModel):
     tool_choice: ClaudeToolChoice | None = (
         None  # How the model should use the provided tools
     )
-    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | None = (
+    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | ClaudeThinkingConfigAdaptive | None = (
         None  # Extended thinking configuration
     )
 
