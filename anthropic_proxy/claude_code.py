@@ -693,7 +693,7 @@ async def handle_claude_code_request(
         return _stream_claude_code_response(client, response)
 
     except httpx.ConnectError as conn_err:
-        logger.error(f"Claude Code connection error: {conn_err}")
+        logger.error(f"Claude Code connection error: {type(conn_err).__name__}: {conn_err}")
         error_body = {
             "type": "error",
             "error": {
@@ -704,7 +704,7 @@ async def handle_claude_code_request(
         return ClaudeCodeErrorResponse(502, error_body)
 
     except httpx.TimeoutException as timeout_err:
-        logger.error(f"Claude Code timeout error: {timeout_err}")
+        logger.error(f"Claude Code timeout error: {type(timeout_err).__name__}: {timeout_err}")
         error_body = {
             "type": "error",
             "error": {
