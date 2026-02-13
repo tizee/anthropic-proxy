@@ -21,7 +21,6 @@ from openai.types.chat import (
     ChatCompletionChunk,
 )
 
-from .antigravity import handle_antigravity_request
 from .claude_code import handle_claude_code_request
 from .client import (
     CUSTOM_OPENAI_MODELS,
@@ -29,7 +28,6 @@ from .client import (
     create_openai_client,
     get_model_format,
     initialize_custom_models,
-    is_antigravity_model,
     is_claude_code_model,
     is_codex_model,
     is_gemini_model,
@@ -80,7 +78,9 @@ def extract_api_key(request: Request) -> str | None:
         The API key extracted from the Authorization header, or None if not found.
         When None is returned, the caller should check if the model has its own API key.
     """
-    auth_header = request.headers.get("Authorization") or request.headers.get("x-api-key")
+    auth_header = request.headers.get("Authorization") or request.headers.get(
+        "x-api-key"
+    )
 
     if not auth_header:
         return None
@@ -91,7 +91,6 @@ def extract_api_key(request: Request) -> str | None:
 
     # Handle plain token
     return auth_header
-
 
 
 @asynccontextmanager
@@ -219,7 +218,7 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
                     "status_code": response.status_code,
                     "error_type": error_type,
                     "error_message": error_message,
-                    "full_response": error_data
+                    "full_response": error_data,
                 }
 
         # Fallback for non-standard error format
@@ -227,7 +226,9 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
             "status_code": response.status_code,
             "error_type": "http_error",
             "error_message": f"HTTP {response.status_code}: {response.reason_phrase}",
-            "full_response": error_data if isinstance(error_data, dict) else {"raw_response": str(error_data)}
+            "full_response": error_data
+            if isinstance(error_data, dict)
+            else {"raw_response": str(error_data)},
         }
 
     except (json.JSONDecodeError, ValueError):
@@ -241,7 +242,7 @@ def parse_claude_api_error(response: httpx.Response) -> dict:
             "status_code": response.status_code,
             "error_type": "http_error",
             "error_message": f"HTTP {response.status_code}: {response.reason_phrase}",
-            "full_response": {"raw_response": response_text}
+            "full_response": {"raw_response": response_text},
         }
 
 
@@ -249,7 +250,7 @@ async def handle_direct_claude_request(
     request: ClaudeMessagesRequest,
     model_id: str,
     model_config: dict,
-    raw_request: Request
+    raw_request: Request,
 ):
     """Handle direct Claude API requests without OpenAI conversion."""
     try:
@@ -291,11 +292,15 @@ async def handle_direct_claude_request(
         if request.stream:
             # Determine message type for consistent logging
             message_type = determine_message_type(request)
-            logger.info(f"🔗 DIRECT STREAMING: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
+            logger.info(
+                f"🔗 DIRECT STREAMING: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}"
+            )
 
             async def direct_streaming_generator():
                 try:
-                    async with claude_client.stream("POST", "/messages", json=claude_request_data) as response:
+                    async with claude_client.stream(
+                        "POST", "/messages", json=claude_request_data
+                    ) as response:
                         response.raise_for_status()
                         async for chunk in response.aiter_text():
                             if chunk:
@@ -304,15 +309,17 @@ async def handle_direct_claude_request(
                 except httpx.HTTPStatusError as http_err:
                     # Parse Claude API error response for streaming
                     error_details = parse_claude_api_error(http_err.response)
-                    logger.error(f"Claude API streaming error: {json.dumps(error_details, indent=2)}")
+                    logger.error(
+                        f"Claude API streaming error: {json.dumps(error_details, indent=2)}"
+                    )
 
                     # Send structured error event
                     error_event = {
                         "type": "error",
                         "error": {
                             "type": error_details["error_type"],
-                            "message": error_details["error_message"]
-                        }
+                            "message": error_details["error_message"],
+                        },
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
@@ -322,8 +329,8 @@ async def handle_direct_claude_request(
                         "type": "error",
                         "error": {
                             "type": "api_error",
-                            "message": f"Unable to connect to Claude API: {conn_err}"
-                        }
+                            "message": f"Unable to connect to Claude API: {conn_err}",
+                        },
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
@@ -333,8 +340,8 @@ async def handle_direct_claude_request(
                         "type": "error",
                         "error": {
                             "type": "api_error",
-                            "message": f"Request to Claude API timed out: {timeout_err}"
-                        }
+                            "message": f"Request to Claude API timed out: {timeout_err}",
+                        },
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
@@ -344,8 +351,8 @@ async def handle_direct_claude_request(
                         "type": "error",
                         "error": {
                             "type": "api_error",
-                            "message": f"Unexpected error: {str(e)}"
-                        }
+                            "message": f"Unexpected error: {str(e)}",
+                        },
                     }
                     yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
                 finally:
@@ -373,11 +380,15 @@ async def handle_direct_claude_request(
             # Non-streaming mode
             # Determine message type for consistent logging
             message_type = determine_message_type(request)
-            logger.info(f"🔗 DIRECT REQUEST: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
+            logger.info(
+                f"🔗 DIRECT REQUEST: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}"
+            )
             start_time = time.time()
 
             try:
-                response = await claude_client.post("/messages", json=claude_request_data)
+                response = await claude_client.post(
+                    "/messages", json=claude_request_data
+                )
                 response.raise_for_status()
 
                 logger.debug(
@@ -388,18 +399,22 @@ async def handle_direct_claude_request(
                 try:
                     response_data = response.json()
                 except json.JSONDecodeError as json_err:
-                    logger.error(f"Failed to parse Claude API response JSON: {json_err}")
+                    logger.error(
+                        f"Failed to parse Claude API response JSON: {json_err}"
+                    )
                     raise HTTPException(
-                        status_code=502,
-                        detail="Invalid JSON response from Claude API"
+                        status_code=502, detail="Invalid JSON response from Claude API"
                     ) from json_err
 
                 # Apply response hooks if needed
-                hooked_response_data = hook_manager.trigger_response_hooks(response_data)
+                hooked_response_data = hook_manager.trigger_response_hooks(
+                    response_data
+                )
 
                 # Update global usage statistics if usage data is present
                 if "usage" in hooked_response_data:
                     from .types import ClaudeUsage
+
                     usage = ClaudeUsage(**hooked_response_data["usage"])
                     update_global_usage_stats(usage, model_id, "Direct Mode")
 
@@ -415,7 +430,7 @@ async def handle_direct_claude_request(
                     "api_base": model_config.get("api_base", "unknown"),
                     "status_code": error_details["status_code"],
                     "error_type": error_details["error_type"],
-                    "error_message": error_details["error_message"]
+                    "error_message": error_details["error_message"],
                 }
                 logger.error(f"Claude API error: {json.dumps(debug_info, indent=2)}")
 
@@ -426,26 +441,27 @@ async def handle_direct_claude_request(
                     "permission_error": "Permission denied",
                     "invalid_request_error": "Invalid request",
                 }
-                prefix = error_type_prefixes.get(error_details["error_type"], "Claude API error")
+                prefix = error_type_prefixes.get(
+                    error_details["error_type"], "Claude API error"
+                )
                 error_message = f"{prefix}: {error_details['error_message']}"
 
                 raise HTTPException(
-                    status_code=error_details["status_code"],
-                    detail=error_message
+                    status_code=error_details["status_code"], detail=error_message
                 ) from http_err
 
             except httpx.ConnectError as conn_err:
                 logger.error(f"Connection error to Claude API: {conn_err}")
                 raise HTTPException(
                     status_code=502,
-                    detail="Unable to connect to Claude API. Please check your network connection and try again."
+                    detail="Unable to connect to Claude API. Please check your network connection and try again.",
                 ) from conn_err
 
             except httpx.TimeoutException as timeout_err:
                 logger.error(f"Timeout error to Claude API: {timeout_err}")
                 raise HTTPException(
                     status_code=504,
-                    detail="Request to Claude API timed out. Please try again."
+                    detail="Request to Claude API timed out. Please try again.",
                 ) from timeout_err
 
             except HTTPException:
@@ -456,8 +472,7 @@ async def handle_direct_claude_request(
                 # Generic error fallback
                 logger.error(f"Unexpected error in direct Claude request: {e}")
                 raise HTTPException(
-                    status_code=500,
-                    detail=f"Unexpected error occurred: {str(e)}"
+                    status_code=500, detail=f"Unexpected error occurred: {str(e)}"
                 ) from e
             finally:
                 await claude_client.aclose()
@@ -469,8 +484,7 @@ async def handle_direct_claude_request(
         # Fallback for any unhandled exceptions in the direct Claude request setup
         logger.error(f"Unhandled error in direct Claude request setup: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            status_code=500, detail=f"Internal server error: {str(e)}"
         ) from e
 
 
@@ -509,7 +523,7 @@ async def create_message(raw_request: Request):
         elif not api_key:
             raise HTTPException(
                 status_code=401,
-                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml.",
             )
 
         # Determine message type based on content
@@ -526,7 +540,9 @@ async def create_message(raw_request: Request):
             from .claude_code import ClaudeCodeErrorResponse
 
             provider_model_name = model_config.get("model_name", model_id)
-            logger.info(f"🔗 CLAUDE CODE FORMAT: Model={model_id}, Target={provider_model_name}")
+            logger.info(
+                f"🔗 CLAUDE CODE FORMAT: Model={model_id}, Target={provider_model_name}"
+            )
 
             # Make the request - may return error response or streaming generator
             result = await handle_claude_code_request(
@@ -565,7 +581,9 @@ async def create_message(raw_request: Request):
             )
 
         if model_format == "anthropic":
-            logger.info(f"🔗 ANTHROPIC FORMAT: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}")
+            logger.info(
+                f"🔗 ANTHROPIC FORMAT: Type={message_type}, Source-Model={model_id}, Target-Model={model_config.get('model_name')}"
+            )
             return await handle_direct_claude_request(
                 request, model_id, model_config, raw_request
             )
@@ -579,17 +597,10 @@ async def create_message(raw_request: Request):
                     model_id,
                     model_name=provider_model_name,
                 )
-            elif is_antigravity_model(model_id):
-                logger.info(f"🔗 ANTIGRAVITY FORMAT: Model={model_id}")
-                provider_generator = handle_antigravity_request(
-                    request,
-                    model_id,
-                    model_name=provider_model_name,
-                )
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                    detail="format=gemini requires provider=gemini.",
                 )
 
             hooked_generator = hook_streaming_response(
@@ -621,17 +632,25 @@ async def create_message(raw_request: Request):
 
         # Convert Anthropic request to OpenAI format (default path)
         openai_request = request.to_openai_request()
-        openai_request['store'] = False
+        openai_request["store"] = False
 
         # GROQ DEBUG: Log the OpenAI request for tool call debugging
         if request.tools:
-            logger.debug(f"🔧 TOOL_DEBUG: Original request has {len(request.tools)} tools")
-            logger.debug(f"🔧 TOOL_DEBUG: Tools: {[tool.name for tool in request.tools]}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Original request has {len(request.tools)} tools"
+            )
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Tools: {[tool.name for tool in request.tools]}"
+            )
 
-        if openai_request.get('tools'):
-            logger.debug(f"🔧 TOOL_DEBUG: OpenAI request has {len(openai_request['tools'])} tools")
+        if openai_request.get("tools"):
+            logger.debug(
+                f"🔧 TOOL_DEBUG: OpenAI request has {len(openai_request['tools'])} tools"
+            )
             logger.debug(f"🔧 TOOL_DEBUG: OpenAI tools: {openai_request['tools']}")
-            logger.debug(f"🔧 TOOL_DEBUG: tool_choice: {openai_request.get('tool_choice')}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: tool_choice: {openai_request.get('tool_choice')}"
+            )
 
         # Trigger request hooks
         openai_request = hook_manager.trigger_request_hooks(openai_request)
@@ -662,7 +681,10 @@ async def create_message(raw_request: Request):
             openai_request["reasoning_effort"] = reasoning_effort
 
         # 2. Custom `thinkingConfig` in `extra_body` for Gemini-style thinking
-        if model_config.get("extra_body") and "thinkingConfig" in model_config["extra_body"]:
+        if (
+            model_config.get("extra_body")
+            and "thinkingConfig" in model_config["extra_body"]
+        ):
             # doc https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig#ThinkingConfig
             # Start with the base thinking configuration from the model
             thinking_params = model_config["extra_body"]["thinkingConfig"].copy()
@@ -683,17 +705,18 @@ async def create_message(raw_request: Request):
         # - tool_choice=required ensures consistent behavior across all models
         # - Exception: Thinking models don't support tool_choice=required (API limitation)
         # IMPORTANT: Only set tool_choice if we actually have tools
-        if (
-            openai_request.get("tools")
-            and len(openai_request.get("tools", [])) > 0
-        ):
+        if openai_request.get("tools") and len(openai_request.get("tools", [])) > 0:
             openai_request["tool_choice"] = "auto"
-            logger.debug("🔧 TOOL_DEBUG: Set tool_choice to 'auto' because tools are present")
+            logger.debug(
+                "🔧 TOOL_DEBUG: Set tool_choice to 'auto' because tools are present"
+            )
         else:
             # Remove tool_choice if no tools are present (OpenAI API requirement)
             if "tool_choice" in openai_request:
                 del openai_request["tool_choice"]
-                logger.debug("🔧 TOOL_DEBUG: Removed tool_choice because no tools are present")
+                logger.debug(
+                    "🔧 TOOL_DEBUG: Removed tool_choice because no tools are present"
+                )
 
         # Only log basic info about the request, not the full details
         logger.debug(
@@ -727,12 +750,16 @@ async def create_message(raw_request: Request):
         # Sanitize request: remove unsupported fields and fix message ordering
         sanitize_openai_request(openai_request)
         if "messages" in openai_request:
-            openai_request["messages"] = sanitize_openai_messages(openai_request["messages"])
+            openai_request["messages"] = sanitize_openai_messages(
+                openai_request["messages"]
+            )
 
         # Handle streaming mode
         # Use OpenAI SDK async streaming
         if openai_request["stream"]:
-            logger.debug(f"🔧 TOOL_DEBUG: Starting streaming request with model: {openai_request.get('model')}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Starting streaming request with model: {openai_request.get('model')}"
+            )
 
             # Log the actual request being sent to help debug
             logger.debug(f"🔧 TOOL_DEBUG: Full OpenAI request: {openai_request}")
@@ -741,7 +768,9 @@ async def create_message(raw_request: Request):
                 response_generator: AsyncStream[
                     ChatCompletionChunk
                 ] = await client.chat.completions.create(**openai_request)
-                logger.debug("🔧 TOOL_DEBUG: Successfully created streaming response generator")
+                logger.debug(
+                    "🔧 TOOL_DEBUG: Successfully created streaming response generator"
+                )
 
                 # Convert OpenAI chunks to Anthropic SSE, then apply hooks
                 hooked_generator = hook_streaming_response(
@@ -764,23 +793,35 @@ async def create_message(raw_request: Request):
                 )
             except Exception as e:
                 logger.error(f"TOOL_DEBUG: Error creating streaming response: {e}")
-                logger.error(f"TOOL_DEBUG: Request details: model={openai_request.get('model')}, tools={len(openai_request.get('tools', []))}")
+                logger.error(
+                    f"TOOL_DEBUG: Request details: model={openai_request.get('model')}, tools={len(openai_request.get('tools', []))}"
+                )
                 log_openai_api_error(e, "streaming")
                 raise
         else:
             start_time = time.time()
             try:
-                logger.debug(f"🔧 TOOL_DEBUG: Making non-streaming request with model: {openai_request.get('model')}")
+                logger.debug(
+                    f"🔧 TOOL_DEBUG: Making non-streaming request with model: {openai_request.get('model')}"
+                )
                 openai_response: ChatCompletion = await client.chat.completions.create(
                     **openai_request
                 )
-                logger.debug("🔧 TOOL_DEBUG: Successfully received non-streaming response")
+                logger.debug(
+                    "🔧 TOOL_DEBUG: Successfully received non-streaming response"
+                )
 
                 # GROQ DEBUG: Log the raw OpenAI response for tool call analysis
-                if hasattr(openai_response, 'choices') and openai_response.choices:
+                if hasattr(openai_response, "choices") and openai_response.choices:
                     choice = openai_response.choices[0]
-                    if hasattr(choice, 'message') and hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
-                        logger.debug(f"🔧 TOOL_DEBUG: Non-streaming response has {len(choice.message.tool_calls)} tool calls")
+                    if (
+                        hasattr(choice, "message")
+                        and hasattr(choice.message, "tool_calls")
+                        and choice.message.tool_calls
+                    ):
+                        logger.debug(
+                            f"🔧 TOOL_DEBUG: Non-streaming response has {len(choice.message.tool_calls)} tool calls"
+                        )
                         for i, tc in enumerate(choice.message.tool_calls):
                             logger.debug(f"🔧 TOOL_DEBUG: Tool call {i}: {tc}")
 
@@ -791,10 +832,14 @@ async def create_message(raw_request: Request):
                     "api_base": str(getattr(client, "base_url", "unknown")),
                     "error_type": type(e).__name__,
                 }
-                logger.error(f"TOOL_DEBUG: API call failed with context: {json.dumps(error_context, indent=2)}")
+                logger.error(
+                    f"TOOL_DEBUG: API call failed with context: {json.dumps(error_context, indent=2)}"
+                )
                 log_openai_api_error(e, "non-streaming")
-                if openai_request.get('tools'):
-                    logger.error(f"TOOL_DEBUG: Error occurred with {len(openai_request['tools'])} tools present")
+                if openai_request.get("tools"):
+                    logger.error(
+                        f"TOOL_DEBUG: Error occurred with {len(openai_request['tools'])} tools present"
+                    )
                 raise
 
             logger.debug(
@@ -858,7 +903,7 @@ async def create_chat_completion(raw_request: Request):
         if not model_config.get("api_key") and not api_key:
             raise HTTPException(
                 status_code=401,
-                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml.",
             )
 
         # Convert OpenAI request to Anthropic format
@@ -884,6 +929,7 @@ async def create_chat_completion(raw_request: Request):
 
             # For streaming, wrap the response to convert back to OpenAI format
             if stream and isinstance(response, StreamingResponse):
+
                 async def convert_streaming_to_openai():
                     streaming_converter = OpenAIToAnthropicStreamingConverter()
                     # Get the original body iterator
@@ -908,13 +954,18 @@ async def create_chat_completion(raw_request: Request):
                 # Non-streaming: convert response to OpenAI format
                 anthropic_response_data = json.loads(response.body.decode())
                 from .types import ClaudeMessagesResponse
-                anthropic_response = ClaudeMessagesResponse.model_validate(anthropic_response_data)
-                openai_response = openai_converter.response_from_anthropic(anthropic_response)
+
+                anthropic_response = ClaudeMessagesResponse.model_validate(
+                    anthropic_response_data
+                )
+                openai_response = openai_converter.response_from_anthropic(
+                    anthropic_response
+                )
                 return JSONResponse(content=openai_response)
             return response
 
         elif model_format == "gemini":
-            # Gemini/Antigravity format
+            # Gemini format
             provider_model_name = model_config.get("model_name", model_id)
             if is_gemini_model(model_id):
                 provider_generator = handle_gemini_request(
@@ -922,16 +973,10 @@ async def create_chat_completion(raw_request: Request):
                     model_id,
                     model_name=provider_model_name,
                 )
-            elif is_antigravity_model(model_id):
-                provider_generator = handle_antigravity_request(
-                    anthropic_request,
-                    model_id,
-                    model_name=provider_model_name,
-                )
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                    detail="format=gemini requires provider=gemini.",
                 )
 
             # Convert Gemini -> Anthropic -> OpenAI streaming
@@ -967,7 +1012,9 @@ async def create_chat_completion(raw_request: Request):
             openai_payload["extra_body"] = model_config.get("extra_body", {})
 
             # Handle max_tokens
-            max_tokens = openai_payload.get("max_tokens") or openai_payload.get("max_completion_tokens")
+            max_tokens = openai_payload.get("max_tokens") or openai_payload.get(
+                "max_completion_tokens"
+            )
             if max_tokens:
                 max_tokens = min(model_config.get("max_tokens", 8192), max_tokens)
                 openai_payload["max_tokens"] = max_tokens
@@ -978,11 +1025,15 @@ async def create_chat_completion(raw_request: Request):
 
             # Sanitize messages to fix tool call ordering issues
             if "messages" in openai_payload:
-                openai_payload["messages"] = sanitize_openai_messages(openai_payload["messages"])
+                openai_payload["messages"] = sanitize_openai_messages(
+                    openai_payload["messages"]
+                )
 
             if stream:
                 openai_payload["stream_options"] = {"include_usage": True}
-                response_generator = await client.chat.completions.create(**openai_payload)
+                response_generator = await client.chat.completions.create(
+                    **openai_payload
+                )
                 return StreamingResponse(
                     _forward_openai_stream(response_generator),
                     media_type="text/event-stream",
@@ -1002,7 +1053,9 @@ async def create_chat_completion(raw_request: Request):
         raise
     except Exception as e:
         error_details = _extract_error_details(e)
-        logger.error(f"Error in /v1/chat/completions: {json.dumps(error_details, indent=2)}")
+        logger.error(
+            f"Error in /v1/chat/completions: {json.dumps(error_details, indent=2)}"
+        )
         error_message = _format_error_message(e, error_details)
         status_code = error_details.get("status_code", 500)
         raise HTTPException(status_code=status_code, detail=error_message) from e
@@ -1061,7 +1114,8 @@ async def create_response(raw_request: Request):
 
         # Get Codex response generator
         provider_generator = handle_codex_request(
-            request_payload, model_id,
+            request_payload,
+            model_id,
             reasoning_effort=model_config.get("reasoning_effort"),
         )
 
@@ -1074,7 +1128,9 @@ async def create_response(raw_request: Request):
                         yield f"data: {json.dumps(chunk)}\n\n"
                     yield "data: [DONE]\n\n"
                 except Exception as e:
-                    logger.error("Codex streaming error in /v1/responses: %s", e, exc_info=True)
+                    logger.error(
+                        "Codex streaming error in /v1/responses: %s", e, exc_info=True
+                    )
                     error_event = {"type": "error", "error": {"message": str(e)}}
                     yield f"data: {json.dumps(error_event)}\n\n"
 
@@ -1102,7 +1158,9 @@ async def create_response(raw_request: Request):
                 final_response = chunks[-1]
                 return JSONResponse(content=final_response)
             else:
-                raise HTTPException(status_code=500, detail="Empty response from Codex backend")
+                raise HTTPException(
+                    status_code=500, detail="Empty response from Codex backend"
+                )
 
     except HTTPException:
         raise
@@ -1136,7 +1194,9 @@ async def gemini_stream_generate_content(model_path: str, raw_request: Request):
     return await _handle_gemini_request(model_path, raw_request, streaming=True)
 
 
-async def _handle_gemini_request(model_path: str, raw_request: Request, streaming: bool):
+async def _handle_gemini_request(
+    model_path: str, raw_request: Request, streaming: bool
+):
     """Common handler for Gemini generateContent and streamGenerateContent."""
     try:
         # Extract API key from request header
@@ -1167,7 +1227,7 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
         if not model_config.get("api_key") and not api_key:
             raise HTTPException(
                 status_code=401,
-                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml.",
             )
 
         # Convert Gemini request to Anthropic format
@@ -1212,13 +1272,18 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
                 # Convert non-streaming response to Gemini format
                 anthropic_response_data = json.loads(response.body.decode())
                 from .types import ClaudeMessagesResponse
-                anthropic_response = ClaudeMessagesResponse.model_validate(anthropic_response_data)
-                gemini_response = gemini_converter.response_from_anthropic(anthropic_response)
+
+                anthropic_response = ClaudeMessagesResponse.model_validate(
+                    anthropic_response_data
+                )
+                gemini_response = gemini_converter.response_from_anthropic(
+                    anthropic_response
+                )
                 return JSONResponse(content=gemini_response)
             return response
 
         elif model_format == "gemini":
-            # Gemini/Antigravity format - pass through with conversion
+            # Gemini format - pass through with conversion
             provider_model_name = model_config.get("model_name", model_id)
             if is_gemini_model(model_id):
                 provider_generator = handle_gemini_request(
@@ -1226,16 +1291,10 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
                     model_id,
                     model_name=provider_model_name,
                 )
-            elif is_antigravity_model(model_id):
-                provider_generator = handle_antigravity_request(
-                    anthropic_request,
-                    model_id,
-                    model_name=provider_model_name,
-                )
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail="format=gemini requires provider=gemini or provider=antigravity.",
+                    detail="format=gemini requires provider=gemini.",
                 )
 
             # Convert Gemini -> Anthropic -> Gemini (for consistent format)
@@ -1276,7 +1335,9 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
             if streaming:
                 openai_request["stream"] = True
                 openai_request["stream_options"] = {"include_usage": True}
-                response_generator = await client.chat.completions.create(**openai_request)
+                response_generator = await client.chat.completions.create(
+                    **openai_request
+                )
 
                 # OpenAI -> Anthropic -> Gemini streaming
                 anthropic_stream = convert_openai_streaming_response_to_anthropic(
@@ -1300,8 +1361,12 @@ async def _handle_gemini_request(model_path: str, raw_request: Request, streamin
                 openai_request["stream"] = False
                 response = await client.chat.completions.create(**openai_request)
                 # OpenAI -> Anthropic -> Gemini response
-                anthropic_response = openai_converter.response_to_anthropic(response, anthropic_request)
-                gemini_response = gemini_converter.response_from_anthropic(anthropic_response)
+                anthropic_response = openai_converter.response_to_anthropic(
+                    response, anthropic_request
+                )
+                gemini_response = gemini_converter.response_from_anthropic(
+                    anthropic_response
+                )
                 return JSONResponse(content=gemini_response)
 
     except HTTPException:
@@ -1377,14 +1442,14 @@ async def test_message_conversion(raw_request: Request):
         if not model_config.get("api_key") and not api_key:
             raise HTTPException(
                 status_code=401,
-                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml."
+                detail="Missing API key. Either provide it in the Authorization header or configure it in models.yaml.",
             )
 
         logger.info(f"🧪 TEST CONVERSION: Direct test for model {original_model}")
 
         # Convert Anthropic request to OpenAI format
         openai_request = request.to_openai_request()
-        openai_request['store'] = False
+        openai_request["store"] = False
 
         # Create OpenAI client - uses model-specific key if available, otherwise header key
         client = create_openai_client(original_model, api_key)
@@ -1521,15 +1586,13 @@ def log_request_beautifully(
         openai_display = openai_display.split("/")[-1]
 
     # Format status code
-    status_str = (
-        f"✓ {status_code} OK"
-        if status_code == 200
-        else f"✗ {status_code}"
-    )
+    status_str = f"✓ {status_code} OK" if status_code == 200 else f"✗ {status_code}"
 
     # Put it all together in a clear, beautiful format
     log_line = f"{method} {endpoint} {status_str}"
-    model_line = f"{claude_model} → {openai_display} {num_tools} tools {num_messages} messages"
+    model_line = (
+        f"{claude_model} → {openai_display} {num_tools} tools {num_messages} messages"
+    )
 
     # Use logger instead of print to maintain consistency with log levels
     # This will only show up when log level is INFO or lower
@@ -1540,16 +1603,16 @@ def log_request_beautifully(
 def determine_message_type(request):
     """Determine message type based on request content."""
     message_type = "text"
-    if hasattr(request, 'tools') and request.tools:
+    if hasattr(request, "tools") and request.tools:
         message_type = "tool_call"
-    elif hasattr(request, 'images') and request.images:
+    elif hasattr(request, "images") and request.images:
         message_type = "multimodal"
-    elif hasattr(request, 'messages'):
+    elif hasattr(request, "messages"):
         last_message = request.messages[-1].content if request.messages else ""
         if isinstance(last_message, list):
             # Check if any content item is not text
             for item in last_message:
-                if hasattr(item, 'type') and item.type != 'text':
+                if hasattr(item, "type") and item.type != "text":
                     message_type = "multimodal"
                     break
     return message_type
@@ -1564,12 +1627,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Claude Code Proxy Server.")
     parser.add_argument("--host", default=None, help="Host to bind to")
     parser.add_argument("--port", type=int, default=None, help="Port to bind to")
-    parser.add_argument(
-        "--models", type=Path, default=None, help="Path to models.yaml"
-    )
-    parser.add_argument(
-        "--config", type=Path, default=None, help="Path to config.json"
-    )
+    parser.add_argument("--models", type=Path, default=None, help="Path to models.yaml")
+    parser.add_argument("--config", type=Path, default=None, help="Path to config.json")
     args = parser.parse_args()
 
     # Override config from command line

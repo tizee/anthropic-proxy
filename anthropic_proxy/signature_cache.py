@@ -1,4 +1,4 @@
-"""In-memory signature cache for Antigravity Claude thinking blocks."""
+"""In-memory signature cache for Gemini Claude thinking blocks."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ def _make_key(session_id: str, text: str) -> str:
     text_key = text[:200]
     return f"{session_id}:{text_key}"
 
+
 def _make_tool_key(session_id: str | None, tool_id: str) -> str:
     if session_id:
         return f"{session_id}:tool:{tool_id}"
@@ -28,7 +29,8 @@ def _make_tool_key(session_id: str | None, tool_id: str) -> str:
 def _cleanup_expired(cache: dict[str, dict[str, float | str]]) -> None:
     now = time.time()
     expired = [
-        key for key, entry in cache.items()
+        key
+        for key, entry in cache.items()
         if now - float(entry["timestamp"]) > _CACHE_TTL_SECONDS
     ]
     for key in expired:

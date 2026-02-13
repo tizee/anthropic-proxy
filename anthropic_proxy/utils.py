@@ -23,7 +23,9 @@ DEFAULT_IMAGE_TOKENS = 1500
 ANTHROPIC_IMAGE_TOKEN_DIVISOR = 750
 
 
-def get_image_dimensions_from_base64(base64_data: str, media_type: str) -> tuple[int, int] | None:
+def get_image_dimensions_from_base64(
+    base64_data: str, media_type: str
+) -> tuple[int, int] | None:
     """
     Extract image dimensions from base64-encoded image data without external dependencies.
 
@@ -62,10 +64,10 @@ def _get_png_dimensions(data: bytes) -> tuple[int, int] | None:
     """Extract dimensions from PNG header (IHDR chunk)."""
     # PNG signature: 89 50 4E 47 0D 0A 1A 0A
     # IHDR chunk starts at byte 8, contains width (4 bytes) and height (4 bytes)
-    if len(data) < 24 or data[:8] != b'\x89PNG\r\n\x1a\n':
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
-    width = struct.unpack('>I', data[16:20])[0]
-    height = struct.unpack('>I', data[20:24])[0]
+    width = struct.unpack(">I", data[16:20])[0]
+    height = struct.unpack(">I", data[20:24])[0]
     return (width, height)
 
 
@@ -76,12 +78,12 @@ def _get_jpeg_dimensions(base64_data: str) -> tuple[int, int] | None:
         # Need to scan through the file to find them
         data = base64.b64decode(base64_data[:65536])  # Decode more for JPEG
 
-        if len(data) < 2 or data[0:2] != b'\xff\xd8':
+        if len(data) < 2 or data[0:2] != b"\xff\xd8":
             return None
 
         offset = 2
         while offset < len(data) - 8:
-            if data[offset] != 0xff:
+            if data[offset] != 0xFF:
                 offset += 1
                 continue
 
@@ -89,12 +91,25 @@ def _get_jpeg_dimensions(base64_data: str) -> tuple[int, int] | None:
 
             # SOF markers (Start of Frame) contain dimensions
             # SOF0 (0xC0) through SOF3 (0xC3), SOF5-SOF7, SOF9-SOF11, SOF13-SOF15
-            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-                          0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            if marker in (
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            ):
                 # SOF structure: FF Cx LL LL PP HH HH WW WW
                 # LL LL = length, PP = precision, HH HH = height, WW WW = width
-                height = struct.unpack('>H', data[offset + 5:offset + 7])[0]
-                width = struct.unpack('>H', data[offset + 7:offset + 9])[0]
+                height = struct.unpack(">H", data[offset + 5 : offset + 7])[0]
+                width = struct.unpack(">H", data[offset + 7 : offset + 9])[0]
                 return (width, height)
 
             # Skip to next marker
@@ -106,7 +121,7 @@ def _get_jpeg_dimensions(base64_data: str) -> tuple[int, int] | None:
                 # Read segment length and skip
                 if offset + 4 > len(data):
                     break
-                segment_len = struct.unpack('>H', data[offset + 2:offset + 4])[0]
+                segment_len = struct.unpack(">H", data[offset + 2 : offset + 4])[0]
                 offset += 2 + segment_len
 
         return None
@@ -117,30 +132,30 @@ def _get_jpeg_dimensions(base64_data: str) -> tuple[int, int] | None:
 def _get_gif_dimensions(data: bytes) -> tuple[int, int] | None:
     """Extract dimensions from GIF header."""
     # GIF header: GIF87a or GIF89a, then 2 bytes width, 2 bytes height (little-endian)
-    if len(data) < 10 or data[:3] != b'GIF':
+    if len(data) < 10 or data[:3] != b"GIF":
         return None
-    width = struct.unpack('<H', data[6:8])[0]
-    height = struct.unpack('<H', data[8:10])[0]
+    width = struct.unpack("<H", data[6:8])[0]
+    height = struct.unpack("<H", data[8:10])[0]
     return (width, height)
 
 
 def _get_webp_dimensions(data: bytes) -> tuple[int, int] | None:
     """Extract dimensions from WebP header."""
     # WebP: RIFF....WEBP, then VP8/VP8L/VP8X chunk
-    if len(data) < 30 or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         return None
 
     chunk_type = data[12:16]
 
-    if chunk_type == b'VP8 ':
+    if chunk_type == b"VP8 ":
         # Lossy WebP: dimensions at bytes 26-30
         if len(data) < 30:
             return None
         # VP8 bitstream: skip to frame header
-        width = struct.unpack('<H', data[26:28])[0] & 0x3FFF
-        height = struct.unpack('<H', data[28:30])[0] & 0x3FFF
+        width = struct.unpack("<H", data[26:28])[0] & 0x3FFF
+        height = struct.unpack("<H", data[28:30])[0] & 0x3FFF
         return (width, height)
-    elif chunk_type == b'VP8L':
+    elif chunk_type == b"VP8L":
         # Lossless WebP: signature byte + packed width/height
         if len(data) < 25:
             return None
@@ -149,12 +164,12 @@ def _get_webp_dimensions(data: bytes) -> tuple[int, int] | None:
         width = ((b2 & 0x3F) << 8 | b1) + 1
         height = ((b4 & 0x0F) << 10 | b3 << 2 | (b2 >> 6)) + 1
         return (width, height)
-    elif chunk_type == b'VP8X':
+    elif chunk_type == b"VP8X":
         # Extended WebP: canvas size at bytes 24-30
         if len(data) < 30:
             return None
-        width = struct.unpack('<I', data[24:27] + b'\x00')[0] + 1
-        height = struct.unpack('<I', data[27:30] + b'\x00')[0] + 1
+        width = struct.unpack("<I", data[24:27] + b"\x00")[0] + 1
+        height = struct.unpack("<I", data[27:30] + b"\x00")[0] + 1
         return (width, height)
 
     return None
@@ -199,7 +214,9 @@ def estimate_image_tokens_from_base64(base64_data: str, media_type: str) -> int:
         logger.debug(f"Image {width}x{height} estimated at {tokens} tokens")
         return tokens
 
-    logger.debug(f"Could not determine image dimensions, using default {DEFAULT_IMAGE_TOKENS} tokens")
+    logger.debug(
+        f"Could not determine image dimensions, using default {DEFAULT_IMAGE_TOKENS} tokens"
+    )
     return DEFAULT_IMAGE_TOKENS
 
 
@@ -650,7 +667,9 @@ def _extract_error_details(e: Exception) -> dict[str, Any]:
             error_details["msg"] = e.msg
         # Add helpful context for empty response debugging
         if e.pos == 0 and e.msg == "Expecting value":
-            error_details["likely_cause"] = "API returned empty or invalid response body"
+            error_details["likely_cause"] = (
+                "API returned empty or invalid response body"
+            )
 
     # Special handling for OpenAI API errors
     openai_error_types = [
@@ -736,12 +755,12 @@ def log_openai_api_error(e: Exception, context: str = "") -> None:
         logger.error(f"{prefix} APIConnectionError - Cause: {e.__cause__}")
     elif isinstance(e, openai.APIError):
         logger.error(f"{prefix} APIError")
-        if hasattr(e, 'response') and e.response:
+        if hasattr(e, "response") and e.response:
             _log_response_body(e.response, prefix)
     else:
         logger.error(f"{prefix} Non-OpenAI error: {type(e).__name__}")
         error_str = str(e)
-        if 'failed_generation' in error_str:
+        if "failed_generation" in error_str:
             _extract_json_from_error_string(error_str, prefix)
 
 
@@ -752,9 +771,11 @@ def _log_response_body(response, prefix: str) -> None:
         logger.error(f"{prefix} Response body: {response_text}")
         try:
             response_json = json.loads(response_text)
-            if 'failed_generation' in response_json:
-                logger.error(f"{prefix} failed_generation: {response_json['failed_generation']}")
-            if 'error' in response_json:
+            if "failed_generation" in response_json:
+                logger.error(
+                    f"{prefix} failed_generation: {response_json['failed_generation']}"
+                )
+            if "error" in response_json:
                 logger.error(f"{prefix} error details: {response_json['error']}")
         except json.JSONDecodeError:
             pass
@@ -766,12 +787,14 @@ def _extract_json_from_error_string(error_str: str, prefix: str) -> None:
     """Try to extract JSON from an error message string."""
     import re
 
-    json_match = re.search(r'\{.*\}', error_str, re.DOTALL)
+    json_match = re.search(r"\{.*\}", error_str, re.DOTALL)
     if json_match:
         try:
             error_json = json.loads(json_match.group())
-            if 'failed_generation' in error_json:
-                logger.error(f"{prefix} failed_generation: {error_json['failed_generation']}")
+            if "failed_generation" in error_json:
+                logger.error(
+                    f"{prefix} failed_generation: {error_json['failed_generation']}"
+                )
         except json.JSONDecodeError:
             pass
 
@@ -816,7 +839,9 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
         nonlocal result
         if result is None:
             result = list(messages[:error_index])
-            logger.warning(f"Sanitizing messages: entering fix mode at message {error_index}")
+            logger.warning(
+                f"Sanitizing messages: entering fix mode at message {error_index}"
+            )
 
     def flush_tool_results() -> None:
         if result is not None and buffered_tool_results:
@@ -846,12 +871,14 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
             if pending_tool_use_ids:
                 enter_fix_mode(i)
                 for tid in pending_tool_use_ids:
-                    buffered_tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tid,
-                        "content": "No result provided (tool call was interrupted)",
-                        "is_error": True,
-                    })
+                    buffered_tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tid,
+                            "content": "No result provided (tool call was interrupted)",
+                            "is_error": True,
+                        }
+                    )
                 pending_tool_use_ids.clear()
                 flush_tool_results()
                 flush_deferred()
@@ -897,7 +924,9 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
                 if result is not None:
                     buffered_tool_results.extend(tool_results)
                     if other_content:
-                        deferred_user_messages.append({"role": "user", "content": other_content})
+                        deferred_user_messages.append(
+                            {"role": "user", "content": other_content}
+                        )
                     if not pending_tool_use_ids:
                         flush_tool_results()
                         flush_deferred()
@@ -906,7 +935,9 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
                         enter_fix_mode(i)
                         buffered_tool_results.extend(tool_results)
                         if other_content:
-                            deferred_user_messages.append({"role": "user", "content": other_content})
+                            deferred_user_messages.append(
+                                {"role": "user", "content": other_content}
+                            )
             else:
                 if result is not None:
                     result.append(msg)
@@ -918,12 +949,14 @@ def sanitize_anthropic_messages(messages: list[dict[str, Any]]) -> list[dict[str
     if pending_tool_use_ids:
         enter_fix_mode(len(messages))
         for tid in pending_tool_use_ids:
-            buffered_tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tid,
-                "content": "No result provided (tool call was interrupted or context was compacted)",
-                "is_error": True,
-            })
+            buffered_tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tid,
+                    "content": "No result provided (tool call was interrupted or context was compacted)",
+                    "is_error": True,
+                }
+            )
         flush_tool_results()
         flush_deferred()
 
@@ -998,7 +1031,9 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
         nonlocal result
         if result is None:
             result = list(messages[:error_index])
-            logger.warning(f"Sanitizing OpenAI messages: entering fix mode at message {error_index}")
+            logger.warning(
+                f"Sanitizing OpenAI messages: entering fix mode at message {error_index}"
+            )
 
     def flush_tool_results() -> None:
         """Flush buffered tool results as a single user message."""
@@ -1028,12 +1063,16 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
 
                 # Add placeholders for any unresolved tool calls
                 for tid in list(pending_tool_call_ids):
-                    if tid not in {t.get("tool_call_id") for t in buffered_tool_results}:
-                        buffered_tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": tid,
-                            "content": "No result provided (tool call was interrupted or context was compacted)",
-                        })
+                    if tid not in {
+                        t.get("tool_call_id") for t in buffered_tool_results
+                    }:
+                        buffered_tool_results.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tid,
+                                "content": "No result provided (tool call was interrupted or context was compacted)",
+                            }
+                        )
 
                 flush_tool_results()
                 flush_deferred()
@@ -1068,7 +1107,9 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
                 # Tool result for unknown tool_call
                 if result is None:
                     enter_fix_mode(i)
-                logger.warning(f"Tool result for unknown tool_call {tool_call_id}, skipping")
+                logger.warning(
+                    f"Tool result for unknown tool_call {tool_call_id}, skipping"
+                )
 
         elif role == "user":
             if pending_tool_call_ids:
@@ -1096,11 +1137,13 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
         enter_fix_mode(len(messages))
         # Add placeholder tool results for orphaned tool calls
         for tid in pending_tool_call_ids:
-            buffered_tool_results.append({
-                "role": "tool",
-                "tool_call_id": tid,
-                "content": "No result provided (tool call was interrupted or context was compacted)",
-            })
+            buffered_tool_results.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tid,
+                    "content": "No result provided (tool call was interrupted or context was compacted)",
+                }
+            )
         flush_tool_results()
         flush_deferred()
 

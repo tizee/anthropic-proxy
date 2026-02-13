@@ -66,8 +66,6 @@ def extract_usage_from_claude_response(
     )
 
 
-
-
 def validate_gemini_function_schema(tool_def: dict) -> tuple[bool, str]:
     """
     Validate Gemini function schema for compatibility.

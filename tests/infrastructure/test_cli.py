@@ -245,10 +245,6 @@ class TestBuildParser(unittest.TestCase):
         self.assertEqual(args.command, "provider")
         self.assertTrue(args.list_models)
 
-        args = parser.parse_args(["provider", "antigravity", "--test"])
-        self.assertEqual(args.command, "provider")
-        self.assertEqual(args.provider, "antigravity")
-        self.assertTrue(args.test)
 
 
 class TestCmdStart(unittest.TestCase):
@@ -549,7 +545,7 @@ class TestCmdProvider(unittest.TestCase):
 
     def test_cmd_provider_requires_flags(self):
         """Test cmd_provider exits when no flags are provided."""
-        args = argparse.Namespace(list=False, list_models=False, models=None, provider=None, test=False)
+        args = argparse.Namespace(list=False, list_models=False, models=None)
 
         with self.assertRaises(SystemExit) as cm:
             with patch("builtins.print"):
@@ -572,7 +568,7 @@ class TestCmdProvider(unittest.TestCase):
     @patch("anthropic_proxy.cli._load_model_ids", return_value=["custom-1", "codex/a"])
     def test_cmd_provider_models(self, mock_load, mock_defaults):
         """Test cmd_provider prints custom models then provider defaults."""
-        args = argparse.Namespace(list=False, list_models=True, models=Path("/tmp/models.yaml"), provider=None, test=False)
+        args = argparse.Namespace(list=False, list_models=True, models=Path("/tmp/models.yaml"))
 
         with patch("builtins.print") as mock_print:
             cmd_provider(args)
@@ -582,27 +578,6 @@ class TestCmdProvider(unittest.TestCase):
         printed = [call.args[0] for call in mock_print.call_args_list]
         self.assertEqual(printed, ["custom-1", "codex/a", "gemini/b"])
 
-    @patch("anthropic_proxy.cli._run_antigravity_test", return_value=("proj-1", False, "https://cloudcode-pa.googleapis.com", {"models": {"m1": {"quotaInfo": {"remainingFraction": 0.5}}}}))
-    def test_cmd_provider_antigravity_test(self, mock_test):
-        """Test cmd_provider runs antigravity test and prints summary."""
-        args = argparse.Namespace(list=False, list_models=False, models=None, provider="antigravity", test=True)
-
-        with patch("builtins.print") as mock_print:
-            cmd_provider(args)
-
-        mock_test.assert_called_once()
-        printed = [call.args[0] for call in mock_print.call_args_list]
-        self.assertIn("Antigravity quota test", printed)
-
-    def test_cmd_provider_test_requires_provider(self):
-        """Test cmd_provider --test without provider exits."""
-        args = argparse.Namespace(list=False, list_models=False, models=None, provider=None, test=True)
-
-        with self.assertRaises(SystemExit) as cm:
-            with patch("builtins.print"):
-                cmd_provider(args)
-
-        self.assertEqual(cm.exception.code, 1)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ DEFAULT_MODELS_TEMPLATE = """# Anthropic Proxy Model Configuration
 # thinking.type can be "enabled" or "disabled"
 #
 # Auth-provider default model IDs are prefixed to avoid collisions:
-# - codex/<model_id>, gemini/<model_id>, antigravity/<model_id>
+# - codex/<model_id>, gemini/<model_id>, claude-code/<model_id>
 #
 # Example configurations below - replace with your actual models
 

@@ -18,14 +18,14 @@ Key points:
 - **Model selection** is driven by the incoming request model. The server routes based on `format` field in models.yaml.
 - **models.yaml** defines model → API URL mappings and per-model options (no `api_key_name`, no pricing fields).
 - **/anthropic/v1/messages/count_tokens** returns a local tiktoken-based estimate including messages, system, tools, thinking, and tool_choice.
-- **Default auth-provider models may drift**: Codex/Gemini/Antigravity/Claude Code default model IDs are best-effort and can become invalid if upstream providers change or disable support. Keep docs/tests in sync when updating.
-- **Auth default model IDs are prefixed**: Codex/Gemini/Antigravity/Claude Code defaults use `codex/`, `gemini/`, `antigravity/`, `claude-code/` prefixes to avoid collisions; user-defined IDs take precedence.
+- **Default auth-provider models may drift**: Codex/Gemini/Claude Code default model IDs are best-effort and can become invalid if upstream providers change or disable support. Keep docs/tests in sync when updating.
+- **Auth default model IDs are prefixed**: Codex/Gemini/Claude Code defaults use `codex/`, `gemini/`, `claude-code/` prefixes to avoid collisions; user-defined IDs take precedence.
 
 ### Format-Based Operation
 The proxy routes requests based on the `format` field in models.yaml (with `direct` as a legacy alias):
 - **Anthropic format** (`format: anthropic` or legacy `direct: true`): Routes to Anthropic-compatible APIs without format conversion. Providers include Moonshot AI (Kimi), DeepSeek, Zhipu GLM, MiniMax. Uses httpx client.
 - **OpenAI format** (`format: openai`): Converts Anthropic format to OpenAI format for third-party providers. Uses AsyncOpenAI SDK client.
-- **Gemini format** (`format: gemini`): Routes via Gemini Code Assist subscriptions (Gemini/Antigravity).
+- **Gemini format** (`format: gemini`): Routes via Gemini Code Assist subscriptions.
 
 ## Architecture Reference
 
@@ -50,7 +50,6 @@ The proxy routes requests based on the `format` field in models.yaml (with `dire
 - `anthropic_proxy/auth_provider.py`: Shared OAuth PKCE login + refresh base.
 - `anthropic_proxy/codex.py`: Codex OAuth + request handling (maps usage-limit 404 -> 429).
 - `anthropic_proxy/gemini.py`: Gemini OAuth + project resolution (Code Assist).
-- `anthropic_proxy/antigravity.py`: Antigravity OAuth + project resolution (internal gateway).
 - `anthropic_proxy/claude_code.py`: Claude Code subscription (setup-token based, no OAuth flow).
 - Default auth-provider models are defined in each provider module and may become invalid if upstream changes.
 
@@ -188,7 +187,6 @@ This allows creating "reasoning level" variants of the same base model:
 | `anthropic-proxy status` | Show server status |
 | `anthropic-proxy login --codex` | Login with Codex subscription (OAuth) |
 | `anthropic-proxy login --gemini` | Login with Gemini subscription (OAuth) |
-| `anthropic-proxy login --antigravity` | Login with Antigravity subscription (OAuth) |
 | `anthropic-proxy login --claude-code` | Login with Claude Code setup-token |
 | `anthropic-proxy provider --list` | List auth providers and OAuth status |
 | `anthropic-proxy provider --models` | List available model IDs (custom + provider defaults) |
@@ -205,7 +203,7 @@ This allows creating "reasoning level" variants of the same base model:
 - `make test-cov-html` generates HTML coverage report.
 - Single test suites: `make test-routing`, `make test-hooks`, `make test-conversion`
 - Integration tests that require a live proxy server are intentionally removed.
-- Auth tests: `uv run -m pytest tests/test_codex_auth.py tests/test_gemini_auth.py tests/test_antigravity_auth.py tests/test_claude_code_auth.py`
+- Auth tests: `uv run -m pytest tests/test_codex_auth.py tests/test_gemini_auth.py tests/test_claude_code_auth.py`
 
 ### Code Quality
 - `make lint` checks and fixes code with ruff.
@@ -221,16 +219,14 @@ This allows creating "reasoning level" variants of the same base model:
 - `tests/test_config_manager.py`: Configuration management tests
 - `tests/test_cli.py`: CLI argument parsing and command tests
 - `tests/test_gemini_auth.py`: Gemini OAuth + project resolution
-- `tests/test_antigravity_auth.py`: Antigravity OAuth + project resolution
 - `tests/test_codex_auth.py`: Codex OAuth + token refresh + usage-limit mapping
 - `tests/test_claude_code_auth.py`: Claude Code setup-token auth + header/system injection
 
 ## Auth Notes & Gotchas
 - OAuth tokens live in `~/.config/anthropic-proxy/auth.json`. Refresh tokens are required for auto-refresh.
-- Gemini/Antigravity require a project ID resolved via `v1internal:loadCodeAssist` (and `onboardUser` fallback).
-- Antigravity and Gemini default model IDs are best-effort; update docs/tests when upstream changes.
+- Gemini requires a project ID resolved via `v1internal:loadCodeAssist` (and `onboardUser` fallback).
+- Gemini default model IDs are best-effort; update docs/tests when upstream changes.
 - Codex default models are best-effort; usage-limit errors may be returned as 404 and are mapped to 429.
-- Antigravity Claude thinking signatures are cached in-memory per session (see `anthropic_proxy/signature_cache.py`). Supply a stable `metadata.session_id` for multi-turn recovery.
 - Claude Code uses setup-token (from `claude setup-token`), which is permanent until revoked. No refresh needed.
 - Claude Code requires header impersonation (`user-agent: claude-cli/...`) and mandatory system prompt prefix ("You are Claude Code...").
 - Claude Code default models: Opus 4.6 (128K max tokens), Sonnet 4.5 and Haiku 4.5 (64K max tokens). Opus 4.6 and Sonnet 4.5 support 1M context window via `CLAUDE_CODE_1M_CONTEXT=1` env var.

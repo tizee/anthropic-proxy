@@ -19,11 +19,19 @@ def _extract_session_id(request: ClaudeMessagesRequest) -> str | None:
     metadata = request.metadata
     if not isinstance(metadata, dict):
         return None
-    for key in ("session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"):
+    for key in (
+        "session_id",
+        "sessionId",
+        "conversation_id",
+        "conversationId",
+        "thread_id",
+        "threadId",
+    ):
         value = metadata.get(key)
         if value:
             return str(value)
     return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -135,15 +143,23 @@ class GeminiStreamingConverter:
         self.thinking_block_started = True
         events = [self._send_content_block_start_event("thinking")]
         if signature:
-            events.append(self._send_content_block_delta_event("signature_delta", signature))
+            events.append(
+                self._send_content_block_delta_event("signature_delta", signature)
+            )
         return events
 
     def _open_tool_block(self, tool_id: str, name: str) -> str:
         self.tool_block_started = True
-        return self._send_content_block_start_event("tool_use", id=tool_id, name=name, input={})
+        return self._send_content_block_start_event(
+            "tool_use", id=tool_id, name=name, input={}
+        )
 
     def _close_current_block(self) -> list[str]:
-        if self.text_block_started or self.thinking_block_started or self.tool_block_started:
+        if (
+            self.text_block_started
+            or self.thinking_block_started
+            or self.tool_block_started
+        ):
             events = [self._send_content_block_stop_event()]
             self.content_block_index += 1
             self.text_block_started = False
@@ -178,7 +194,9 @@ class GeminiStreamingConverter:
         self.current_tool_id = new_id
         return new_id
 
-    def _append_partial_arg(self, target: dict[str, Any], json_path: str, fragment: str) -> None:
+    def _append_partial_arg(
+        self, target: dict[str, Any], json_path: str, fragment: str
+    ) -> None:
         path = json_path.strip()
         if path.startswith("$."):
             path = path[2:]
@@ -201,7 +219,9 @@ class GeminiStreamingConverter:
         else:
             current[leaf] = f"{existing}{fragment}"
 
-    def _record_partial_args(self, tool_id: str, tool_name: str, partial_args: list[dict[str, Any]]) -> None:
+    def _record_partial_args(
+        self, tool_id: str, tool_name: str, partial_args: list[dict[str, Any]]
+    ) -> None:
         state = self.pending_tool_calls.get(tool_id)
         if not state:
             state = {"name": tool_name, "args": {}}
@@ -220,12 +240,16 @@ class GeminiStreamingConverter:
                 continue
             self._append_partial_arg(args, json_path, str(fragment))
 
-    def _emit_tool_use_events(self, tool_id: str, tool_name: str, args: dict[str, Any]) -> list[str]:
+    def _emit_tool_use_events(
+        self, tool_id: str, tool_name: str, args: dict[str, Any]
+    ) -> list[str]:
         args_json = json.dumps(args, ensure_ascii=False)
         events: list[str] = []
         events.extend(self._close_current_block())
         events.append(self._open_tool_block(tool_id, tool_name))
-        events.append(self._send_content_block_delta_event("input_json_delta", args_json))
+        events.append(
+            self._send_content_block_delta_event("input_json_delta", args_json)
+        )
         events.append(self._send_content_block_stop_event())
         self.content_block_index += 1
         self.tool_block_started = False
@@ -240,7 +264,9 @@ class GeminiStreamingConverter:
                 self.pending_tool_calls.pop(tool_id, None)
                 continue
             if self.last_thought_signature:
-                cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+                cache_tool_signature(
+                    self.session_id, tool_id, self.last_thought_signature
+                )
             events.extend(self._emit_tool_use_events(tool_id, tool_name, args))
             self.pending_tool_calls.pop(tool_id, None)
         self.current_tool_id = None
@@ -251,7 +277,9 @@ class GeminiStreamingConverter:
             return
         self.last_thought_signature = signature
 
-    async def process_chunk(self, gemini_chunk: dict[str, Any]) -> AsyncGenerator[str, None]:
+    async def process_chunk(
+        self, gemini_chunk: dict[str, Any]
+    ) -> AsyncGenerator[str, None]:
         # Streaming chunks are expected to follow Vertex AI response shape (camelCase).
         gemini_chunk = parse_gemini_response(gemini_chunk)
         candidates = gemini_chunk.get("candidates", [])
@@ -263,9 +291,7 @@ class GeminiStreamingConverter:
         finish_reason = candidate.get("finishReason")
 
         function_call_parts = [
-            part
-            for part in parts
-            if isinstance(part, dict) and "functionCall" in part
+            part for part in parts if isinstance(part, dict) and "functionCall" in part
         ]
         if self.expected_tool_count:
             logger.debug(
@@ -291,13 +317,17 @@ class GeminiStreamingConverter:
                     self.last_thought_signature = signature
                 if args:
                     if self.last_thought_signature:
-                        cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
+                        cache_tool_signature(
+                            self.session_id, tool_id, self.last_thought_signature
+                        )
                     if self.expected_tool_count:
                         logger.debug(
                             "Gemini functionCall name=%s id=%s args_keys=%s",
                             tool_name,
                             tool_id,
-                            list(args.keys()) if isinstance(args, dict) else type(args).__name__,
+                            list(args.keys())
+                            if isinstance(args, dict)
+                            else type(args).__name__,
                         )
                     for event in self._emit_tool_use_events(tool_id, tool_name, args):
                         yield event
@@ -312,8 +342,12 @@ class GeminiStreamingConverter:
                         pending_args = state.get("args") or {}
                         pending_name = state.get("name") or tool_name
                         if self.last_thought_signature:
-                            cache_tool_signature(self.session_id, tool_id, self.last_thought_signature)
-                        for event in self._emit_tool_use_events(tool_id, pending_name, pending_args):
+                            cache_tool_signature(
+                                self.session_id, tool_id, self.last_thought_signature
+                            )
+                        for event in self._emit_tool_use_events(
+                            tool_id, pending_name, pending_args
+                        ):
                             yield event
                         self.pending_tool_calls.pop(tool_id, None)
                         self.current_tool_id = None
@@ -324,7 +358,9 @@ class GeminiStreamingConverter:
                         "Gemini functionCall name=%s id=%s args_keys=%s",
                         tool_name,
                         tool_id,
-                        list(args.keys()) if isinstance(args, dict) else type(args).__name__,
+                        list(args.keys())
+                        if isinstance(args, dict)
+                        else type(args).__name__,
                     )
                 continue
 
@@ -384,10 +420,11 @@ class GeminiStreamingConverter:
             elif normalized_finish in error_reasons:
                 stop_reason = "refusal"
             else:
-                stop_reason = "tool_use" if any(
-                    isinstance(p, dict) and p.get("functionCall")
-                    for p in parts
-                ) else "end_turn"
+                stop_reason = (
+                    "tool_use"
+                    if any(isinstance(p, dict) and p.get("functionCall") for p in parts)
+                    else "end_turn"
+                )
 
             for event in self._flush_pending_tool_calls():
                 yield event
@@ -435,17 +472,21 @@ async def convert_gemini_streaming_response_to_anthropic(
                 yield event
             for event in converter._close_current_block():
                 yield event
-            yield converter._send_message_delta_event("end_turn", converter.output_tokens)
+            yield converter._send_message_delta_event(
+                "end_turn", converter.output_tokens
+            )
             yield converter._send_message_stop_event()
             yield converter._send_done_event()
     except HTTPException as http_exc:
         # Abort stream to simulate real API behavior (triggers client retry)
         logger.error("Gemini streaming error: %s", http_exc.detail)
         from ..midstream_abort import MidStreamAbort
+
         raise MidStreamAbort(f"upstream error: {http_exc.detail}") from http_exc
     except Exception as exc:
         logger.error("Gemini streaming error: %s", exc)
         from ..midstream_abort import MidStreamAbort
+
         raise MidStreamAbort(f"upstream error: {exc}") from exc
     finally:
         logger.debug(

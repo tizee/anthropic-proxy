@@ -106,21 +106,35 @@ class Config:
 
         # Server configuration
         # Priority: env var > config.json > default
-        self.host = os.environ.get("HOST", file_config.get("host", ModelDefaults.DEFAULT_HOST))
-        self.port = int(os.environ.get("PORT", str(file_config.get("port", ModelDefaults.DEFAULT_PORT))))
+        self.host = os.environ.get(
+            "HOST", file_config.get("host", ModelDefaults.DEFAULT_HOST)
+        )
+        self.port = int(
+            os.environ.get(
+                "PORT", str(file_config.get("port", ModelDefaults.DEFAULT_PORT))
+            )
+        )
 
         # Expand ~ in log file path
-        log_path_str = file_config.get("log_file_path", str(get_default_log_file_path()))
-        self.log_file_path = os.environ.get("LOG_FILE_PATH", Path(log_path_str).expanduser())
+        log_path_str = file_config.get(
+            "log_file_path", str(get_default_log_file_path())
+        )
+        self.log_file_path = os.environ.get(
+            "LOG_FILE_PATH", Path(log_path_str).expanduser()
+        )
 
-        self.log_level = os.environ.get("LOG_LEVEL", file_config.get("log_level", ModelDefaults.DEFAULT_LOG_LEVEL))
+        self.log_level = os.environ.get(
+            "LOG_LEVEL", file_config.get("log_level", ModelDefaults.DEFAULT_LOG_LEVEL)
+        )
 
         # Log cleanup on start - default to True
         self.cleanup_logs_on_start = file_config.get("cleanup_logs_on_start", True)
 
         # Custom models configuration file
         # Priority: CUSTOM_MODELS_FILE env var > default location
-        self.custom_models_file = os.environ.get("CUSTOM_MODELS_FILE", str(DEFAULT_MODELS_FILE))
+        self.custom_models_file = os.environ.get(
+            "CUSTOM_MODELS_FILE", str(DEFAULT_MODELS_FILE)
+        )
 
         # Config file locations (for reference)
         self.config_dir = DEFAULT_CONFIG_DIR
@@ -208,7 +222,9 @@ def setup_logging():
         uvicorn_access_logger.propagate = True  # Ensure access logs reach root handlers
     else:
         uvicorn_access_logger.setLevel(logging.WARNING)
-        uvicorn_access_logger.propagate = False  # Disable access logs for higher log levels
+        uvicorn_access_logger.propagate = (
+            False  # Disable access logs for higher log levels
+        )
 
     # Configure openai and httpx log levels to reduce noise
     if config.log_level.lower() == "debug":
@@ -235,12 +251,13 @@ def setup_logging():
 
         # Add rotating file handler with 2MB max size and 1 backup log
         from logging.handlers import RotatingFileHandler
+
         file_handler = RotatingFileHandler(
             config.log_file_path,
             mode="a",
             maxBytes=2 * 1024 * 1024,  # 2MB
             backupCount=1,
-            encoding="utf-8"
+            encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

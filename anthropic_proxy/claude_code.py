@@ -35,7 +35,9 @@ CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for C
 CACHE_RETENTION_ENV = "CLAUDE_CODE_CACHE_RETENTION"
 
 # Beta headers for different features
-BETA_FEATURES_BASE = "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+BETA_FEATURES_BASE = (
+    "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+)
 BETA_THINKING_FEATURE = "interleaved-thinking-2025-05-14"
 BETA_1M_CONTEXT_FEATURE = "context-1m-2025-08-07"  # 1M token context window (beta)
 
@@ -230,7 +232,9 @@ class ClaudeCodeAuth:
         try:
             self.save_token(token)
             print("\nToken saved successfully!")
-            print("Note: This token is permanent until revoked in your Anthropic account.")
+            print(
+                "Note: This token is permanent until revoked in your Anthropic account."
+            )
         except ValueError as e:
             print(f"\nError: {e}")
 
@@ -243,14 +247,14 @@ def is_thinking_capable_model(model_name: str) -> bool:
     """Check if a model supports thinking/reasoning mode."""
     # Strip prefix if present
     if model_name.startswith("claude-code/"):
-        model_name = model_name[len("claude-code/"):]
+        model_name = model_name[len("claude-code/") :]
     return model_name in THINKING_CAPABLE_MODELS
 
 
 def is_opus_4_6_model(model_name: str) -> bool:
     """Check if a model is Opus 4.6 (uses adaptive thinking)."""
     if model_name.startswith("claude-code/"):
-        model_name = model_name[len("claude-code/"):]
+        model_name = model_name[len("claude-code/") :]
     return model_name in ADAPTIVE_THINKING_MODELS
 
 
@@ -308,7 +312,9 @@ def is_1m_context_enabled() -> bool:
     return os.environ.get(CONTEXT_1M_ENV) == "1"
 
 
-def build_claude_code_headers(token: str, thinking_enabled: bool = False) -> dict[str, str]:
+def build_claude_code_headers(
+    token: str, thinking_enabled: bool = False
+) -> dict[str, str]:
     """
     Build headers required for Claude Code OAuth token requests.
 
@@ -360,11 +366,13 @@ def inject_system_prompt_with_cache(request_data: dict[str, Any]) -> dict[str, A
     if existing_system:
         if isinstance(existing_system, str):
             # String format: append as second block with cache
-            system_blocks.append({
-                "type": "text",
-                "text": existing_system,
-                "cache_control": cache_control,
-            })
+            system_blocks.append(
+                {
+                    "type": "text",
+                    "text": existing_system,
+                    "cache_control": cache_control,
+                }
+            )
         elif isinstance(existing_system, list):
             # Array format: append all existing blocks with cache
             for block in existing_system:
@@ -444,7 +452,7 @@ def get_model_max_tokens(model_name: str) -> int:
     """Get the max_tokens limit for a model."""
     # Strip prefix if present
     if model_name.startswith("claude-code/"):
-        model_name = model_name[len("claude-code/"):]
+        model_name = model_name[len("claude-code/") :]
 
     model_config = DEFAULT_CLAUDE_CODE_MODELS.get(model_name)
     if model_config:
@@ -557,6 +565,7 @@ class ClaudeCodeErrorResponse:
     def to_json_response(self):
         """Convert to FastAPI JSONResponse with correct status code."""
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=self.status_code,
             content=self.error_body,
@@ -603,7 +612,7 @@ async def handle_claude_code_request(
     target_model = model_name or model_id
     # Strip provider prefix if present
     if target_model.startswith("claude-code/"):
-        target_model = target_model[len("claude-code/"):]
+        target_model = target_model[len("claude-code/") :]
     request_data["model"] = target_model
 
     # Process thinking configuration (validate, normalize, adjust max_tokens)
@@ -627,10 +636,14 @@ async def handle_claude_code_request(
         if thinking_type == "adaptive":
             thinking_info = ", thinking=adaptive"
         else:
-            thinking_info = f", thinking_budget={request_data['thinking'].get('budget_tokens')}"
+            thinking_info = (
+                f", thinking_budget={request_data['thinking'].get('budget_tokens')}"
+            )
     else:
         thinking_info = ""
-    logger.info(f"Claude Code request: model={target_model}, cache_ttl={cache_ttl}{thinking_info}")
+    logger.info(
+        f"Claude Code request: model={target_model}, cache_ttl={cache_ttl}{thinking_info}"
+    )
 
     # Debug: log the thinking config being sent
     if thinking_enabled:
@@ -693,7 +706,9 @@ async def handle_claude_code_request(
         return _stream_claude_code_response(client, response)
 
     except httpx.ConnectError as conn_err:
-        logger.error(f"Claude Code connection error: {type(conn_err).__name__}: {conn_err}")
+        logger.error(
+            f"Claude Code connection error: {type(conn_err).__name__}: {conn_err}"
+        )
         error_body = {
             "type": "error",
             "error": {
@@ -704,7 +719,9 @@ async def handle_claude_code_request(
         return ClaudeCodeErrorResponse(502, error_body)
 
     except httpx.TimeoutException as timeout_err:
-        logger.error(f"Claude Code timeout error: {type(timeout_err).__name__}: {timeout_err}")
+        logger.error(
+            f"Claude Code timeout error: {type(timeout_err).__name__}: {timeout_err}"
+        )
         error_body = {
             "type": "error",
             "error": {

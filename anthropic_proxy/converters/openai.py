@@ -76,7 +76,9 @@ def _parse_openai_tools(tools: list[dict[str, Any]] | None) -> list[ClaudeTool] 
             ClaudeTool(
                 name=function.get("name", ""),
                 description=function.get("description"),
-                input_schema=function.get("parameters", {"type": "object", "properties": {}}),
+                input_schema=function.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
             )
         )
     return claude_tools if claude_tools else None
@@ -97,7 +99,9 @@ def _parse_openai_message_content(content: Any) -> str | list[Any]:
                 continue
             part_type = part.get("type")
             if part_type == "text":
-                blocks.append(ClaudeContentBlockText(type="text", text=part.get("text", "")))
+                blocks.append(
+                    ClaudeContentBlockText(type="text", text=part.get("text", ""))
+                )
             elif part_type == "image_url":
                 image_url = part.get("image_url", {})
                 url = image_url.get("url", "")
@@ -122,7 +126,9 @@ def _parse_openai_message_content(content: Any) -> str | list[Any]:
                     blocks.append(
                         ClaudeContentBlockImage(
                             type="image",
-                            source=ClaudeContentBlockImageURLSource(type="url", url=url),
+                            source=ClaudeContentBlockImageURLSource(
+                                type="url", url=url
+                            ),
                         )
                     )
         return blocks if blocks else ""
@@ -130,7 +136,9 @@ def _parse_openai_message_content(content: Any) -> str | list[Any]:
     return str(content)
 
 
-def _parse_openai_messages(messages: list[dict[str, Any]]) -> tuple[str | None, list[ClaudeMessage]]:
+def _parse_openai_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[str | None, list[ClaudeMessage]]:
     """
     Convert OpenAI messages to Claude messages.
 
@@ -151,7 +159,9 @@ def _parse_openai_messages(messages: list[dict[str, Any]]) -> tuple[str | None, 
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = " ".join(
-                    p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+                    p.get("text", "")
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
                 )
             if system_prompt:
                 system_prompt += "\n" + content
@@ -198,7 +208,11 @@ def _parse_openai_messages(messages: list[dict[str, Any]]) -> tuple[str | None, 
                 arguments = function.get("arguments", "{}")
 
                 try:
-                    args_dict = json.loads(arguments) if isinstance(arguments, str) else arguments
+                    args_dict = (
+                        json.loads(arguments)
+                        if isinstance(arguments, str)
+                        else arguments
+                    )
                 except json.JSONDecodeError:
                     args_dict = {}
 
@@ -236,13 +250,21 @@ def _parse_openai_messages(messages: list[dict[str, Any]]) -> tuple[str | None, 
                 if isinstance(last_content, list):
                     last_content.append(tool_result)
                 else:
-                    claude_messages[-1].content = [
-                        ClaudeContentBlockText(type="text", text=last_content) if last_content else tool_result,
-                        tool_result,
-                    ] if last_content else [tool_result]
+                    claude_messages[-1].content = (
+                        [
+                            ClaudeContentBlockText(type="text", text=last_content)
+                            if last_content
+                            else tool_result,
+                            tool_result,
+                        ]
+                        if last_content
+                        else [tool_result]
+                    )
             else:
                 # Create new user message with tool result
-                claude_messages.append(ClaudeMessage(role="user", content=[tool_result]))
+                claude_messages.append(
+                    ClaudeMessage(role="user", content=[tool_result])
+                )
 
     return system_prompt, claude_messages
 
@@ -256,7 +278,9 @@ class OpenAIConverter(BaseConverter):
         """Convert OpenAI Chat Completions request to Anthropic Messages format."""
         model = payload.get("model", "")
         messages = payload.get("messages", [])
-        max_tokens = payload.get("max_tokens") or payload.get("max_completion_tokens", 4096)
+        max_tokens = payload.get("max_tokens") or payload.get(
+            "max_completion_tokens", 4096
+        )
         temperature = payload.get("temperature")
         top_p = payload.get("top_p")
         stop = payload.get("stop")
@@ -339,14 +363,16 @@ class OpenAIConverter(BaseConverter):
             elif isinstance(block, ClaudeContentBlockThinking):
                 reasoning_content = block.thinking
             elif isinstance(block, ClaudeContentBlockToolUse):
-                tool_calls.append({
-                    "id": block.id,
-                    "type": "function",
-                    "function": {
-                        "name": block.name,
-                        "arguments": json.dumps(block.input, ensure_ascii=False),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": block.id,
+                        "type": "function",
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input, ensure_ascii=False),
+                        },
+                    }
+                )
 
         # Determine finish_reason
         finish_reason = "stop"
@@ -469,11 +495,13 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model or msg.get("model", ""),
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"role": "assistant", "content": ""},
-                        "finish_reason": None,
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": ""},
+                            "finish_reason": None,
+                        }
+                    ],
                 }
                 yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -493,21 +521,25 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {
-                                "tool_calls": [{
-                                    "index": current_tool_index,
-                                    "id": tool_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": block.get("name", ""),
-                                        "arguments": "",
-                                    },
-                                }]
-                            },
-                            "finish_reason": None,
-                        }],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": current_tool_index,
+                                            "id": tool_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": block.get("name", ""),
+                                                "arguments": "",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
                     }
                     yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -528,11 +560,13 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": text},
-                                "finish_reason": None,
-                            }],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": text},
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -547,16 +581,20 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {
-                                    "tool_calls": [{
-                                        "index": tc_index,
-                                        "function": {"arguments": partial_json},
-                                    }]
-                                },
-                                "finish_reason": None,
-                            }],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": tc_index,
+                                                "function": {"arguments": partial_json},
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -586,17 +624,20 @@ class OpenAIToAnthropicStreamingConverter(BaseStreamingConverter):
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": finish_reason,
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": finish_reason,
+                        }
+                    ],
                 }
                 if usage:
                     chunk["usage"] = {
                         "prompt_tokens": usage.get("input_tokens", 0),
                         "completion_tokens": usage.get("output_tokens", 0),
-                        "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                        "total_tokens": usage.get("input_tokens", 0)
+                        + usage.get("output_tokens", 0),
                     }
                 yield f"data: {json.dumps(chunk)}\n\n"
 

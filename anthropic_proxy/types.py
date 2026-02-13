@@ -338,7 +338,9 @@ class ClaudeContentBlockToolResult(BaseModel):
             # This case should not occur per API spec, but handle gracefully
             return str(self.content)
 
-    def to_openai_message(self, tool_name: str = None) -> ChatCompletionToolMessageParam:
+    def to_openai_message(
+        self, tool_name: str = None
+    ) -> ChatCompletionToolMessageParam:
         """Convert Claude tool_result to OpenAI tool role message format."""
         result = {
             "role": "tool",
@@ -617,7 +619,9 @@ class SSEEventParser:
                     return None
         return None
 
-    def extract_usage(self, event: SSEEvent) -> tuple[MessageStartUsage | None, MessageDeltaUsage | None]:
+    def extract_usage(
+        self, event: SSEEvent
+    ) -> tuple[MessageStartUsage | None, MessageDeltaUsage | None]:
         """Extract usage data from an SSE event.
 
         Returns:
@@ -761,7 +765,11 @@ class ClaudeTokenCountRequest(BaseModel):
     system: str | list[ClaudeSystemContent] | None = None  # System prompt (optional)
     tools: list[ClaudeTool] | None = None  # Tools definition (optional)
     thinking: (  # Thinking configuration (optional)
-        ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | ClaudeThinkingConfigAdaptive | dict | None
+        ClaudeThinkingConfigEnabled
+        | ClaudeThinkingConfigDisabled
+        | ClaudeThinkingConfigAdaptive
+        | dict
+        | None
     ) = None
     tool_choice: dict[str, Any] | None = None  # Tool choice configuration (optional)
 
@@ -834,7 +842,9 @@ class ClaudeMessage(BaseModel):
 
         return content
 
-    def to_openai_messages(self, tool_name_mapping: dict[str, str] = None) -> list[ChatCompletionMessageParam]:
+    def to_openai_messages(
+        self, tool_name_mapping: dict[str, str] = None
+    ) -> list[ChatCompletionMessageParam]:
         """
         Convert Claude message (user/assistant) to OpenAI message format (user/assistant/tool).
         Handles complex logic including tool_result splitting, content block ordering, etc.
@@ -1008,9 +1018,12 @@ class ClaudeMessagesRequest(BaseModel):
     tool_choice: ClaudeToolChoice | None = (
         None  # How the model should use the provided tools
     )
-    thinking: ClaudeThinkingConfigEnabled | ClaudeThinkingConfigDisabled | ClaudeThinkingConfigAdaptive | None = (
-        None  # Extended thinking configuration
-    )
+    thinking: (
+        ClaudeThinkingConfigEnabled
+        | ClaudeThinkingConfigDisabled
+        | ClaudeThinkingConfigAdaptive
+        | None
+    ) = None  # Extended thinking configuration
 
     @field_validator("thinking")
     @classmethod
@@ -1088,10 +1101,14 @@ class ClaudeMessagesRequest(BaseModel):
         # Claude request tools -> OpenAI request tools
         openai_tools = []
         if self.tools:
-            logger.debug(f"🔧 TOOL_DEBUG: Converting {len(self.tools)} Claude tools to OpenAI format")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Converting {len(self.tools)} Claude tools to OpenAI format"
+            )
             openai_tools: list[ChatCompletionToolParam] = []
             for i, tool in enumerate(self.tools):
-                logger.debug(f"🔧 TOOL_DEBUG: Tool {i}: name={tool.name}, description={tool.description}")
+                logger.debug(
+                    f"🔧 TOOL_DEBUG: Tool {i}: name={tool.name}, description={tool.description}"
+                )
                 tool_params: ChatCompletionToolParam = {
                     "type": "function",
                     "function": {
@@ -1106,20 +1123,30 @@ class ClaudeMessagesRequest(BaseModel):
                         validate_gemini_function_schema,
                     )
 
-                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} input_schema: {tool.input_schema}")
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: Tool {i} input_schema: {tool.input_schema}"
+                    )
                     cleaned_schema = clean_gemini_schema(tool.input_schema)
-                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} cleaned_schema: {cleaned_schema}")
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: Tool {i} cleaned_schema: {cleaned_schema}"
+                    )
                     tool_params["function"]["parameters"] = cleaned_schema
                     is_valid, errors = validate_gemini_function_schema(tool_params)
-                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} is valid: {is_valid} errors: {errors}")
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: Tool {i} is valid: {is_valid} errors: {errors}"
+                    )
                 else:
                     # If no input_schema, add empty parameters object
-                    logger.debug(f"🔧 TOOL_DEBUG: Tool {i} has no input_schema, adding empty parameters")
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: Tool {i} has no input_schema, adding empty parameters"
+                    )
                     tool_params["function"]["parameters"] = {}
 
                 openai_tools.append(tool_params)
                 logger.debug(f"🔧 TOOL_DEBUG: Tool {i} converted successfully")
-            logger.debug(f"🔧 TOOL_DEBUG: Final OpenAI tools count: {len(openai_tools)}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Final OpenAI tools count: {len(openai_tools)}"
+            )
 
         # Handle tool_choice with type validation
         tool_choice = None
@@ -1140,7 +1167,9 @@ class ClaudeMessagesRequest(BaseModel):
 
         if openai_tools:
             request_params["tools"] = openai_tools
-            logger.debug(f"🔧 TOOL_DEBUG: Added {len(openai_tools)} tools to OpenAI request")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Added {len(openai_tools)} tools to OpenAI request"
+            )
         if tool_choice:
             request_params["tool_choice"] = tool_choice
             logger.debug(f"🔧 TOOL_DEBUG: Set tool_choice to: {tool_choice}")
@@ -1168,6 +1197,7 @@ class ClaudeMessagesRequest(BaseModel):
         total_tokens += count_tokens_in_payload(self.thinking)
         total_tokens += count_tokens_in_payload(self.tool_choice)
         return total_tokens
+
 
 class ClaudeMessagesResponse(BaseModel):
     """

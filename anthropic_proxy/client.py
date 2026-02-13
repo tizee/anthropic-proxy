@@ -10,11 +10,6 @@ import httpx
 import yaml
 from openai import AsyncOpenAI
 
-from .antigravity import (
-    ANTIGRAVITY_ENDPOINT,
-    DEFAULT_ANTIGRAVITY_MODELS,
-    antigravity_auth,
-)
 from .claude_code import (
     CLAUDE_CODE_API_URL,
     DEFAULT_CLAUDE_CODE_MODELS,
@@ -30,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Dictionary to store custom OpenAI-compatible model configurations
 CUSTOM_OPENAI_MODELS = {}
 SUPPORTED_FORMATS = {"openai", "anthropic", "gemini"}
-PREFIXED_PROVIDERS = {"codex", "gemini", "antigravity", "claude-code"}
+PREFIXED_PROVIDERS = {"codex", "gemini", "claude-code"}
 
 
 def _normalize_format(value: str | None) -> str | None:
@@ -66,7 +61,7 @@ def _resolve_model_format(model: dict) -> str:
     if direct is True:
         return "anthropic"
 
-    if provider in {"gemini", "antigravity"}:
+    if provider == "gemini":
         return "gemini"
 
     if "anthropic.com" in api_base:
@@ -86,7 +81,7 @@ def _default_model_name(model: dict, model_id: str, provider: str | None) -> str
     if provider in PREFIXED_PROVIDERS:
         prefix = f"{provider}/"
         if model_id.startswith(prefix):
-            return model_id[len(prefix):]
+            return model_id[len(prefix) :]
     return model_id
 
 
@@ -122,25 +117,20 @@ def load_models_config(config_file=None):
                 if "api_base" not in model:
                     model["api_base"] = CODEX_API_URL
                 if "api_key" not in model:
-                    model["api_key"] = "codex-auth" # Placeholder to pass validation
+                    model["api_key"] = "codex-auth"  # Placeholder to pass validation
 
                 # Apply default reasoning effort if known model and not specified
                 if "reasoning_effort" not in model and model_id in DEFAULT_CODEX_MODELS:
-                    model["reasoning_effort"] = DEFAULT_CODEX_MODELS[model_id].get("reasoning_effort")
+                    model["reasoning_effort"] = DEFAULT_CODEX_MODELS[model_id].get(
+                        "reasoning_effort"
+                    )
 
             # Apply defaults for Gemini provider models
             if model.get("provider") == "gemini":
                 if "api_base" not in model:
                     model["api_base"] = GEMINI_CODE_ASSIST_ENDPOINT
                 if "api_key" not in model:
-                    model["api_key"] = "gemini-auth" # Placeholder
-
-            # Apply defaults for Antigravity provider models
-            if model.get("provider") == "antigravity":
-                if "api_base" not in model:
-                    model["api_base"] = ANTIGRAVITY_ENDPOINT
-                if "api_key" not in model:
-                    model["api_key"] = "antigravity-auth" # Placeholder
+                    model["api_key"] = "gemini-auth"  # Placeholder
 
             # Apply defaults for Claude Code provider models
             if model.get("provider") == "claude-code":
@@ -280,44 +270,6 @@ def load_gemini_models():
         logger.debug(f"Registered default Gemini model: {prefixed_id}")
 
 
-def load_antigravity_models():
-    """Auto-register default Antigravity models if authentication is available."""
-    has_auth = antigravity_auth.has_auth()
-
-    if not has_auth:
-        return
-
-    logger.info("Antigravity authentication detected. Registering default Antigravity models...")
-
-    for model_id, details in DEFAULT_ANTIGRAVITY_MODELS.items():
-        prefixed_id = _prefix_model_id("antigravity", model_id)
-        if prefixed_id in CUSTOM_OPENAI_MODELS:
-            logger.warning(
-                "Skipping default Antigravity model %s because model_id '%s' is already defined.",
-                model_id,
-                prefixed_id,
-            )
-            continue
-
-        CUSTOM_OPENAI_MODELS[prefixed_id] = {
-            "model_id": prefixed_id,
-            "model_name": details["model_name"],
-            "api_base": ANTIGRAVITY_ENDPOINT,
-            "api_key": "dummy",
-            "can_stream": True,
-            "max_tokens": ModelDefaults.DEFAULT_MAX_TOKENS,
-            "context": ModelDefaults.LONG_CONTEXT_THRESHOLD,
-            "max_input_tokens": ModelDefaults.DEFAULT_MAX_INPUT_TOKENS,
-            "extra_headers": {},
-            "extra_body": {},
-            "temperature": 1.0,
-            "format": "gemini",
-            "direct": False,
-            "provider": "antigravity",
-        }
-        logger.debug(f"Registered default Antigravity model: {prefixed_id}")
-
-
 def load_claude_code_models():
     """Auto-register default Claude Code models if authentication is available."""
     has_auth = claude_code_auth.has_auth()
@@ -325,7 +277,9 @@ def load_claude_code_models():
     if not has_auth:
         return
 
-    logger.info("Claude Code authentication detected. Registering default Claude Code models...")
+    logger.info(
+        "Claude Code authentication detected. Registering default Claude Code models..."
+    )
 
     for model_id, details in DEFAULT_CLAUDE_CODE_MODELS.items():
         prefixed_id = _prefix_model_id("claude-code", model_id)
@@ -367,7 +321,6 @@ def initialize_custom_models():
     load_models_config()
     load_codex_models()
     load_gemini_models()
-    load_antigravity_models()
     load_claude_code_models()
 
 
@@ -402,7 +355,9 @@ def create_openai_client(model_id: str, api_key: str | None) -> AsyncOpenAI:
         client_kwargs["base_url"] = base_url
 
     client = AsyncOpenAI(**client_kwargs, timeout=httpx.Timeout(60.0))
-    logger.debug(f"Create OpenAI Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}")
+    logger.debug(
+        f"Create OpenAI Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}"
+    )
     return client
 
 
@@ -439,7 +394,7 @@ def create_claude_client(model_id: str, api_key: str | None) -> httpx.AsyncClien
     headers = {
         "x-api-key": client_api_key,
         "content-type": "application/json",
-        "anthropic-version": "2023-06-01"
+        "anthropic-version": "2023-06-01",
     }
 
     # Add any extra headers from model config
@@ -453,10 +408,12 @@ def create_claude_client(model_id: str, api_key: str | None) -> httpx.AsyncClien
         base_url=base_url,
         headers=headers,
         timeout=httpx.Timeout(60.0),
-        transport=transport
+        transport=transport,
     )
 
-    logger.debug(f"Create Claude Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}")
+    logger.debug(
+        f"Create Claude Client: model={model_id}, base_url={base_url}, retries={ModelDefaults.DEFAULT_MAX_RETRIES}"
+    )
     return client
 
 
@@ -506,13 +463,6 @@ def is_gemini_model(model_id: str) -> bool:
     if model_id not in CUSTOM_OPENAI_MODELS:
         return False
     return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "gemini"
-
-
-def is_antigravity_model(model_id: str) -> bool:
-    """Check if a model is an Antigravity model."""
-    if model_id not in CUSTOM_OPENAI_MODELS:
-        return False
-    return CUSTOM_OPENAI_MODELS[model_id].get("provider") == "antigravity"
 
 
 def is_claude_code_model(model_id: str) -> bool:

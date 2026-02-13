@@ -3,7 +3,6 @@ Command-line interface for anthropic-proxy.
 """
 
 import argparse
-import asyncio
 import json
 import logging
 import sys
@@ -98,7 +97,9 @@ def print_config(models_path: Path, config_path: Path, show_api_keys: bool = Fal
 
             if models_data:
                 redacted_data = redact_api_keys(models_data, show_api_keys)
-                print(yaml.dump(redacted_data, default_flow_style=False, sort_keys=False))
+                print(
+                    yaml.dump(redacted_data, default_flow_style=False, sort_keys=False)
+                )
                 model_count = len(models_data)
                 print(f"\nTotal models: {model_count}")
             else:
@@ -112,7 +113,6 @@ def print_config(models_path: Path, config_path: Path, show_api_keys: bool = Fal
 
 
 def _provider_status_lines() -> list[str]:
-    from .antigravity import antigravity_auth
     from .claude_code import claude_code_auth
     from .codex import codex_auth
     from .gemini import gemini_auth
@@ -120,28 +120,33 @@ def _provider_status_lines() -> list[str]:
     providers = [
         ("Codex", codex_auth.has_auth()),
         ("Gemini", gemini_auth.has_auth()),
-        ("Antigravity", antigravity_auth.has_auth()),
         ("Claude Code", claude_code_auth.has_auth()),
     ]
 
     lines = []
     for name, authed in providers:
-        status = f"{Colors.GREEN}AUTHED{Colors.RESET}" if authed else f"{Colors.RED}NOT AUTHED{Colors.RESET}"
+        status = (
+            f"{Colors.GREEN}AUTHED{Colors.RESET}"
+            if authed
+            else f"{Colors.RED}NOT AUTHED{Colors.RESET}"
+        )
         lines.append(f"{name} {status}")
     return lines
 
 
 def _default_provider_model_ids() -> list[str]:
-    from .antigravity import DEFAULT_ANTIGRAVITY_MODELS
     from .claude_code import DEFAULT_CLAUDE_CODE_MODELS
     from .codex import DEFAULT_CODEX_MODELS
     from .gemini import DEFAULT_GEMINI_MODELS
 
     model_ids = []
     model_ids.extend([f"codex/{model_id}" for model_id in DEFAULT_CODEX_MODELS.keys()])
-    model_ids.extend([f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS.keys()])
-    model_ids.extend([f"antigravity/{model_id}" for model_id in DEFAULT_ANTIGRAVITY_MODELS.keys()])
-    model_ids.extend([f"claude-code/{model_id}" for model_id in DEFAULT_CLAUDE_CODE_MODELS.keys()])
+    model_ids.extend(
+        [f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS.keys()]
+    )
+    model_ids.extend(
+        [f"claude-code/{model_id}" for model_id in DEFAULT_CLAUDE_CODE_MODELS.keys()]
+    )
     return model_ids
 
 
@@ -153,7 +158,9 @@ def _load_model_ids(models_path: Path) -> list[str]:
         with models_path.open("r", encoding="utf-8") as f:
             models_data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        print(f"{Colors.RED}Error loading models.yaml:{Colors.RESET} {e}", file=sys.stderr)
+        print(
+            f"{Colors.RED}Error loading models.yaml:{Colors.RESET} {e}", file=sys.stderr
+        )
         return []
 
     if not models_data:
@@ -169,75 +176,9 @@ def _load_model_ids(models_path: Path) -> list[str]:
     return model_ids
 
 
-def _format_quota_model_lines(models: dict) -> list[str]:
-    lines: list[str] = []
-    model_ids = sorted(models.keys())
-    for model_id in model_ids:
-        info = models.get(model_id) or {}
-        if not isinstance(info, dict):
-            info = {}
-        quota = info.get("quotaInfo") or {}
-        if not isinstance(quota, dict):
-            quota = {}
-        remaining = quota.get("remainingFraction")
-        remaining_text = "unknown"
-        if isinstance(remaining, (int, float)):
-            remaining_text = f"{remaining * 100:.0f}%"
-        reset_time = quota.get("resetTime") or "unknown"
-        recommended = " (recommended)" if info.get("recommended") else ""
-        lines.append(
-            f"  - {model_id}: remaining {remaining_text}, reset {reset_time}{recommended}"
-        )
-    return lines
-
-
-def _run_antigravity_test() -> tuple[str, bool, str, dict]:
-    from .antigravity import antigravity_auth, fetch_antigravity_quota_models
-
-    async def _fetch():
-        access_token = await antigravity_auth.get_access_token()
-        project_id = antigravity_auth.get_project_id()
-        await antigravity_auth.ensure_project_context(force=True)
-        project_id = antigravity_auth.get_project_id()
-        if not project_id:
-            raise RuntimeError(
-                "Antigravity Project ID could not be resolved. Re-login required."
-            )
-        data, base_url = await fetch_antigravity_quota_models(access_token, project_id)
-        return project_id, False, base_url, data
-
-    return asyncio.run(_fetch())
-
-
 def cmd_provider(args: argparse.Namespace) -> None:
     """List auth providers or available model IDs."""
     did_output = False
-    provider = getattr(args, "provider", None)
-    run_test = bool(getattr(args, "test", False))
-
-    if run_test:
-        if provider != "antigravity":
-            print(f"{Colors.RED}Provider test requires 'antigravity'.{Colors.RESET}", file=sys.stderr)
-            sys.exit(1)
-        try:
-            project_id, _, base_url, data = _run_antigravity_test()
-        except Exception as exc:
-            print(f"{Colors.RED}Antigravity test failed:{Colors.RESET} {exc}", file=sys.stderr)
-            sys.exit(1)
-
-        print("Antigravity quota test")
-        print(f"Project ID: {project_id}")
-        print(f"Base URL: {base_url}")
-        models = data.get("models") if isinstance(data, dict) else None
-        if not isinstance(models, dict) or not models:
-            print("Models: 0")
-            print("No models returned.")
-        else:
-            recommended_count = sum(1 for info in models.values() if isinstance(info, dict) and info.get("recommended"))
-            print(f"Models: {len(models)} (recommended: {recommended_count})")
-            for line in _format_quota_model_lines(models):
-                print(line)
-        did_output = True
 
     if args.list:
         for line in _provider_status_lines():
@@ -283,6 +224,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     # Models file: never overwrite (user's custom configurations)
     if not models_exists:
         from .config_manager import create_default_models_file
+
         create_default_models_file(force=False)
         print(f"  {c.GREEN}Created:{c.RESET}  {DEFAULT_MODELS_FILE}")
     else:
@@ -291,6 +233,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     # Config file: overwrite only with --force
     if not config_exists or force_config:
         from .config_manager import create_default_config_file
+
         create_default_config_file(force=force_config)
         action = "Reset" if force_config and config_exists else "Created"
         print(f"  {c.GREEN}{action}:{c.RESET}  {DEFAULT_CONFIG_FILE}")
@@ -299,6 +242,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # Ensure log directory exists
     from .config_manager import ensure_log_dir
+
     ensure_log_dir()
 
     print(f"\n{c.DIM}Directories:{c.RESET}")
@@ -468,7 +412,7 @@ Examples:
   anthropic-proxy --print-config     View current configuration
 
 For more information, see: https://github.com/tizee/anthropic-proxy
-        """
+        """,
     )
 
     # Utility options (global)
@@ -605,8 +549,7 @@ This command opens a browser to authenticate with supported providers.
 Examples:
   anthropic-proxy login --codex       Login to OpenAI Codex subscription
   anthropic-proxy login --gemini      Login to Google Gemini subscription
-  anthropic-proxy login --claude-code Login with Claude Code setup-token
-        """,
+  anthropic-proxy login --claude-code Login with Claude Code setup-token""",
     )
     login_parser.add_argument(
         "--codex",
@@ -617,11 +560,6 @@ Examples:
         "--gemini",
         action="store_true",
         help="Login to Google Gemini subscription",
-    )
-    login_parser.add_argument(
-        "--antigravity",
-        action="store_true",
-        help="Login to Google Antigravity (Internal) subscription",
     )
     login_parser.add_argument(
         "--claude-code",
@@ -638,14 +576,7 @@ Examples:
         epilog="""
 Examples:
   anthropic-proxy provider --list
-  anthropic-proxy provider --models
-  anthropic-proxy provider antigravity --test
-        """,
-    )
-    provider_parser.add_argument(
-        "provider",
-        nargs="?",
-        help="Provider name (e.g. antigravity) for provider-specific actions",
+  anthropic-proxy provider --models""",
     )
     provider_parser.add_argument(
         "--list",
@@ -657,11 +588,6 @@ Examples:
         dest="list_models",
         action="store_true",
         help="List available model IDs (custom + provider defaults)",
-    )
-    provider_parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Test provider account/quota (e.g. antigravity)",
     )
     provider_parser.set_defaults(func=cmd_provider)
 
@@ -676,21 +602,19 @@ def cmd_login(args: argparse.Namespace) -> None:
     """
     if args.codex:
         from .codex import codex_auth
+
         codex_auth.login()
         return
 
     if args.gemini:
         from .gemini import gemini_auth
-        gemini_auth.login()
-        return
 
-    if args.antigravity:
-        from .antigravity import antigravity_auth
-        antigravity_auth.login()
+        gemini_auth.login()
         return
 
     if getattr(args, "claude_code", False):
         from .claude_code import claude_code_auth
+
         claude_code_auth.login()
         return
 
@@ -699,10 +623,15 @@ def cmd_login(args: argparse.Namespace) -> None:
     # Given the request is to make it an optional parameter, implies explicit selection.
     print(f"{Colors.YELLOW}Please specify a provider to login.{Colors.RESET}")
     print("Available providers:")
-    print(f"  {Colors.GREEN}--codex{Colors.RESET}       Login to OpenAI Codex subscription")
-    print(f"  {Colors.GREEN}--gemini{Colors.RESET}      Login to Google Gemini subscription")
-    print(f"  {Colors.GREEN}--antigravity{Colors.RESET} Login to Google Antigravity subscription")
-    print(f"  {Colors.GREEN}--claude-code{Colors.RESET} Login with Claude Code setup-token")
+    print(
+        f"  {Colors.GREEN}--codex{Colors.RESET}       Login to OpenAI Codex subscription"
+    )
+    print(
+        f"  {Colors.GREEN}--gemini{Colors.RESET}      Login to Google Gemini subscription"
+    )
+    print(
+        f"  {Colors.GREEN}--claude-code{Colors.RESET} Login with Claude Code setup-token"
+    )
     sys.exit(1)
 
 

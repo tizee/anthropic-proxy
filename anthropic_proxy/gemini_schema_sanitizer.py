@@ -1,7 +1,5 @@
 """
 Gemini/Code Assist JSON schema sanitizer.
-
-Based on antigravity-auth's schema-sanitizer.ts.
 """
 
 from __future__ import annotations
@@ -49,10 +47,7 @@ def _normalize_schema_type(schema_type: Any) -> Any:
     if isinstance(schema_type, str):
         return schema_type.lower()
     if isinstance(schema_type, list):
-        return [
-            item.lower() if isinstance(item, str) else item
-            for item in schema_type
-        ]
+        return [item.lower() if isinstance(item, str) else item for item in schema_type]
     return schema_type
 
 

@@ -73,7 +73,7 @@ class TestGeminiSDK(unittest.IsolatedAsyncioTestCase):
             project_id="project-123",
             base_url="https://cloudcode-pa.googleapis.com",
             extra_headers={},
-            is_antigravity=False,
+
             use_code_assist=True,
         ):
             chunks.append(chunk)
@@ -135,7 +135,7 @@ class TestGeminiSDK(unittest.IsolatedAsyncioTestCase):
             project_id="project-123",
             base_url="https://cloudcode-pa.googleapis.com",
             extra_headers={},
-            is_antigravity=False,
+
             use_code_assist=True,
         ):
             pass
@@ -191,7 +191,7 @@ class TestGeminiSDK(unittest.IsolatedAsyncioTestCase):
             project_id="project-123",
             base_url="https://cloudcode-pa.googleapis.com",
             extra_headers={},
-            is_antigravity=False,
+
             use_code_assist=True,
         ):
             chunks.append(chunk)

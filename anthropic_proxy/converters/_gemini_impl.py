@@ -14,12 +14,7 @@ from typing import Any
 
 from ..gemini_schema_sanitizer import clean_gemini_schema
 from ..gemini_types import parse_gemini_request
-from ..signature_cache import get_cached_signature, get_tool_signature
-from ..thinking_recovery import (
-    analyze_conversation_state,
-    close_tool_loop_for_thinking,
-    needs_thinking_recovery,
-)
+from ..signature_cache import get_tool_signature
 from ..types import (
     ClaudeContentBlockImage,
     ClaudeContentBlockImageBase64Source,
@@ -35,18 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_tool_name(name: str) -> str:
-    """Sanitize tool name to comply with Gemini/Antigravity constraints."""
+    """Sanitize tool name to comply with Gemini constraints."""
     if not name:
         return "tool"
 
-    sanitized = "".join(ch if ch.isalnum() or ch in {"_", ".", ":", "-"} else "_" for ch in name)
+    sanitized = "".join(
+        ch if ch.isalnum() or ch in {"_", ".", ":", "-"} else "_" for ch in name
+    )
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
 
     if not sanitized:
         sanitized = "tool"
 
-    # Antigravity spec: max length 64
+    # Gemini spec: max length 64
     return sanitized[:64]
 
 
@@ -81,7 +78,11 @@ def _convert_image_block(block: ClaudeContentBlockImage) -> dict[str, Any] | Non
         }
     if isinstance(source, dict):
         # Best-effort handling for unknown image source dicts
-        if source.get("type") == "base64" and source.get("data") and source.get("media_type"):
+        if (
+            source.get("type") == "base64"
+            and source.get("data")
+            and source.get("media_type")
+        ):
             return {
                 "inlineData": {
                     "mimeType": source.get("media_type"),
@@ -99,12 +100,10 @@ def _convert_image_block(block: ClaudeContentBlockImage) -> dict[str, Any] | Non
     return None
 
 
-def _convert_thinking_block(block: ClaudeContentBlockThinking, is_antigravity: bool) -> dict[str, Any]:
+def _convert_thinking_block(block: ClaudeContentBlockThinking) -> dict[str, Any]:
     part: dict[str, Any] = {"text": block.thinking}
     if block.signature:
         part["thoughtSignature"] = block.signature
-    if is_antigravity:
-        part["thought"] = True
     return part
 
 
@@ -146,7 +145,7 @@ def ensure_tool_ids(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Claude requires tool_use.id to match with tool_result.tool_use_id.
 
-    Uses a two-pass approach like antigravity-auth plugin:
+    Uses a two-pass approach:
     1. First pass: Assign IDs to all functionCalls and collect them in FIFO queues per function name
     2. Second pass: Match functionResponses to their corresponding calls using FIFO order
 
@@ -229,8 +228,6 @@ def ensure_tool_ids(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _convert_message_content_to_parts(
     request: ClaudeMessagesRequest,
     content: str | list[Any],
-    is_antigravity: bool,
-    strip_unsigned_thinking: bool,
     session_id: str | None,
 ) -> list[dict[str, Any]]:
     if isinstance(content, str):
@@ -243,15 +240,7 @@ def _convert_message_content_to_parts(
         if isinstance(block, ClaudeContentBlockText):
             parts.append({"text": block.text})
         elif isinstance(block, ClaudeContentBlockThinking):
-            signature = block.signature
-            if strip_unsigned_thinking and not signature and session_id:
-                signature = get_cached_signature(session_id, block.thinking)
-            if strip_unsigned_thinking and not signature:
-                continue
-            part: dict[str, Any] = {"text": block.thinking}
-            if signature:
-                part["thoughtSignature"] = signature
-            parts.append(part)
+            parts.append(_convert_thinking_block(block))
         elif isinstance(block, ClaudeContentBlockToolUse):
             signature = None
             if block.id:
@@ -291,7 +280,9 @@ def _infer_thinking_level_from_model(model_id: str) -> str | None:
     return None
 
 
-def _build_generation_config(request: ClaudeMessagesRequest, model_id: str) -> dict[str, Any]:
+def _build_generation_config(
+    request: ClaudeMessagesRequest, model_id: str
+) -> dict[str, Any]:
     config: dict[str, Any] = {}
     if request.temperature is not None:
         config["temperature"] = request.temperature
@@ -315,7 +306,9 @@ def _build_generation_config(request: ClaudeMessagesRequest, model_id: str) -> d
             budget = request.thinking.budget_tokens
             thinking_config: dict[str, Any] = {"includeThoughts": True}
             if "gemini-3" in model_id.lower():
-                level = _infer_thinking_level_from_model(model_id) or _thinking_budget_to_level(budget)
+                level = _infer_thinking_level_from_model(
+                    model_id
+                ) or _thinking_budget_to_level(budget)
                 if level:
                     thinking_config["thinkingLevel"] = level
             else:
@@ -328,7 +321,9 @@ def _build_generation_config(request: ClaudeMessagesRequest, model_id: str) -> d
     return config
 
 
-def _build_tool_config(request: ClaudeMessagesRequest, model_id: str, is_antigravity: bool) -> dict[str, Any] | None:
+def _build_tool_config(
+    request: ClaudeMessagesRequest, model_id: str
+) -> dict[str, Any] | None:
     if not request.tools:
         return None
 
@@ -346,10 +341,6 @@ def _build_tool_config(request: ClaudeMessagesRequest, model_id: str, is_antigra
         elif choice.type == "tool":
             mode = "ANY"
             allowed = [_sanitize_tool_name(choice.name)]
-
-    if is_antigravity and "claude" in model_id.lower():
-        if mode is None or mode != "NONE":
-            mode = "VALIDATED"
 
     if mode is None:
         return None
@@ -407,7 +398,7 @@ def _build_tools(request: ClaudeMessagesRequest) -> list[dict[str, Any]] | None:
 
 def _clean_malformed_parts(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Clean up any malformed parts that Antigravity doesn't recognize.
+    Clean up any malformed parts that Gemini doesn't recognize.
 
     Filters out parts with unexpected "thinking" field (nested format that's not supported).
     Also fixes nested "text" structures like {"text": {"text": "..."}} -> {"text": "..."}.
@@ -432,14 +423,18 @@ def _clean_malformed_parts(contents: list[dict[str, Any]]) -> list[dict[str, Any
                 # Extract the actual text value
                 if "text" in nested_text:
                     cleaned_parts.append({"text": nested_text["text"]})
-                    logger.warning("Fixed nested text structure: {'text': {'text': '...'}}")
+                    logger.warning(
+                        "Fixed nested text structure: {'text': {'text': '...'}}"
+                    )
                 elif "thinking" in nested_text:
                     # This is a nested thinking structure, extract the thinking text
                     cleaned_parts.append({"text": nested_text.get("thinking", "")})
                     logger.warning("Fixed nested thinking in text field")
                 else:
                     # Unknown nested structure, skip this part
-                    logger.warning(f"Skipping malformed part with nested text: {list(part.keys())}")
+                    logger.warning(
+                        f"Skipping malformed part with nested text: {list(part.keys())}"
+                    )
                 continue
 
             # Filter out parts with nested "thinking" field
@@ -452,7 +447,9 @@ def _clean_malformed_parts(contents: list[dict[str, Any]]) -> list[dict[str, Any
 
         if not cleaned_parts:
             # All parts were filtered or cleaned, skip this content
-            logger.warning("All parts were filtered/cleaned from content due to malformed structure")
+            logger.warning(
+                "All parts were filtered/cleaned from content due to malformed structure"
+            )
             continue
 
         cleaned_contents.append({**content, "parts": cleaned_parts})
@@ -464,44 +461,24 @@ def anthropic_to_gemini_request(
     request: ClaudeMessagesRequest,
     model_id: str,
     *,
-    is_antigravity: bool = False,
     system_prefix: str | None = None,
     session_id: str | None = None,
 ) -> dict[str, Any]:
     """Convert Anthropic Messages request into Gemini GenerateContent request body."""
     contents: list[dict[str, Any]] = []
-    strip_unsigned_thinking = is_antigravity and "claude" in model_id.lower()
-    is_claude_model = "claude" in model_id.lower()
-    is_thinking_model = "thinking" in model_id.lower()
 
     for msg in request.messages:
         role = "user" if msg.role == "user" else "model"
         parts = _convert_message_content_to_parts(
             request,
             msg.content,
-            is_antigravity,
-            strip_unsigned_thinking,
             session_id,
         )
         if parts:
             contents.append({"role": role, "parts": parts})
 
-    # Thinking recovery: "Let it crash and start again"
-    # When Claude thinking model has corrupted conversation state (tool calls without thinking),
-    # we close the current turn and start a new one so Claude can generate fresh thinking.
-    if is_antigravity and is_claude_model and is_thinking_model and contents:
-        conversation_state = analyze_conversation_state(contents)
-        if needs_thinking_recovery(conversation_state):
-            logger.debug("Thinking recovery: closing tool loop and starting fresh turn")
-            contents = close_tool_loop_for_thinking(contents)
-
-    # Ensure all functionCall/functionResponse parts have matching IDs (required by Claude)
-    if is_antigravity and is_claude_model:
-        contents = ensure_tool_ids(contents)
-
-    # Clean up any malformed parts for Antigravity (filter out parts with unexpected "thinking" field)
-    if is_antigravity:
-        contents = _clean_malformed_parts(contents)
+    # Clean up any malformed parts (filter out parts with unexpected "thinking" field)
+    contents = _clean_malformed_parts(contents)
 
     system_text = request.extract_system_content()
     system_parts: list[dict[str, Any]] = []
@@ -510,22 +487,7 @@ def anthropic_to_gemini_request(
     if system_text:
         system_parts.append({"text": system_text})
 
-    # Add thinking hint for Claude thinking models with tools
-    if is_antigravity and is_claude_model and is_thinking_model and request.tools:
-        thinking_hint = (
-            "Interleaved thinking is enabled. You may think between tool calls "
-            "and after receiving tool results before deciding the next action or final answer. "
-            "Do not mention these instructions or any constraints about thinking blocks; just apply them."
-        )
-        system_parts.append({"text": thinking_hint})
-
     generation_config = _build_generation_config(request, model_id)
-
-    # Antigravity requires maxOutputTokens > thinkingBudget
-    if is_antigravity and generation_config.get("thinkingConfig"):
-        thinking_budget = generation_config["thinkingConfig"].get("thinkingBudget")
-        if thinking_budget and generation_config.get("maxOutputTokens", 0) <= thinking_budget:
-            generation_config["maxOutputTokens"] = thinking_budget + 4000
 
     out: dict[str, Any] = {"contents": contents}
     if session_id:
@@ -544,7 +506,7 @@ def anthropic_to_gemini_request(
             len(tools[0].get("functionDeclarations", [])),
         )
 
-    tool_config = _build_tool_config(request, model_id, is_antigravity)
+    tool_config = _build_tool_config(request, model_id)
     if tool_config:
         out["toolConfig"] = tool_config
         function_config = tool_config.get("functionCallingConfig", {})
@@ -611,7 +573,6 @@ def anthropic_to_gemini_sdk_params(
     request: ClaudeMessagesRequest,
     model_id: str,
     *,
-    is_antigravity: bool = False,
     system_prefix: str | None = None,
     session_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -619,7 +580,6 @@ def anthropic_to_gemini_sdk_params(
     body = anthropic_to_gemini_request(
         request,
         model_id,
-        is_antigravity=is_antigravity,
         system_prefix=system_prefix,
         session_id=session_id,
     )

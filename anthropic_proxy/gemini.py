@@ -23,7 +23,9 @@ def _decode(s: str) -> str:
 
 
 # Constants
-GEMINI_CLIENT_ID = _decode("NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t")
+GEMINI_CLIENT_ID = _decode(
+    "NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t"
+)
 GEMINI_CLIENT_SECRET = _decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=")
 GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback"
 GEMINI_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -31,15 +33,15 @@ GEMINI_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GEMINI_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com"
 
 GEMINI_SCOPES = [
-  "https://www.googleapis.com/auth/cloud-platform",
-  "https://www.googleapis.com/auth/userinfo.email",
-  "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
 ]
 
 CODE_ASSIST_HEADERS = {
-  "User-Agent": "google-api-nodejs-client/9.15.1",
-  "X-Goog-Api-Client": "gl-node/22.17.0",
-  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
+    "User-Agent": "google-api-nodejs-client/9.15.1",
+    "X-Goog-Api-Client": "gl-node/22.17.0",
+    "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
 }
 
 # Default models (subject to upstream changes).
@@ -70,6 +72,7 @@ DEFAULT_GEMINI_MODELS = {
 MODEL_FALLBACKS = {
     "gemini-2.5-flash-image": "gemini-2.5-flash",
 }
+
 
 class GeminiAuth(OAuthPKCEAuth):
     """Manages Gemini authentication tokens."""
@@ -139,31 +142,33 @@ class GeminiAuth(OAuthPKCEAuth):
 
         access_token = self._auth_data.get("access")
         if not access_token:
-             return
+            return
 
         try:
             async with httpx.AsyncClient() as client:
                 req_body = {
-                     "metadata": {
+                    "metadata": {
                         "ideType": "IDE_UNSPECIFIED",
                         "platform": "PLATFORM_UNSPECIFIED",
                         "pluginType": "GEMINI",
-                     }
+                    }
                 }
                 res = await client.post(
                     f"{GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist",
                     json=req_body,
                     headers={
                         "Authorization": f"Bearer {access_token}",
-                        **CODE_ASSIST_HEADERS
-                    }
+                        **CODE_ASSIST_HEADERS,
+                    },
                 )
 
                 if res.status_code == 200:
                     data = res.json()
                     found_id = data.get("cloudaicompanionProject")
                     if found_id:
-                        self._update_refresh_with_project(refresh_token, project_id, found_id)
+                        self._update_refresh_with_project(
+                            refresh_token, project_id, found_id
+                        )
                         return
 
                 req_body["tierId"] = "FREE"
@@ -172,14 +177,20 @@ class GeminiAuth(OAuthPKCEAuth):
                     json=req_body,
                     headers={
                         "Authorization": f"Bearer {access_token}",
-                        **CODE_ASSIST_HEADERS
-                    }
+                        **CODE_ASSIST_HEADERS,
+                    },
                 )
                 if res.status_code == 200:
                     data = res.json()
-                    new_id = data.get("response", {}).get("cloudaicompanionProject", {}).get("id")
+                    new_id = (
+                        data.get("response", {})
+                        .get("cloudaicompanionProject", {})
+                        .get("id")
+                    )
                     if new_id:
-                        self._update_refresh_with_project(refresh_token, project_id, new_id)
+                        self._update_refresh_with_project(
+                            refresh_token, project_id, new_id
+                        )
 
         except Exception as e:
             logger.error(f"Failed to ensure project context: {e}")
@@ -210,7 +221,10 @@ async def handle_gemini_request(
         await gemini_auth.ensure_project_context()
         project_id = gemini_auth.get_project_id()
         if not project_id:
-             raise HTTPException(status_code=400, detail="Gemini Project ID could not be resolved. Try re-login.")
+            raise HTTPException(
+                status_code=400,
+                detail="Gemini Project ID could not be resolved. Try re-login.",
+            )
 
     target_model = model_name or model_id
     target_model = MODEL_FALLBACKS.get(target_model, target_model)
@@ -222,7 +236,6 @@ async def handle_gemini_request(
         project_id=project_id,
         base_url=GEMINI_CODE_ASSIST_ENDPOINT,
         extra_headers=CODE_ASSIST_HEADERS,
-        is_antigravity=False,
         use_code_assist=True,
     ):
         yield chunk

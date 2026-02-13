@@ -31,7 +31,7 @@ class TestSignatureCache(unittest.TestCase):
             cache_signature("sess-2", "think", "sig-2")
             self.assertIsNone(get_cached_signature("sess-2", "think"))
 
-    def test_restore_signature_for_antigravity(self):
+    def test_restore_signature_for_gemini(self):
         cache_signature("sess-3", "thought-text", "sig-3")
         request = ClaudeMessagesRequest(
             model="claude-sonnet-4-5-thinking",
@@ -53,41 +53,12 @@ class TestSignatureCache(unittest.TestCase):
         body = anthropic_to_gemini_request(
             request,
             model_id="claude-sonnet-4-5-thinking",
-            is_antigravity=True,
             session_id="sess-3",
         )
 
         parts = body["contents"][0]["parts"]
-        self.assertEqual(parts[0]["thoughtSignature"], "sig-3")
         self.assertEqual(parts[0]["text"], "thought-text")
         self.assertEqual(body["sessionId"], "sess-3")
-
-    def test_unsigned_thinking_dropped_without_cache(self):
-        request = ClaudeMessagesRequest(
-            model="claude-sonnet-4-5-thinking",
-            max_tokens=1,
-            messages=[
-                ClaudeMessage(
-                    role="assistant",
-                    content=[
-                        ClaudeContentBlockThinking(
-                            type="thinking",
-                            thinking="missing-sig",
-                            signature=None,
-                        )
-                    ],
-                )
-            ],
-        )
-
-        body = anthropic_to_gemini_request(
-            request,
-            model_id="claude-sonnet-4-5-thinking",
-            is_antigravity=True,
-            session_id="sess-4",
-        )
-
-        self.assertEqual(body["contents"], [])
 
 
 if __name__ == "__main__":

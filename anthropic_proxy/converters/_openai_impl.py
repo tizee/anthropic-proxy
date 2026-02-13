@@ -71,7 +71,9 @@ def parse_function_calls_from_thinking(thinking_content: str) -> tuple[str, list
                         "arguments": json.dumps(call_data["parameters"]),
                     },
                 }
-                logger.debug(f"Successfully created tool call: {tool_call['function']['name']}")
+                logger.debug(
+                    f"Successfully created tool call: {tool_call['function']['name']}"
+                )
                 tool_calls.append(tool_call)
 
     # Remove the function call markers from thinking content
@@ -91,7 +93,9 @@ def _parse_function_call_content(content: str) -> list:
             function_call_data = json.loads(content)
             if isinstance(function_call_data, list):
                 parsed_calls.extend(function_call_data)
-                logger.debug(f"Direct parse successful, found {len(parsed_calls)} calls")
+                logger.debug(
+                    f"Direct parse successful, found {len(parsed_calls)} calls"
+                )
                 return parsed_calls
     except json.JSONDecodeError as e:
         logger.debug(f"Direct JSON parse failed: {e}")
@@ -104,7 +108,9 @@ def _parse_function_call_content(content: str) -> list:
             function_call_data = json.loads(wrapped_content)
             if isinstance(function_call_data, list):
                 parsed_calls.extend(function_call_data)
-                logger.debug(f"Bracket-wrapped parse successful, found {len(parsed_calls)} calls")
+                logger.debug(
+                    f"Bracket-wrapped parse successful, found {len(parsed_calls)} calls"
+                )
                 return parsed_calls
     except json.JSONDecodeError as e:
         logger.debug(f"Bracket-wrapped parse failed: {e}")
@@ -116,7 +122,9 @@ def _parse_function_call_content(content: str) -> list:
         function_call_data = json.loads(repaired_content)
         if isinstance(function_call_data, list):
             parsed_calls.extend(function_call_data)
-            logger.debug(f"Repaired JSON parse successful, found {len(parsed_calls)} calls")
+            logger.debug(
+                f"Repaired JSON parse successful, found {len(parsed_calls)} calls"
+            )
             return parsed_calls
         elif isinstance(function_call_data, dict):
             parsed_calls.append(function_call_data)
@@ -131,7 +139,9 @@ def _parse_function_call_content(content: str) -> list:
         regex_calls = _extract_calls_with_regex(content)
         if regex_calls:
             parsed_calls.extend(regex_calls)
-            logger.debug(f"Regex extraction successful, found {len(parsed_calls)} calls")
+            logger.debug(
+                f"Regex extraction successful, found {len(parsed_calls)} calls"
+            )
             return parsed_calls
     except Exception as e:
         logger.debug(f"Regex extraction failed: {e}")
@@ -159,17 +169,16 @@ def _extract_calls_with_regex(content: str) -> list:
     calls = []
 
     # Pattern to match individual function call objects
-    call_pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\})\s*\}'
+    call_pattern = (
+        r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\})\s*\}'
+    )
 
     matches = re.findall(call_pattern, content, re.DOTALL)
 
     for name, params_str in matches:
         try:
             parameters = json.loads(params_str)
-            call_data = {
-                "name": name,
-                "parameters": parameters
-            }
+            call_data = {"name": name, "parameters": parameters}
             calls.append(call_data)
             logger.debug(f"Regex extracted call: {name}")
         except json.JSONDecodeError as e:
@@ -188,7 +197,9 @@ def _parse_tool_arguments(arguments_str: str) -> dict:
         logger.debug(f"🔧 TOOL_DEBUG: Successfully parsed arguments: {result}")
         return result
     except (json.JSONDecodeError, TypeError) as e:
-        logger.error(f"🔧 TOOL_DEBUG: Failed to parse tool arguments: {arguments_str}, error: {e}")
+        logger.error(
+            f"🔧 TOOL_DEBUG: Failed to parse tool arguments: {arguments_str}, error: {e}"
+        )
         return {}
 
 
@@ -333,9 +344,15 @@ def convert_openai_response_to_anthropic(
             seen_tool_ids: set[str] = set()
             for i, tool_call in enumerate(tool_calls):
                 try:
-                    logger.debug(f"🔧 TOOL_DEBUG: Processing tool_call {i}: {tool_call}")
-                    logger.debug(f"🔧 TOOL_DEBUG: tool_call.function: {tool_call.function}")
-                    logger.debug(f"🔧 TOOL_DEBUG: tool_call.function.arguments: {tool_call.function.arguments}")
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: Processing tool_call {i}: {tool_call}"
+                    )
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: tool_call.function: {tool_call.function}"
+                    )
+                    logger.debug(
+                        f"🔧 TOOL_DEBUG: tool_call.function.arguments: {tool_call.function.arguments}"
+                    )
 
                     arguments_dict = _parse_tool_arguments(tool_call.function.arguments)
 
@@ -449,7 +466,7 @@ class AnthropicStreamingConverter:
                 "stop_sequence": None,
                 "usage": {
                     "input_tokens": self.input_tokens,
-                    "output_tokens": 1  # Following Anthropic convention
+                    "output_tokens": 1,  # Following Anthropic convention
                 },
             },
         }
@@ -552,9 +569,7 @@ class AnthropicStreamingConverter:
             "type": "message_stop",
         }
         event_str = f"event: message_stop\ndata: {json.dumps(event_data)}\n\n"
-        logger.debug(
-            "STREAMING_EVENT: message_stop"
-        )
+        logger.debug("STREAMING_EVENT: message_stop")
         return event_str
 
     def _send_done_event(self) -> str:
@@ -721,8 +736,12 @@ class AnthropicStreamingConverter:
                 if self.is_malformed_tool_json(json_acc):
                     repaired, was_repaired = self.try_repair_tool_json(json_acc)
                     if repaired or was_repaired:
-                        if tool_info["content_block_index"] < len(self.current_content_blocks):
-                            self.current_content_blocks[tool_info["content_block_index"]]["input"] = repaired
+                        if tool_info["content_block_index"] < len(
+                            self.current_content_blocks
+                        ):
+                            self.current_content_blocks[
+                                tool_info["content_block_index"]
+                            ]["input"] = repaired
                         else:
                             logger.error(
                                 "🔧 TOOL_DEBUG: content_block_index out of range during finalization (%s >= %s)",
@@ -805,7 +824,9 @@ class AnthropicStreamingConverter:
         self.accumulated_thinking += content
         self.fallback_output_tokens += len(_tokenizer.encode(content))
         if self.thinking_content_block_index is not None:
-            self.current_content_blocks[self.thinking_content_block_index]["thinking"] += content
+            self.current_content_blocks[self.thinking_content_block_index][
+                "thinking"
+            ] += content
 
     async def _handle_tool_call_delta(self, tool_call):
         """Handle tool call deltas and manage tool_use blocks."""
@@ -815,10 +836,14 @@ class AnthropicStreamingConverter:
         # Extract tool call index
         if isinstance(tool_call, dict):
             tool_index = tool_call.get("index")
-            logger.debug(f"🔧 TOOL_DEBUG: Dict tool_call keys: {list(tool_call.keys())}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Dict tool_call keys: {list(tool_call.keys())}"
+            )
         elif hasattr(tool_call, "index"):
             tool_index = tool_call.index
-            logger.debug(f"🔧 TOOL_DEBUG: Object tool_call attributes: {dir(tool_call)}")
+            logger.debug(
+                f"🔧 TOOL_DEBUG: Object tool_call attributes: {dir(tool_call)}"
+            )
         else:
             logger.debug(f"🔧 TOOL_DEBUG: Unexpected tool_call type: {type(tool_call)}")
             return
@@ -918,10 +943,14 @@ class AnthropicStreamingConverter:
 
         # Try to parse partial JSON to update input
         if tool_info["json_accumulator"]:
-            parsed_args, was_repaired = self.try_repair_tool_json(tool_info["json_accumulator"])
+            parsed_args, was_repaired = self.try_repair_tool_json(
+                tool_info["json_accumulator"]
+            )
             if parsed_args:
                 if tool_info["content_block_index"] < len(self.current_content_blocks):
-                    self.current_content_blocks[tool_info["content_block_index"]]["input"] = parsed_args
+                    self.current_content_blocks[tool_info["content_block_index"]][
+                        "input"
+                    ] = parsed_args
                 else:
                     logger.error(
                         "🔧 TOOL_DEBUG: content_block_index out of range (%s >= %s)",
@@ -944,7 +973,10 @@ class AnthropicStreamingConverter:
             if hasattr(usage, "completion_tokens") and usage.completion_tokens:
                 self.output_tokens = usage.completion_tokens
             # Store completion_tokens_details if available (for reasoning_tokens)
-            if hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
+            if (
+                hasattr(usage, "completion_tokens_details")
+                and usage.completion_tokens_details
+            ):
                 details = usage.completion_tokens_details
                 if hasattr(details, "reasoning_tokens") and details.reasoning_tokens:
                     self.completion_tokens = details.reasoning_tokens
@@ -1044,20 +1076,27 @@ async def convert_openai_streaming_response_to_anthropic(
                         break
                     continue
         except Exception as streaming_error:
-            logger.error(f"TOOL_DEBUG: Streaming iteration error after {chunk_count} chunks: {streaming_error}")
+            logger.error(
+                f"TOOL_DEBUG: Streaming iteration error after {chunk_count} chunks: {streaming_error}"
+            )
             log_openai_api_error(streaming_error, "streaming_iteration")
 
             # Log tool-related context if applicable
             error_str = str(streaming_error).lower()
             if "function" in error_str or "tool" in error_str:
-                logger.error(f"TOOL_DEBUG: Tool-related error for model {original_request.model}")
+                logger.error(
+                    f"TOOL_DEBUG: Tool-related error for model {original_request.model}"
+                )
                 if original_request.tools:
                     tool_names = [tool.name for tool in original_request.tools]
                     logger.error(f"TOOL_DEBUG: Tools in request: {tool_names}")
 
             # Abort stream to simulate real API behavior (triggers client retry)
             from ..midstream_abort import MidStreamAbort
-            raise MidStreamAbort(f"upstream streaming error: {streaming_error}") from streaming_error
+
+            raise MidStreamAbort(
+                f"upstream streaming error: {streaming_error}"
+            ) from streaming_error
 
         # Handle stream completion - ensure proper cleanup regardless of how stream ended
         if not converter.has_sent_stop_reason:
@@ -1164,9 +1203,7 @@ def _log_streaming_completion(
                 )
 
         if content_blocks_summary:
-            logger.info(
-                f"📝 STREAMING_SUMMARY: {', '.join(content_blocks_summary)}"
-            )
+            logger.info(f"📝 STREAMING_SUMMARY: {', '.join(content_blocks_summary)}")
         if tool_calls_summary:
             logger.info(
                 f"🔧 STREAMING_TOOL_CALLS: {len(tool_calls_summary)} tool calls"

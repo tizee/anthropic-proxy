@@ -185,7 +185,9 @@ def normalize_gemini_response(payload: dict[str, Any]) -> dict[str, Any]:
     candidates = payload.get("candidates")
     if isinstance(candidates, list):
         payload["candidates"] = [
-            _normalize_candidate(candidate) if isinstance(candidate, dict) else candidate
+            _normalize_candidate(candidate)
+            if isinstance(candidate, dict)
+            else candidate
             for candidate in candidates
         ]
 

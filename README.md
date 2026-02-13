@@ -7,7 +7,7 @@ A proxy server that enables Claude Code to work with multiple model providers th
 
 1. **OpenAI-Compatible Format** (`format: openai`): Translates Anthropic API requests to OpenAI-compatible endpoints
 2. **Anthropic-Compatible Format** (`format: anthropic`): Routes requests directly to official Claude API or compatible endpoints
-3. **Gemini Format** (`format: gemini`): Routes requests through Gemini-compatible backends (Gemini/Antigravity subscriptions)
+3. **Gemini Format** (`format: gemini`): Routes requests through Gemini-compatible backends (Gemini subscriptions)
 
 **Multi-Format Support**: The proxy accepts requests in Anthropic, OpenAI, or Gemini format and automatically converts between them as needed. Each format has its own endpoint prefix (`/anthropic/v1/...`, `/openai/v1/...`, `/gemini/v1beta/...`).
 
@@ -357,45 +357,6 @@ To override settings, specify `provider: gemini`:
   reasoning_effort: medium  # if applicable
 ```
 
-## 🛰️ Antigravity Subscription Support (Google Internal)
-
-Use Google's internal Antigravity service (Cloud Code backend) with your Google account.
-
-### 1. Login
-
-```bash
-anthropic-proxy login --antigravity
-```
-
-### 2. Available Models
-
-The following models are automatically available (subject to upstream changes). These IDs are prefixed to avoid collisions:
-- `antigravity/claude-opus-4-5-thinking`
-- `antigravity/claude-sonnet-4-5`
-- `antigravity/claude-sonnet-4-5-thinking`
-- `antigravity/gemini-3-pro`
-- `antigravity/gemini-3-pro-low`
-- `antigravity/gemini-3-pro-high`
-- `antigravity/gemini-3-pro-preview`
-- `antigravity/gemini-3-flash`
-- `antigravity/gemini-2.5-pro`
-- `antigravity/gemini-2.5-flash`
-- `antigravity/gemini-2.5-flash-lite`
-- `antigravity/gemini-2.5-flash-thinking`
-- `antigravity/gemini-2.0-flash-exp`
-- `antigravity/gemini-3-pro-image`
-If you define the same `model_id` in `models.yaml`, your configuration takes precedence.
-
-### 3. Customizing Antigravity Models
-
-To override settings, specify `provider: antigravity`:
-
-```yaml
-- model_id: antigravity/claude-sonnet-4-5
-  provider: antigravity
-  reasoning_effort: high
-```
-
 ## 🤖 Claude Code Subscription Support
 
 Use Claude Code subscription (setup-token based) for access to Claude Opus 4.6, Sonnet 4.5, and Haiku 4.5 models.
@@ -665,7 +626,7 @@ ANTHROPIC_BASE_URL=http://localhost:8082/anthropic/v1 claude
 ```
 
 **Important Notes**:
-- The `/anthropic/v1` prefix is **required** for all requests, including Codex, Gemini, and Antigravity models
+- The `/anthropic/v1` prefix is **required** for all requests, including Codex and Gemini models
 - **Do NOT use `/openai/v1`** for Codex models - this will result in 403 Cloudflare errors
 - The proxy automatically injects provider-specific headers (like `originator: codex_cli_rs` for Codex) only when using the Anthropic endpoint
 

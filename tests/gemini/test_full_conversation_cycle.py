@@ -1,11 +1,11 @@
 """
-Test the full conversation cycle: Antigravity Response -> Claude Response -> Client -> Claude Request -> Antigravity Request
+Test the full conversation cycle: Gemini Response -> Claude Response -> Client -> Claude Request -> Gemini Request
 
 This tests the scenario where:
-1. Antigravity returns a response (simulated with Gemini parts)
+1. Gemini returns a response (simulated with Gemini parts)
 2. We convert it to Claude format (as in gemini_streaming.py)
 3. Client receives it and sends it back in the next request
-4. We convert it to Antigravity format again
+4. We convert it to Gemini format again
 5. Check if any nested structures are introduced
 """
 
@@ -25,15 +25,15 @@ from anthropic_proxy.types import (
 class TestFullConversationCycle(unittest.TestCase):
     """Test the full cycle to catch nested structure bugs."""
 
-    def _simulate_antigravity_text_response(self) -> dict:
-        """Simulate an Antigravity response with text."""
+    def _simulate_gemini_text_response(self) -> dict:
+        """Simulate a Gemini response with text."""
         return {
             "role": "model",
             "parts": [{"text": "Hello, how can I help you today?"}]
         }
 
-    def _simulate_antigravity_thinking_response(self) -> dict:
-        """Simulate an Antigravity response with thinking."""
+    def _simulate_gemini_thinking_response(self) -> dict:
+        """Simulate a Gemini response with thinking."""
         return {
             "role": "model",
             "parts": [
@@ -41,8 +41,8 @@ class TestFullConversationCycle(unittest.TestCase):
             ]
         }
 
-    def _simulate_antigravity_tool_call_response(self) -> dict:
-        """Simulate an Antigravity response with tool call."""
+    def _simulate_gemini_tool_call_response(self) -> dict:
+        """Simulate a Gemini response with tool call."""
         return {
             "role": "model",
             "parts": [
@@ -51,9 +51,9 @@ class TestFullConversationCycle(unittest.TestCase):
             ]
         }
 
-    def _antigravity_part_to_claude_content_block(self, part: dict) -> dict:
+    def _gemini_part_to_claude_content_block(self, part: dict) -> dict:
         """
-        Simulate how we convert Antigravity parts to Claude content blocks
+        Simulate how we convert Gemini parts to Claude content blocks
         (simplified version of what happens in gemini_streaming.py)
         """
         if "text" in part and "thoughtSignature" in part:
@@ -88,11 +88,11 @@ class TestFullConversationCycle(unittest.TestCase):
             # Unknown part type - return as-is for investigation
             return part
 
-    def _build_claude_message_from_antigravity_response(self, ag_response: dict) -> ClaudeMessage:
-        """Build a ClaudeMessage from an Antigravity response (simulating response conversion)."""
-        parts = ag_response.get("parts", [])
+    def _build_claude_message_from_gemini_response(self, gemini_response: dict) -> ClaudeMessage:
+        """Build a ClaudeMessage from a Gemini response (simulating response conversion)."""
+        parts = gemini_response.get("parts", [])
         content_blocks = [
-            self._antigravity_part_to_claude_content_block(part) for part in parts
+            self._gemini_part_to_claude_content_block(part) for part in parts
         ]
         return ClaudeMessage(
             role="assistant",
@@ -101,11 +101,11 @@ class TestFullConversationCycle(unittest.TestCase):
 
     def test_text_response_cycle(self):
         """Test full cycle with text response."""
-        # Step 1: Antigravity returns a text response
-        ag_response = self._simulate_antigravity_text_response()
+        # Step 1: Gemini returns a text response
+        ag_response = self._simulate_gemini_text_response()
 
         # Step 2: Convert to Claude format (what client receives)
-        claude_message = self._build_claude_message_from_antigravity_response(ag_response)
+        claude_message = self._build_claude_message_from_gemini_response(ag_response)
 
         # Step 3: Client sends it back in next request
         next_request = ClaudeMessagesRequest(
@@ -117,11 +117,10 @@ class TestFullConversationCycle(unittest.TestCase):
             ],
         )
 
-        # Step 4: Convert back to Antigravity format
+        # Step 4: Convert back to Gemini format
         result = anthropic_to_gemini_request(
             next_request,
             "claude-sonnet-4-5",
-            is_antigravity=True,
         )
 
         # Step 5: Verify no nested structures
@@ -134,11 +133,11 @@ class TestFullConversationCycle(unittest.TestCase):
 
     def test_thinking_response_cycle(self):
         """Test full cycle with thinking response."""
-        # Step 1: Antigravity returns a thinking response
-        ag_response = self._simulate_antigravity_thinking_response()
+        # Step 1: Gemini returns a thinking response
+        ag_response = self._simulate_gemini_thinking_response()
 
         # Step 2: Convert to Claude format
-        claude_message = self._build_claude_message_from_antigravity_response(ag_response)
+        claude_message = self._build_claude_message_from_gemini_response(ag_response)
 
         # Step 3: Client sends it back
         next_request = ClaudeMessagesRequest(
@@ -150,11 +149,10 @@ class TestFullConversationCycle(unittest.TestCase):
             ],
         )
 
-        # Step 4: Convert back to Antigravity
+        # Step 4: Convert back to Gemini
         result = anthropic_to_gemini_request(
             next_request,
             "claude-sonnet-4-5-thinking",
-            is_antigravity=True,
             session_id="test-session",
         )
 
@@ -168,11 +166,11 @@ class TestFullConversationCycle(unittest.TestCase):
 
     def test_tool_call_response_cycle(self):
         """Test full cycle with tool call response."""
-        # Step 1: Antigravity returns tool call
-        ag_response = self._simulate_antigravity_tool_call_response()
+        # Step 1: Gemini returns tool call
+        ag_response = self._simulate_gemini_tool_call_response()
 
         # Step 2: Convert to Claude format
-        claude_message = self._build_claude_message_from_antigravity_response(ag_response)
+        claude_message = self._build_claude_message_from_gemini_response(ag_response)
 
         # Step 3: Client sends tool result back
         next_request = ClaudeMessagesRequest(
@@ -193,11 +191,10 @@ class TestFullConversationCycle(unittest.TestCase):
             ],
         )
 
-        # Step 4: Convert back to Antigravity
+        # Step 4: Convert back to Gemini
         result = anthropic_to_gemini_request(
             next_request,
             "claude-sonnet-4-5",
-            is_antigravity=True,
         )
 
         # Step 5: Verify no nested structures
@@ -225,13 +222,13 @@ class TestFullConversationCycle(unittest.TestCase):
                 "role": "model",
                 "parts": [{"text": f"Response {i}"}]
             }
-            claude_assistant = self._build_claude_message_from_antigravity_response(ag_response)
+            claude_assistant = self._build_claude_message_from_gemini_response(ag_response)
             messages.append(claude_assistant)
 
             # User message
             messages.append(ClaudeMessage(role="user", content=f"Question {i}"))
 
-        # Convert full conversation to Antigravity
+        # Convert full conversation to Gemini
         request = ClaudeMessagesRequest(
             model="claude-sonnet-4-5",
             max_tokens=100,
@@ -241,7 +238,6 @@ class TestFullConversationCycle(unittest.TestCase):
         result = anthropic_to_gemini_request(
             request,
             "claude-sonnet-4-5",
-            is_antigravity=True,
         )
 
         # Verify NO nested text structures anywhere
@@ -283,11 +279,10 @@ class TestFullConversationCycle(unittest.TestCase):
         # Parse through Pydantic (this should work)
         request = ClaudeMessagesRequest(**request_dict)
 
-        # Convert to Antigravity
+        # Convert to Gemini
         result = anthropic_to_gemini_request(
             request,
             "claude-sonnet-4-5",
-            is_antigravity=True,
         )
 
         # Verify no nesting

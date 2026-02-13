@@ -1,13 +1,11 @@
 """
-Thinking Recovery Module for Antigravity Claude Models
+Thinking Recovery Module for Gemini Claude Models
 
 When Claude's conversation history gets corrupted (thinking blocks stripped/malformed),
 this module provides a "last resort" recovery by closing the current turn and starting fresh.
 
 Philosophy: "Let it crash and start again" - Instead of trying to fix corrupted state,
 we abandon the corrupted turn and let Claude generate fresh thinking.
-
-Based on antigravity-auth plugin's thinking-recovery.ts
 """
 
 from __future__ import annotations
@@ -128,7 +126,9 @@ def _strip_all_thinking_blocks(contents: list[dict[str, Any]]) -> list[dict[str,
             result.append(content)
             continue
 
-        filtered_parts = [p for p in parts if isinstance(p, dict) and not _is_thinking_part(p)]
+        filtered_parts = [
+            p for p in parts if isinstance(p, dict) and not _is_thinking_part(p)
+        ]
 
         if not filtered_parts:
             # All parts were filtered out, skip this content
@@ -150,7 +150,8 @@ def _count_trailing_tool_results(contents: list[dict[str, Any]]) -> int:
             parts = msg.get("parts")
             if isinstance(parts, list):
                 function_responses = [
-                    p for p in parts
+                    p
+                    for p in parts
                     if isinstance(p, dict) and _is_function_response_part(p)
                 ]
 
@@ -164,7 +165,9 @@ def _count_trailing_tool_results(contents: list[dict[str, Any]]) -> int:
     return count
 
 
-def close_tool_loop_for_thinking(contents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def close_tool_loop_for_thinking(
+    contents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Closes an incomplete tool loop by injecting synthetic messages to start a new turn.
 

@@ -33,29 +33,30 @@ DEFAULT_CODEX_MODELS = {
     "gpt-5.3-codex": {
         "model_name": "gpt-5.3-codex",
         "description": "Newest flagship Codex model",
-        "reasoning_effort": "high"
+        "reasoning_effort": "high",
     },
     "gpt-5.2-codex": {
         "model_name": "gpt-5.2-codex",
         "description": "Previous flagship Codex model",
-        "reasoning_effort": "high"
+        "reasoning_effort": "high",
     },
     "gpt-5.1-codex-max": {
         "model_name": "gpt-5.1-codex-max",
         "description": "High-performance variant",
-        "reasoning_effort": "high"
+        "reasoning_effort": "high",
     },
     "gpt-5.1-codex-mini": {
         "model_name": "gpt-5.1-codex-mini",
         "description": "Fast, lightweight coding model",
-        "reasoning_effort": "medium"
+        "reasoning_effort": "medium",
     },
     "gpt-5.2": {
         "model_name": "gpt-5.2",
         "description": "General purpose flagship",
-        "reasoning_effort": "high"
+        "reasoning_effort": "high",
     },
 }
+
 
 def _is_codex_usage_limit_error(error_text: bytes) -> bool:
     try:
@@ -130,7 +131,9 @@ class CodexAuth(OAuthPKCEAuth):
         except Exception as exc:
             logger.warning(f"Failed to extract account ID from token: {exc}")
 
-    async def _refresh_token(self, refresh_token_raw: str, refresh_full: str | None) -> str:
+    async def _refresh_token(
+        self, refresh_token_raw: str, refresh_full: str | None
+    ) -> str:
         new_access = await super()._refresh_token(refresh_token_raw, None)
         try:
             account_id = self._extract_account_id(new_access)
@@ -165,16 +168,22 @@ class CodexAuth(OAuthPKCEAuth):
         expires = self._auth_data.get("expires", 0)
 
         # Check if token is stale (8-day interval) or about to expire (5 min buffer)
-        needs_refresh = self._is_token_stale() or not access_token or time.time() > (expires - 300)
+        needs_refresh = (
+            self._is_token_stale() or not access_token or time.time() > (expires - 300)
+        )
 
         if needs_refresh:
             if self._is_token_stale():
-                logger.info("Codex token is stale (8+ days since last refresh), refreshing...")
+                logger.info(
+                    "Codex token is stale (8+ days since last refresh), refreshing..."
+                )
             else:
                 logger.info("Codex token expired, refreshing...")
             refresh_token = self._extract_refresh_token(refresh_full)
             if not refresh_token:
-                raise HTTPException(status_code=401, detail="No refresh token available")
+                raise HTTPException(
+                    status_code=401, detail="No refresh token available"
+                )
             return await self._refresh_token(refresh_token, refresh_full)
 
         return access_token
@@ -182,6 +191,7 @@ class CodexAuth(OAuthPKCEAuth):
 
 # Global auth instance
 codex_auth = CodexAuth()
+
 
 def _sanitize_codex_input(input_items: list[dict]) -> list[dict]:
     """Ensure Codex Responses API input items meet backend requirements.
@@ -225,7 +235,9 @@ def _sanitize_codex_input(input_items: list[dict]) -> list[dict]:
     return input_items if result is None else result
 
 
-def _convert_chat_to_responses(openai_request: dict, reasoning_effort: str | None = None) -> dict:
+def _convert_chat_to_responses(
+    openai_request: dict, reasoning_effort: str | None = None
+) -> dict:
     """Convert Chat Completions format to Responses API format.
 
     The Codex backend uses the Responses API which expects ``instructions``
@@ -293,18 +305,20 @@ async def handle_codex_request(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Handle a request to the Codex backend.
-    
+
     Args:
         openai_request: The request body in OpenAI/Chat Completions or Responses API format.
         model_id: The original model ID (for logging).
         reasoning_effort: Reasoning effort from model config (e.g. "low", "medium", "high").
-        
+
     Returns:
         AsyncGenerator: Generator yielding OpenAI chunk dicts.
     """
 
     # Convert Chat Completions format to Responses API format if needed
-    codex_request = _convert_chat_to_responses(openai_request, reasoning_effort=reasoning_effort)
+    codex_request = _convert_chat_to_responses(
+        openai_request, reasoning_effort=reasoning_effort
+    )
 
     # Get valid token (auto-refreshes)
     access_token = await codex_auth.get_access_token()
@@ -323,17 +337,29 @@ async def handle_codex_request(
     codex_request["stream"] = True
     codex_request["store"] = False
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0))
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+    )
 
     try:
-        async with client.stream("POST", CODEX_API_URL, json=codex_request, headers=headers) as response:
+        async with client.stream(
+            "POST", CODEX_API_URL, json=codex_request, headers=headers
+        ) as response:
             if response.status_code != 200:
                 error_text = await response.aread()
-                error_str = error_text.decode('utf-8', errors='replace')
+                error_str = error_text.decode("utf-8", errors="replace")
                 logger.error(f"Codex API error {response.status_code}: {error_str}")
-                if response.status_code == 404 and _is_codex_usage_limit_error(error_text):
-                    raise HTTPException(status_code=429, detail=f"Codex usage limit reached: {error_str}")
-                raise HTTPException(status_code=response.status_code, detail=f"Codex API error {response.status_code}: {error_str}")
+                if response.status_code == 404 and _is_codex_usage_limit_error(
+                    error_text
+                ):
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Codex usage limit reached: {error_str}",
+                    )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Codex API error {response.status_code}: {error_str}",
+                )
 
             async for line in response.aiter_lines():
                 if line.startswith("data: "):

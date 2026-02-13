@@ -77,7 +77,9 @@ def _parse_gemini_tools(tools: list[dict[str, Any]] | None) -> list[ClaudeTool] 
                 ClaudeTool(
                     name=func.get("name", ""),
                     description=func.get("description"),
-                    input_schema=func.get("parameters", {"type": "object", "properties": {}}),
+                    input_schema=func.get(
+                        "parameters", {"type": "object", "properties": {}}
+                    ),
                 )
             )
     return claude_tools if claude_tools else None
@@ -203,8 +205,7 @@ class GeminiConverter(BaseConverter):
     Converter between Gemini GenerateContent and Anthropic Messages format.
     """
 
-    def __init__(self, *, is_antigravity: bool = False, session_id: str | None = None):
-        self.is_antigravity = is_antigravity
+    def __init__(self, *, session_id: str | None = None):
         self.session_id = session_id
 
     def request_to_anthropic(self, payload: dict[str, Any]) -> ClaudeMessagesRequest:
@@ -268,12 +269,10 @@ class GeminiConverter(BaseConverter):
         """Convert Anthropic Messages request to Gemini format."""
         system_prefix = kwargs.get("system_prefix")
         session_id = kwargs.get("session_id", self.session_id)
-        is_antigravity = kwargs.get("is_antigravity", self.is_antigravity)
 
         return anthropic_to_gemini_request(
             request,
             model_id or request.model,
-            is_antigravity=is_antigravity,
             system_prefix=system_prefix,
             session_id=session_id,
         )
@@ -314,9 +313,16 @@ class GeminiConverter(BaseConverter):
             stop_reason = "end_turn"
             if finish_reason == "MAX_TOKENS":
                 stop_reason = "max_tokens"
-            elif finish_reason in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"):
+            elif finish_reason in (
+                "SAFETY",
+                "RECITATION",
+                "BLOCKLIST",
+                "PROHIBITED_CONTENT",
+            ):
                 stop_reason = "refusal"
-            elif finish_reason == "TOOL_USE" or any(isinstance(b, ClaudeContentBlockToolUse) for b in blocks):
+            elif finish_reason == "TOOL_USE" or any(
+                isinstance(b, ClaudeContentBlockToolUse) for b in blocks
+            ):
                 stop_reason = "tool_use"
 
             # Extract usage
@@ -329,7 +335,9 @@ class GeminiConverter(BaseConverter):
                 model=original_request.model,
                 content=blocks,
                 stop_reason=stop_reason,
-                usage=ClaudeUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+                usage=ClaudeUsage(
+                    input_tokens=input_tokens, output_tokens=output_tokens
+                ),
             )
 
         raise TypeError(f"Cannot convert response of type {type(response)}")
@@ -350,13 +358,15 @@ class GeminiConverter(BaseConverter):
                     part["thoughtSignature"] = block.signature
                 parts.append(part)
             elif isinstance(block, ClaudeContentBlockToolUse):
-                parts.append({
-                    "functionCall": {
-                        "name": block.name,
-                        "args": block.input,
-                        "id": block.id,
+                parts.append(
+                    {
+                        "functionCall": {
+                            "name": block.name,
+                            "args": block.input,
+                            "id": block.id,
+                        }
                     }
-                })
+                )
 
         # Determine finish reason
         finish_reason = "STOP"
@@ -380,7 +390,8 @@ class GeminiConverter(BaseConverter):
             "usageMetadata": {
                 "promptTokenCount": response.usage.input_tokens,
                 "candidatesTokenCount": response.usage.output_tokens,
-                "totalTokenCount": response.usage.input_tokens + response.usage.output_tokens,
+                "totalTokenCount": response.usage.input_tokens
+                + response.usage.output_tokens,
             },
         }
 
@@ -390,8 +401,7 @@ class GeminiStreamingConverter(BaseStreamingConverter):
     Streaming converter for Gemini format.
     """
 
-    def __init__(self, *, is_antigravity: bool = False, session_id: str | None = None):
-        self.is_antigravity = is_antigravity
+    def __init__(self, *, session_id: str | None = None):
         self.session_id = session_id
 
     async def stream_to_anthropic(
@@ -469,12 +479,14 @@ class GeminiStreamingConverter(BaseStreamingConverter):
                         current_text += text
                         # Emit Gemini chunk
                         chunk = {
-                            "candidates": [{
-                                "content": {
-                                    "role": "model",
-                                    "parts": [{"text": text}],
-                                },
-                            }],
+                            "candidates": [
+                                {
+                                    "content": {
+                                        "role": "model",
+                                        "parts": [{"text": text}],
+                                    },
+                                }
+                            ],
                         }
                         yield json.dumps(chunk) + "\n"
 
@@ -489,12 +501,14 @@ class GeminiStreamingConverter(BaseStreamingConverter):
                         thinking_text += thinking
                         # Emit thinking chunk
                         chunk = {
-                            "candidates": [{
-                                "content": {
-                                    "role": "model",
-                                    "parts": [{"text": thinking, "thought": True}],
-                                },
-                            }],
+                            "candidates": [
+                                {
+                                    "content": {
+                                        "role": "model",
+                                        "parts": [{"text": thinking, "thought": True}],
+                                    },
+                                }
+                            ],
                         }
                         yield json.dumps(chunk) + "\n"
 
@@ -508,18 +522,22 @@ class GeminiStreamingConverter(BaseStreamingConverter):
                         args = {}
 
                     chunk = {
-                        "candidates": [{
-                            "content": {
-                                "role": "model",
-                                "parts": [{
-                                    "functionCall": {
-                                        "name": tc["name"],
-                                        "args": args,
-                                        "id": tc["id"],
-                                    }
-                                }],
-                            },
-                        }],
+                        "candidates": [
+                            {
+                                "content": {
+                                    "role": "model",
+                                    "parts": [
+                                        {
+                                            "functionCall": {
+                                                "name": tc["name"],
+                                                "args": args,
+                                                "id": tc["id"],
+                                            }
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
                     }
                     yield json.dumps(chunk) + "\n"
                     del current_tool_calls[block_index]
@@ -539,15 +557,18 @@ class GeminiStreamingConverter(BaseStreamingConverter):
 
                 # Emit final chunk with finish reason and usage
                 chunk: dict[str, Any] = {
-                    "candidates": [{
-                        "content": {"role": "model", "parts": []},
-                        "finishReason": finish_reason,
-                    }],
+                    "candidates": [
+                        {
+                            "content": {"role": "model", "parts": []},
+                            "finishReason": finish_reason,
+                        }
+                    ],
                 }
                 if usage:
                     chunk["usageMetadata"] = {
                         "promptTokenCount": usage.get("input_tokens", 0),
                         "candidatesTokenCount": usage.get("output_tokens", 0),
-                        "totalTokenCount": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                        "totalTokenCount": usage.get("input_tokens", 0)
+                        + usage.get("output_tokens", 0),
                     }
                 yield json.dumps(chunk) + "\n"

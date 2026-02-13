@@ -255,12 +255,16 @@ class OAuthPKCEAuth:
             logger.info(f"{self.config.display_name} token expired, refreshing...")
             refresh_token = self._extract_refresh_token(refresh_full)
             if not refresh_token:
-                raise HTTPException(status_code=401, detail="No refresh token available")
+                raise HTTPException(
+                    status_code=401, detail="No refresh token available"
+                )
             return await self._refresh_token(refresh_token, refresh_full)
 
         return access_token
 
-    async def _refresh_token(self, refresh_token_raw: str, refresh_full: str | None) -> str:
+    async def _refresh_token(
+        self, refresh_token_raw: str, refresh_full: str | None
+    ) -> str:
         async with httpx.AsyncClient() as client:
             try:
                 data = {
