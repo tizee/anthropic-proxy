@@ -64,6 +64,9 @@ lint:
 format:
 	uv run ruff format anthropic_proxy/**/*.py tests/*.py
 
+install: lint format
+	uv tool install . --reinstall
+
 # Help command
 help:
 	@echo "Available commands:"
@@ -96,4 +99,4 @@ help:
 	@echo "  make lint             - Check and fix code with ruff"
 	@echo "  make format           - Format code with ruff"
 
-.PHONY: start stop restart status start-port start-custom init init-force print-config dev test test-cov test-cov-html test-routing test-hooks test-conversion lint format help
+.PHONY: install start stop restart status start-port start-custom init init-force print-config dev test test-cov test-cov-html test-routing test-hooks test-conversion lint format help

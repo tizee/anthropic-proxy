@@ -146,7 +146,11 @@ class TestInjectSystemPrompt:
             "model": "claude-sonnet-4-5",
             "messages": [],
             "system": [
-                {"type": "text", "text": "First.", "cache_control": {"type": "ephemeral"}},
+                {
+                    "type": "text",
+                    "text": "First.",
+                    "cache_control": {"type": "ephemeral"},
+                },
                 {"type": "text", "text": "Second."},
             ],
         }
@@ -163,7 +167,10 @@ class TestInjectSystemPrompt:
         request_data = {"model": "claude-sonnet-4-5", "messages": []}
         result = inject_system_prompt(request_data)
 
-        assert result["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+        assert result["system"][0]["cache_control"] == {
+            "type": "ephemeral",
+            "ttl": "1h",
+        }
 
 
 class TestInjectMessageCacheControl:
@@ -194,10 +201,13 @@ class TestInjectMessageCacheControl:
         monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
         request_data = {
             "messages": [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "First part"},
-                    {"type": "text", "text": "Second part"},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "First part"},
+                        {"type": "text", "text": "Second part"},
+                    ],
+                },
             ]
         }
         result = inject_message_cache_control(request_data)
@@ -221,7 +231,9 @@ class TestInjectMessageCacheControl:
         # First user message should not have cache_control (string format unchanged)
         assert result["messages"][0]["content"] == "First question"
         # Last user message should have cache_control
-        assert result["messages"][2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert result["messages"][2]["content"][0]["cache_control"] == {
+            "type": "ephemeral"
+        }
 
     def test_last_message_is_assistant(self, monkeypatch):
         monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
@@ -235,33 +247,49 @@ class TestInjectMessageCacheControl:
 
         # Should find the last user message (index 0) and add cache
         assert isinstance(result["messages"][0]["content"], list)
-        assert result["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert result["messages"][0]["content"][0]["cache_control"] == {
+            "type": "ephemeral"
+        }
 
     def test_tool_result_content(self, monkeypatch):
         monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
         request_data = {
             "messages": [
-                {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": "123", "content": "result"},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "123",
+                            "content": "result",
+                        },
+                    ],
+                },
             ]
         }
         result = inject_message_cache_control(request_data)
 
-        assert result["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert result["messages"][0]["content"][0]["cache_control"] == {
+            "type": "ephemeral"
+        }
 
     def test_image_content(self, monkeypatch):
         monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
         request_data = {
             "messages": [
-                {"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "data": "..."}},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "data": "..."}},
+                    ],
+                },
             ]
         }
         result = inject_message_cache_control(request_data)
 
-        assert result["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert result["messages"][0]["content"][0]["cache_control"] == {
+            "type": "ephemeral"
+        }
 
     def test_long_ttl_message_cache(self, monkeypatch):
         monkeypatch.setenv(CACHE_RETENTION_ENV, "long")

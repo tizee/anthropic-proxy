@@ -173,7 +173,7 @@ class MessageFilter(logging.Filter):
             for phrase in blocked_phrases:
                 if phrase in formatted_msg:
                     return False
-        except:
+        except Exception:
             pass
 
         return True

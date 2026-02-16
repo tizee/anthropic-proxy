@@ -6,7 +6,7 @@ drop the TCP connection abruptly. This triggers client-side retry logic.
 """
 
 
-class MidStreamAbort(Exception):
+class MidStreamAbortError(Exception):
     """
     Exception raised to abort a streaming response mid-stream.
 
@@ -16,7 +16,7 @@ class MidStreamAbort(Exception):
 
     Usage:
         # In streaming generators, when upstream disconnects:
-        raise MidStreamAbort("upstream 502")
+        raise MidStreamAbortError("upstream 502")
 
     The middleware will catch this and log a clean message:
         [mid-stream abort] upstream 502

@@ -258,7 +258,7 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
         self.assertIn("San Francisco", input_deltas[-1]["delta"]["partial_json"])
 
     async def test_streaming_raises_midstream_abort_on_http_exception(self):
-        from anthropic_proxy.midstream_abort import MidStreamAbort
+        from anthropic_proxy.midstream_abort import MidStreamAbortError
 
         request = ClaudeMessagesRequest(
             model="gemini-2.5-pro",
@@ -270,7 +270,7 @@ class TestGeminiStreaming(unittest.IsolatedAsyncioTestCase):
             raise HTTPException(status_code=502, detail="Gemini error: 403 Forbidden")
             yield  # pragma: no cover
 
-        with self.assertRaises(MidStreamAbort) as ctx:
+        with self.assertRaises(MidStreamAbortError) as ctx:
             async for _ in convert_gemini_streaming_response_to_anthropic(gen(), request):
                 pass
         self.assertIn("Gemini error", str(ctx.exception))

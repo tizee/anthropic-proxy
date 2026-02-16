@@ -140,12 +140,12 @@ def _default_provider_model_ids() -> list[str]:
     from .gemini import DEFAULT_GEMINI_MODELS
 
     model_ids = []
-    model_ids.extend([f"codex/{model_id}" for model_id in DEFAULT_CODEX_MODELS.keys()])
+    model_ids.extend([f"codex/{model_id}" for model_id in DEFAULT_CODEX_MODELS])
     model_ids.extend(
-        [f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS.keys()]
+        [f"gemini/{model_id}" for model_id in DEFAULT_GEMINI_MODELS]
     )
     model_ids.extend(
-        [f"claude-code/{model_id}" for model_id in DEFAULT_CLAUDE_CODE_MODELS.keys()]
+        [f"claude-code/{model_id}" for model_id in DEFAULT_CLAUDE_CODE_MODELS]
     )
     return model_ids
 

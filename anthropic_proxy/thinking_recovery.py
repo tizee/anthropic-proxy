@@ -31,9 +31,7 @@ def _is_thinking_part(part: dict[str, Any]) -> bool:
     if part.get("thought") is True:
         return True
     # Also check for nested format (should not exist, but handle for robustness): {"thinking": {...}}
-    if isinstance(part.get("thinking"), dict):
-        return True
-    return False
+    return isinstance(part.get("thinking"), dict)
 
 
 def _is_function_response_part(part: dict[str, Any]) -> bool:

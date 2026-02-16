@@ -12,11 +12,11 @@ from fastapi import HTTPException
 from anthropic_proxy.converters.anthropic import (
     convert_anthropic_streaming_with_usage_tracking,
 )
-from anthropic_proxy.midstream_abort import MidStreamAbort
+from anthropic_proxy.midstream_abort import MidStreamAbortError
 from anthropic_proxy.types import ClaudeMessagesRequest
 
 
-class TestMidStreamAbortBehavior:
+class TestMidStreamAbortErrorBehavior:
     """Tests that mid-stream errors abort the connection (like real API)."""
 
     @pytest.fixture
@@ -100,19 +100,19 @@ class TestMidStreamAbortBehavior:
         assert chunks == sse_events
 
 
-class TestMidStreamAbortException:
-    """Tests for the MidStreamAbort exception class."""
+class TestMidStreamAbortErrorException:
+    """Tests for the MidStreamAbortError exception class."""
 
     def test_midstream_abort_is_exception(self):
-        """MidStreamAbort should be an Exception subclass."""
-        assert issubclass(MidStreamAbort, Exception)
+        """MidStreamAbortError should be an Exception subclass."""
+        assert issubclass(MidStreamAbortError, Exception)
 
     def test_midstream_abort_can_carry_message(self):
-        """MidStreamAbort should carry an error message."""
-        exc = MidStreamAbort("upstream 502")
+        """MidStreamAbortError should carry an error message."""
+        exc = MidStreamAbortError("upstream 502")
         assert str(exc) == "upstream 502"
 
     def test_midstream_abort_can_be_raised(self):
-        """MidStreamAbort should be raisable."""
-        with pytest.raises(MidStreamAbort):
-            raise MidStreamAbort("test error")
+        """MidStreamAbortError should be raisable."""
+        with pytest.raises(MidStreamAbortError):
+            raise MidStreamAbortError("test error")

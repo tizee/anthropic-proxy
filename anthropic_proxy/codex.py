@@ -377,11 +377,11 @@ async def handle_codex_request(
 
     except httpx.RequestError as e:
         logger.error("Codex network error: %s", e, exc_info=True)
-        raise HTTPException(status_code=502, detail=f"Codex network error: {e}")
+        raise HTTPException(status_code=502, detail=f"Codex network error: {e}") from e
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Codex unexpected error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Codex unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Codex unexpected error: {e}") from e
     finally:
         await client.aclose()

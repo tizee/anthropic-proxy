@@ -806,10 +806,10 @@ async def _stream_claude_code_response(
         SSE event strings in Anthropic format
 
     Raises:
-        MidStreamAbort: On read errors during streaming to simulate real API
+        MidStreamAbortError: On read errors during streaming to simulate real API
             connection drops that trigger client retry logic.
     """
-    from .midstream_abort import MidStreamAbort
+    from .midstream_abort import MidStreamAbortError
 
     try:
         async for chunk in response.aiter_text():
@@ -818,14 +818,14 @@ async def _stream_claude_code_response(
     except httpx.ReadError as e:
         # Error during streaming - abort connection to trigger client retry
         logger.error(f"Claude Code streaming read error: {e}")
-        raise MidStreamAbort(f"upstream read error: {e}") from e
+        raise MidStreamAbortError(f"upstream read error: {e}") from e
     except httpx.ConnectError as e:
         # Connection dropped during streaming
         logger.error(f"Claude Code streaming connection error: {e}")
-        raise MidStreamAbort(f"upstream connection error: {e}") from e
+        raise MidStreamAbortError(f"upstream connection error: {e}") from e
     except Exception as e:
         logger.error(f"Claude Code unexpected streaming error: {e}")
-        raise MidStreamAbort(f"upstream error: {e}") from e
+        raise MidStreamAbortError(f"upstream error: {e}") from e
     finally:
         await response.aclose()
         await client.aclose()

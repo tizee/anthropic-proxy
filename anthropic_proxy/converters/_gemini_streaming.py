@@ -383,13 +383,12 @@ class GeminiStreamingConverter:
 
             text = part.get("text")
             if text:
-                if text:
-                    if not self.text_block_started:
-                        for event in self._close_current_block():
-                            yield event
-                        yield self._open_text_block()
-                    self.accumulated_text += text
-                    yield self._send_content_block_delta_event("text_delta", text)
+                if not self.text_block_started:
+                    for event in self._close_current_block():
+                        yield event
+                    yield self._open_text_block()
+                self.accumulated_text += text
+                yield self._send_content_block_delta_event("text_delta", text)
 
         if finish_reason:
             normalized_finish = (
@@ -480,14 +479,14 @@ async def convert_gemini_streaming_response_to_anthropic(
     except HTTPException as http_exc:
         # Abort stream to simulate real API behavior (triggers client retry)
         logger.error("Gemini streaming error: %s", http_exc.detail)
-        from ..midstream_abort import MidStreamAbort
+        from ..midstream_abort import MidStreamAbortError
 
-        raise MidStreamAbort(f"upstream error: {http_exc.detail}") from http_exc
+        raise MidStreamAbortError(f"upstream error: {http_exc.detail}") from http_exc
     except Exception as exc:
         logger.error("Gemini streaming error: %s", exc)
-        from ..midstream_abort import MidStreamAbort
+        from ..midstream_abort import MidStreamAbortError
 
-        raise MidStreamAbort(f"upstream error: {exc}") from exc
+        raise MidStreamAbortError(f"upstream error: {exc}") from exc
     finally:
         logger.debug(
             "Gemini streaming completed for model %s (text=%d, thinking=%d)",

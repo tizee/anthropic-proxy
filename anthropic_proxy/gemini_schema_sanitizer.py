@@ -77,7 +77,7 @@ def _sanitize_schema(schema: Any) -> Any:
             continue
 
         if key in UNSUPPORTED_CONSTRAINTS:
-            if value is not None and not isinstance(value, (dict, list)):
+            if value is not None and not isinstance(value, dict | list):
                 cleaned["description"] = _append_description_hint(
                     cleaned.get("description"), f"{key}: {value}"
                 )
@@ -91,7 +91,7 @@ def _sanitize_schema(schema: Any) -> Any:
             cleaned["type"] = "string"
             continue
 
-        if isinstance(value, dict) or isinstance(value, list):
+        if isinstance(value, dict | list):
             if key == "properties" and isinstance(value, dict):
                 cleaned["properties"] = {
                     prop: _sanitize_schema(prop_schema)

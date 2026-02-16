@@ -1011,10 +1011,9 @@ class AnthropicStreamingConverter:
                 yield event
 
         # Handle reasoning content (thinking)
-        if delta and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-            if isinstance(delta.reasoning_content, str):
-                async for event in self._handle_thinking_delta(delta.reasoning_content):
-                    yield event
+        if delta and hasattr(delta, "reasoning_content") and delta.reasoning_content and isinstance(delta.reasoning_content, str):
+            async for event in self._handle_thinking_delta(delta.reasoning_content):
+                yield event
 
         # Handle finish reason
         if finish_reason:
@@ -1092,9 +1091,9 @@ async def convert_openai_streaming_response_to_anthropic(
                     logger.error(f"TOOL_DEBUG: Tools in request: {tool_names}")
 
             # Abort stream to simulate real API behavior (triggers client retry)
-            from ..midstream_abort import MidStreamAbort
+            from ..midstream_abort import MidStreamAbortError
 
-            raise MidStreamAbort(
+            raise MidStreamAbortError(
                 f"upstream streaming error: {streaming_error}"
             ) from streaming_error
 

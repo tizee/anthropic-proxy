@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -155,8 +156,7 @@ async def stream_gemini_sdk_request(
             timeout_config = httpx.Timeout(
                 connect=10.0, read=300.0, write=10.0, pool=10.0
             )
-            async with httpx.AsyncClient() as http_client:
-                async with http_client.stream(
+            async with httpx.AsyncClient() as http_client, http_client.stream(
                     "POST",
                     url,
                     headers=headers,
@@ -277,7 +277,5 @@ async def stream_gemini_sdk_request(
         logger.error(f"Gemini SDK request failed: {exc}")
         raise HTTPException(status_code=502, detail=f"Gemini SDK error: {exc}") from exc
     finally:
-        try:
+        with contextlib.suppress(Exception):
             await aclient.aclose()
-        except Exception:
-            pass

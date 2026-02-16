@@ -53,12 +53,11 @@ def _parse_openai_tool_choice(tool_choice: Any) -> Any:
             return ClaudeToolChoiceAny()
         elif tool_choice == "none":
             return ClaudeToolChoiceNone()
-    elif isinstance(tool_choice, dict):
-        if tool_choice.get("type") == "function":
-            function = tool_choice.get("function", {})
-            name = function.get("name", "")
-            if name:
-                return ClaudeToolChoiceTool(name=name)
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        function = tool_choice.get("function", {})
+        name = function.get("name", "")
+        if name:
+            return ClaudeToolChoiceTool(name=name)
     return None
 
 

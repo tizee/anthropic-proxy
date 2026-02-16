@@ -280,40 +280,37 @@ def start_daemon(
     env = os.environ.copy()
 
     # Open log file for daemon output
-    log_file = open(DAEMON_LOG_FILE, "a", encoding="utf-8")
-
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdin=None,
-            stdout=log_file,
-            stderr=log_file,
-            env=env,
-            start_new_session=True,  # Detach from parent process
-        )
-
-        # Give it a moment to start
-        time.sleep(0.5)
-
-        # Check if process is still running
-        if not is_running(process.pid):
-            raise RuntimeError(
-                f"Daemon failed to start. Check {DAEMON_LOG_FILE} for details."
+    with DAEMON_LOG_FILE.open("a", encoding="utf-8") as log_file:
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdin=None,
+                stdout=log_file,
+                stderr=log_file,
+                env=env,
+                start_new_session=True,  # Detach from parent process
             )
 
-        # Write PID file
-        write_pid(process.pid)
+            # Give it a moment to start
+            time.sleep(0.5)
 
-        logger.info(f"Started daemon with PID {process.pid}")
-        return process.pid
+            # Check if process is still running
+            if not is_running(process.pid):
+                raise RuntimeError(
+                    f"Daemon failed to start. Check {DAEMON_LOG_FILE} for details."
+                )
 
-    except Exception as e:
-        # Clean up if something went wrong
-        if "process" in locals() and is_running(process.pid):
-            kill_process(process.pid)
-        raise RuntimeError(f"Failed to start daemon: {e}") from e
-    finally:
-        log_file.close()
+            # Write PID file
+            write_pid(process.pid)
+
+            logger.info(f"Started daemon with PID {process.pid}")
+            return process.pid
+
+        except Exception as e:
+            # Clean up if something went wrong
+            if "process" in locals() and is_running(process.pid):
+                kill_process(process.pid)
+            raise RuntimeError(f"Failed to start daemon: {e}") from e
 
 
 def stop_daemon() -> bool:

@@ -1049,7 +1049,6 @@ def sanitize_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
 
     for i, msg in enumerate(messages):
         role = msg.get("role")
-        content = msg.get("content", "")
 
         if role == "assistant":
             # Check for tool_calls in assistant message
