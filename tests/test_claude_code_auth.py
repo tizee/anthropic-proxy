@@ -16,6 +16,7 @@ from anthropic_proxy.claude_code import (
     inject_message_cache_control,
     inject_system_prompt,
     inject_system_prompt_with_cache,
+    inject_tool_cache_control,
     is_oauth_token,
     is_opus_4_6_model,
     is_thinking_capable_model,
@@ -113,8 +114,9 @@ class TestInjectSystemPrompt:
 
         assert len(result["system"]) == 2
         assert result["system"][0]["text"] == CLAUDE_CODE_SYSTEM_PREFIX
-        assert result["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in result["system"][0]
         assert result["system"][1]["text"] == "You are a helpful assistant."
+        # Only the last block should have cache_control
         assert result["system"][1]["cache_control"] == {"type": "ephemeral"}
 
     def test_array_system_prompt(self, monkeypatch):
@@ -133,9 +135,28 @@ class TestInjectSystemPrompt:
         assert result["system"][0]["text"] == CLAUDE_CODE_SYSTEM_PREFIX
         assert result["system"][1]["text"] == "First instruction."
         assert result["system"][2]["text"] == "Second instruction."
-        # All should have cache_control
-        for block in result["system"]:
-            assert block["cache_control"] == {"type": "ephemeral"}
+        # Only the last block should have cache_control
+        assert "cache_control" not in result["system"][0]
+        assert "cache_control" not in result["system"][1]
+        assert result["system"][2]["cache_control"] == {"type": "ephemeral"}
+
+    def test_array_system_prompt_strips_existing_cache_control(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {
+            "model": "claude-sonnet-4-5",
+            "messages": [],
+            "system": [
+                {"type": "text", "text": "First.", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "Second."},
+            ],
+        }
+        result = inject_system_prompt(request_data)
+
+        # Existing cache_control on non-last blocks should be stripped
+        assert "cache_control" not in result["system"][0]
+        assert "cache_control" not in result["system"][1]
+        # Only the last block gets cache_control
+        assert result["system"][2]["cache_control"] == {"type": "ephemeral"}
 
     def test_system_prompt_with_long_ttl(self, monkeypatch):
         monkeypatch.setenv(CACHE_RETENTION_ENV, "long")
@@ -255,6 +276,107 @@ class TestInjectMessageCacheControl:
             "type": "ephemeral",
             "ttl": "1h",
         }
+
+
+class TestInjectToolCacheControl:
+    """Tests for inject_tool_cache_control function."""
+
+    def test_no_tools(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {"messages": []}
+        result = inject_tool_cache_control(request_data)
+        assert "tools" not in result
+
+    def test_empty_tools(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {"tools": []}
+        result = inject_tool_cache_control(request_data)
+        assert result["tools"] == []
+
+    def test_single_tool(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+            ]
+        }
+        result = inject_tool_cache_control(request_data)
+
+        assert result["tools"][0]["cache_control"] == {"type": "ephemeral"}
+        assert result["tools"][0]["name"] == "Read"
+
+    def test_multiple_tools_only_last_gets_cache(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object"},
+                },
+                {
+                    "name": "Write",
+                    "description": "Write a file",
+                    "input_schema": {"type": "object"},
+                },
+                {
+                    "name": "Bash",
+                    "description": "Run a command",
+                    "input_schema": {"type": "object"},
+                },
+            ]
+        }
+        result = inject_tool_cache_control(request_data)
+
+        # Only the last tool should have cache_control
+        assert "cache_control" not in result["tools"][0]
+        assert "cache_control" not in result["tools"][1]
+        assert result["tools"][2]["cache_control"] == {"type": "ephemeral"}
+
+    def test_long_ttl(self, monkeypatch):
+        monkeypatch.setenv(CACHE_RETENTION_ENV, "long")
+        request_data = {
+            "tools": [
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object"},
+                },
+            ]
+        }
+        result = inject_tool_cache_control(request_data)
+
+        assert result["tools"][0]["cache_control"] == {
+            "type": "ephemeral",
+            "ttl": "1h",
+        }
+
+    def test_preserves_existing_tool_fields(self, monkeypatch):
+        monkeypatch.delenv(CACHE_RETENTION_ENV, raising=False)
+        request_data = {
+            "tools": [
+                {
+                    "name": "Search",
+                    "description": "Search the web",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            ]
+        }
+        result = inject_tool_cache_control(request_data)
+
+        tool = result["tools"][0]
+        assert tool["name"] == "Search"
+        assert tool["description"] == "Search the web"
+        assert tool["input_schema"]["required"] == ["query"]
+        assert tool["cache_control"] == {"type": "ephemeral"}
 
 
 class TestDefaultModels:

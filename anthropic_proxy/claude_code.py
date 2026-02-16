@@ -349,39 +349,45 @@ def inject_system_prompt_with_cache(request_data: dict[str, Any]) -> dict[str, A
     OAuth tokens require the system prompt to start with
     "You are Claude Code, Anthropic's official CLI for Claude."
 
-    All system prompt blocks get cache_control for prompt caching.
+    Only the LAST system prompt block gets cache_control. Anthropic caches
+    everything from the start of the request up to each breakpoint, so one
+    breakpoint on the last block covers the entire system prompt. This
+    conserves the 4-breakpoint limit for tools and message caching.
     """
     existing_system = request_data.get("system")
     cache_control = build_cache_control()
 
-    # Build system prompt array with required prefix and cache control
-    system_blocks = [
+    # Build system prompt array with required prefix
+    system_blocks: list[dict[str, Any]] = [
         {
             "type": "text",
             "text": CLAUDE_CODE_SYSTEM_PREFIX,
-            "cache_control": cache_control,
         }
     ]
 
     if existing_system:
         if isinstance(existing_system, str):
-            # String format: append as second block with cache
+            # String format: append as second block
             system_blocks.append(
                 {
                     "type": "text",
                     "text": existing_system,
-                    "cache_control": cache_control,
                 }
             )
         elif isinstance(existing_system, list):
-            # Array format: append all existing blocks with cache
+            # Array format: append all existing blocks (strip any existing cache_control)
             for block in existing_system:
                 if isinstance(block, dict):
-                    # Add cache_control to existing block
-                    block_with_cache = {**block, "cache_control": cache_control}
-                    system_blocks.append(block_with_cache)
+                    clean_block = {
+                        k: v for k, v in block.items() if k != "cache_control"
+                    }
+                    system_blocks.append(clean_block)
                 else:
                     system_blocks.append(block)
+
+    # Add cache_control only to the last block
+    if system_blocks:
+        system_blocks[-1]["cache_control"] = cache_control
 
     request_data["system"] = system_blocks
     return request_data
@@ -439,6 +445,35 @@ def inject_message_cache_control(request_data: dict[str, Any]) -> dict[str, Any]
                 messages[last_user_idx] = {**last_message, "content": content}
 
     request_data["messages"] = messages
+    return request_data
+
+
+def inject_tool_cache_control(request_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add cache_control to the last tool definition.
+
+    Tool definitions are stable across turns. Placing a cache breakpoint on
+    the last tool caches the entire prefix (system prompt + all tool schemas)
+    as a single unit. This is the highest-value breakpoint because tool
+    schemas can be thousands of tokens.
+
+    Anthropic allows up to 4 breakpoints. The optimal layout is:
+      breakpoint 1: last system block (caches system prompt)
+      breakpoint 2: last tool       (caches system + all tools)
+      breakpoint 3: last user msg   (caches system + tools + conversation)
+    """
+    tools = request_data.get("tools")
+    if not tools or not isinstance(tools, list):
+        return request_data
+
+    cache_control = build_cache_control()
+
+    # Add cache_control to the last tool definition only
+    last_tool = tools[-1]
+    if isinstance(last_tool, dict):
+        tools[-1] = {**last_tool, "cache_control": cache_control}
+        request_data["tools"] = tools
+
     return request_data
 
 
@@ -621,10 +656,12 @@ async def handle_claude_code_request(
     # Build headers with CLI impersonation (include thinking beta if enabled)
     headers = build_claude_code_headers(token, thinking_enabled=thinking_enabled)
 
-    # Inject required system prompt with cache control
+    # Inject cache breakpoints for prompt caching (up to 4 allowed):
+    #   breakpoint 1: last system block  (caches system prompt)
+    #   breakpoint 2: last tool          (caches system + all tools)
+    #   breakpoint 3: last user message  (caches system + tools + conversation)
     request_data = inject_system_prompt_with_cache(request_data)
-
-    # Add cache control to last user message for conversation caching
+    request_data = inject_tool_cache_control(request_data)
     request_data = inject_message_cache_control(request_data)
 
     # Force streaming for consistent handling
