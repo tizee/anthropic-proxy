@@ -666,3 +666,94 @@ class TestOpus46AdaptiveThinking:
         assert result["thinking"]["type"] == "adaptive"
         # max_tokens should stay as-is (no budget to inflate for)
         assert result["max_tokens"] == 4096
+
+
+class TestSonnet46Model:
+    """Tests for Sonnet 4.6 model support."""
+
+    def test_sonnet_4_6_in_default_models(self):
+        """Sonnet 4.6 should be in DEFAULT_CLAUDE_CODE_MODELS."""
+        assert "claude-sonnet-4-6" in DEFAULT_CLAUDE_CODE_MODELS
+
+    def test_sonnet_4_6_model_config(self):
+        """Sonnet 4.6 should have correct config."""
+        config = DEFAULT_CLAUDE_CODE_MODELS["claude-sonnet-4-6"]
+        assert config["model_name"] == "claude-sonnet-4-6"
+        assert config["description"] == "Claude Sonnet 4.6 (latest)"
+        assert config["max_tokens"] == 64000
+        assert config["reasoning_effort"] == "high"
+
+    def test_sonnet_4_6_is_thinking_capable(self):
+        """Sonnet 4.6 should support thinking."""
+        assert is_thinking_capable_model("claude-sonnet-4-6") is True
+        assert is_thinking_capable_model("claude-code/claude-sonnet-4-6") is True
+
+
+class TestSonnet46AdaptiveThinking:
+    """Tests for Sonnet 4.6 adaptive thinking behavior.
+
+    Sonnet 4.6 uses adaptive thinking by default like Opus 4.6.
+    """
+
+    def test_sonnet_4_6_default_uses_adaptive(self):
+        """When thinking is enabled without budget, Sonnet 4.6 uses adaptive."""
+        request_data = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64000,
+            "thinking": {"type": "enabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        assert "budget_tokens" not in result["thinking"]
+
+    def test_sonnet_4_6_explicit_budget_uses_budget_based(self):
+        """When explicit budget_tokens is provided, Sonnet 4.6 uses budget-based."""
+        request_data = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64000,
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "enabled"
+        assert result["thinking"]["budget_tokens"] == 8000
+
+    def test_sonnet_4_6_string_effort_uses_adaptive(self):
+        """String effort levels use adaptive for Sonnet 4.6."""
+        for level in ["low", "medium", "high"]:
+            request_data = {
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 64000,
+                "thinking": level,
+            }
+            result, enabled = process_thinking_config(request_data, "claude-sonnet-4-6")
+            assert enabled is True, f"Expected thinking enabled for effort={level}"
+            assert result["thinking"]["type"] == "adaptive", (
+                f"Expected adaptive for effort={level}, got {result['thinking']}"
+            )
+
+    def test_sonnet_4_6_max_effort_uses_adaptive(self):
+        """Max effort level uses adaptive thinking for Sonnet 4.6."""
+        request_data = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64000,
+            "thinking": "max",
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        assert "budget_tokens" not in result["thinking"]
+
+    def test_sonnet_4_6_adaptive_no_max_tokens_adjustment(self):
+        """Adaptive thinking doesn't need max_tokens > budget + buffer."""
+        request_data = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 4096,
+            "thinking": {"type": "enabled"},
+        }
+        result, enabled = process_thinking_config(request_data, "claude-sonnet-4-6")
+        assert enabled is True
+        assert result["thinking"]["type"] == "adaptive"
+        # max_tokens should stay as-is (no budget to inflate for)
+        assert result["max_tokens"] == 4096

@@ -42,7 +42,7 @@ BETA_THINKING_FEATURE = "interleaved-thinking-2025-05-14"
 BETA_1M_CONTEXT_FEATURE = "context-1m-2025-08-07"  # 1M token context window (beta)
 
 # 1M context window configuration
-# Set CLAUDE_CODE_1M_CONTEXT=1 to enable 1M token context window for Opus 4.6 and Sonnet 4.5
+# Set CLAUDE_CODE_1M_CONTEXT=1 to enable 1M token context window for Opus 4.6 and Sonnet 4.6/4.5
 # Note: Long context pricing applies to requests exceeding 200K tokens
 CONTEXT_1M_ENV = "CLAUDE_CODE_1M_CONTEXT"
 
@@ -59,12 +59,15 @@ THINKING_BUDGET_MAP = {
 # Models that use adaptive thinking by default (no budget_tokens needed)
 ADAPTIVE_THINKING_MODELS = {
     "claude-opus-4-6",
+    "claude-sonnet-4-6",
 }
 
 # Models that support thinking/reasoning (Claude 4.5 and 4.6)
 THINKING_CAPABLE_MODELS = {
     # Claude 4.6 Opus (128K max output, 1M context window with beta)
     "claude-opus-4-6",
+    # Claude 4.6 Sonnet (64K max output, 1M context window with beta)
+    "claude-sonnet-4-6",
     # Claude 4.5 (kept for backward compatibility)
     "claude-opus-4-5",
     "claude-opus-4-5-20251101",
@@ -86,6 +89,14 @@ DEFAULT_CLAUDE_CODE_MODELS = {
         "model_name": "claude-opus-4-6",
         "description": "Claude Opus 4.6 (latest)",
         "max_tokens": 128000,
+        "reasoning_effort": "high",
+    },
+    # Claude 4.6 Sonnet (latest) - 64K max output, 1M context window with beta header
+    # Uses adaptive thinking by default (no budget_tokens needed)
+    "claude-sonnet-4-6": {
+        "model_name": "claude-sonnet-4-6",
+        "description": "Claude Sonnet 4.6 (latest)",
+        "max_tokens": 64000,
         "reasoning_effort": "high",
     },
     # Claude 4.5 Opus (backward compatibility)

@@ -324,25 +324,22 @@ class TestStartDaemon(unittest.TestCase):
     @patch("anthropic_proxy.daemon.is_running")
     @patch("anthropic_proxy.daemon.time.sleep")
     @patch("anthropic_proxy.daemon.subprocess.Popen")
-    @patch("anthropic_proxy.daemon.DEFAULT_LOG_DIR")
-    @patch("anthropic_proxy.daemon.open", create=True)
+    @patch("anthropic_proxy.daemon.DAEMON_LOG_FILE")
     def test_start_daemon_launches_process_successfully(
-        self, mock_open, mock_log_dir, mock_popen, mock_sleep, mock_is_running, mock_write
+        self, mock_log_file_path, mock_popen, mock_sleep, mock_is_running, mock_write
     ):
         """Test start_daemon successfully launches daemon process."""
-        mock_log_dir.mkdir = Mock()
-        mock_log_dir.__truediv__ = Mock(
-            side_effect=lambda x: Path(f"/tmp/anthropic-proxy/{x}")
-        )
+        # Mock the log file path to use a temp location
+        mock_log_file_path.open = Mock()
+        mock_log_file_mock = Mock()
+        mock_log_file_path.open.return_value.__enter__ = Mock(return_value=mock_log_file_mock)
+        mock_log_file_path.open.return_value.__exit__ = Mock(return_value=False)
+        mock_log_file_path.__str__ = Mock(return_value="/tmp/anthropic-proxy/daemon.log")
 
         mock_process = Mock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
         mock_is_running.return_value = True
-
-        mock_log_file = Mock()
-        mock_open.return_value.__enter__ = Mock(return_value=mock_log_file)
-        mock_open.return_value.__exit__ = Mock(return_value=False)
 
         pid = start_daemon(
             host="localhost",
@@ -359,32 +356,28 @@ class TestStartDaemon(unittest.TestCase):
     @patch("anthropic_proxy.daemon.is_running")
     @patch("anthropic_proxy.daemon.time.sleep")
     @patch("anthropic_proxy.daemon.subprocess.Popen")
-    @patch("anthropic_proxy.daemon.DEFAULT_LOG_DIR")
-    @patch("anthropic_proxy.daemon.open", create=True)
+    @patch("anthropic_proxy.daemon.DAEMON_LOG_FILE")
     def test_start_daemon_raises_error_on_failure(
         self,
-        mock_open,
-        mock_log_dir,
+        mock_log_file_path,
         mock_popen,
         mock_sleep,
         mock_is_running,
         mock_kill,
     ):
         """Test start_daemon raises RuntimeError when process fails to start."""
-        mock_log_dir.mkdir = Mock()
-        mock_log_dir.__truediv__ = Mock(
-            side_effect=lambda x: Path(f"/tmp/anthropic-proxy/{x}")
-        )
+        # Mock the log file path to use a temp location
+        mock_log_file_path.open = Mock()
+        mock_log_file_mock = Mock()
+        mock_log_file_path.open.return_value.__enter__ = Mock(return_value=mock_log_file_mock)
+        mock_log_file_path.open.return_value.__exit__ = Mock(return_value=False)
+        mock_log_file_path.__str__ = Mock(return_value="/tmp/anthropic-proxy/daemon.log")
 
         mock_process = Mock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
         # Process dies immediately
         mock_is_running.return_value = False
-
-        mock_log_file = Mock()
-        mock_open.return_value.__enter__ = Mock(return_value=mock_log_file)
-        mock_open.return_value.__exit__ = Mock(return_value=False)
 
         with self.assertRaises(RuntimeError):
             start_daemon(

@@ -61,20 +61,21 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
 
     @patch("anthropic_proxy.auth_provider.load_auth_file")
     async def test_get_access_token_valid(self, mock_load):
-        # Setup valid token (expires in 1 hour)
+        # Setup valid token (expires in 1 hour, refreshed recently)
         valid_auth = {
             "openai": {
                 "access": "valid_access",
                 "refresh": "refresh_token",
                 "expires": time.time() + 3600,
-                "accountId": "account_id"
+                "accountId": "account_id",
+                "last_refresh": int(time.time())  # Recent refresh prevents stale check
             }
         }
         mock_load.return_value = valid_auth
-        
+
         # Call get_access_token
         token = await self.auth.get_access_token()
-        
+
         # Verify
         self.assertEqual(token, "valid_access")
 
@@ -206,7 +207,7 @@ class TestCodexAuth(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.status_code = 404
-        mock_response.read = AsyncMock(
+        mock_response.aread = AsyncMock(
             return_value=b'{"error":{"code":"usage_limit_reached"}}'
         )
         mock_client.return_value = FakeClient(mock_response)

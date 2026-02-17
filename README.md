@@ -359,7 +359,7 @@ To override settings, specify `provider: gemini`:
 
 ## 🤖 Claude Code Subscription Support
 
-Use Claude Code subscription (setup-token based) for access to Claude Opus 4.6, Sonnet 4.5, and Haiku 4.5 models.
+Use Claude Code subscription (setup-token based) for access to Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, and Haiku 4.5 models.
 
 **Model Reference**: [Claude Models Documentation](https://platform.claude.com/docs/en/about-claude/models/overview)
 
@@ -384,24 +384,25 @@ The following models are automatically available (subject to upstream changes). 
 | Model ID | Max Output | Context Window | Description |
 |----------|------------|----------------|-------------|
 | `claude-code/claude-opus-4-6` | 128K | 200K (1M with env var) | Most capable model, adaptive thinking |
+| `claude-code/claude-sonnet-4-6` | 64K | 200K (1M with env var) | Best performance-to-cost ratio, adaptive thinking |
 | `claude-code/claude-opus-4-5` | 64K | 200K | Claude Opus 4.5 (backward compatibility) |
 | `claude-code/claude-opus-4-5-20251101` | 64K | 200K | Claude Opus 4.5 (dated snapshot) |
-| `claude-code/claude-sonnet-4-5` | 64K | 200K (1M with env var) | Balanced performance and speed |
+| `claude-code/claude-sonnet-4-5` | 64K | 200K (1M with env var) | Claude Sonnet 4.5 (backward compatibility) |
 | `claude-code/claude-sonnet-4-5-20250929` | 64K | 200K | Claude Sonnet 4.5 (dated snapshot) |
 | `claude-code/claude-haiku-4-5` | 64K | 200K | Fast, lightweight model |
 | `claude-code/claude-haiku-4-5-20251001` | 64K | 200K | Claude Haiku 4.5 (dated snapshot) |
 
-**Opus 4.6 Adaptive Thinking**: Claude Opus 4.6 uses adaptive thinking by default — Claude automatically determines how much reasoning to apply based on task complexity, replacing budget-based extended thinking. You don't need to estimate or tune token budgets.
+**Claude 4.6 Adaptive Thinking**: Claude 4.6 models (Opus and Sonnet) use adaptive thinking by default — Claude automatically determines how much reasoning to apply based on task complexity, replacing budget-based extended thinking. You don't need to estimate or tune token budgets.
 
-- When thinking is enabled without explicit `budget_tokens`, Opus 4.6 sends `thinking.type: "adaptive"` to the API
+- When thinking is enabled without explicit `budget_tokens`, Opus 4.6 and Sonnet 4.6 send `thinking.type: "adaptive"` to the API
 - If you explicitly set `budget_tokens`, budget-based thinking (`thinking.type: "enabled"`) is used instead
-- A new `max` effort level is available for Opus 4.6 only (falls back to `high` on other models)
-- String effort levels (`low`/`medium`/`high`/`max`) all use adaptive thinking on Opus 4.6
+- A new `max` effort level is available for Opus 4.6 and Sonnet 4.6 (falls back to `high` on other models)
+- String effort levels (`low`/`medium`/`high`/`max`) all use adaptive thinking on Opus 4.6 and Sonnet 4.6
 - `minimal` still disables thinking entirely on all models
 
 Other models (Opus 4.5, Sonnet 4.5, Haiku 4.5) continue to use budget-based thinking as before.
 
-**1M Context Window**: Opus 4.6 and Sonnet 4.5 support extended 1M token context via environment variable:
+**1M Context Window**: Claude 4.6 models (Opus and Sonnet) support extended 1M token context via environment variable:
 
 ```bash
 CLAUDE_CODE_1M_CONTEXT=1 anthropic-proxy start

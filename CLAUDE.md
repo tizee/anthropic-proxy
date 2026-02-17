@@ -229,7 +229,7 @@ This allows creating "reasoning level" variants of the same base model:
 - Codex default models are best-effort; usage-limit errors may be returned as 404 and are mapped to 429.
 - Claude Code uses setup-token (from `claude setup-token`), which is permanent until revoked. No refresh needed.
 - Claude Code requires header impersonation (`user-agent: claude-cli/...`) and mandatory system prompt prefix ("You are Claude Code...").
-- Claude Code default models: Opus 4.6 (128K max tokens), Sonnet 4.5 and Haiku 4.5 (64K max tokens). Opus 4.6 and Sonnet 4.5 support 1M context window via `CLAUDE_CODE_1M_CONTEXT=1` env var.
+- Claude Code default models: Opus 4.6 (128K max tokens), Sonnet 4.6, Sonnet 4.5, and Haiku 4.5 (64K max tokens). Opus 4.6 and Sonnet 4.6 support 1M context window via `CLAUDE_CODE_1M_CONTEXT=1` env var.
 - Claude Code automatically enables prompt caching (system prompt + last user message). Set `CLAUDE_CODE_CACHE_RETENTION=long` for 1-hour TTL.
 
 ## Code Design Guidelines

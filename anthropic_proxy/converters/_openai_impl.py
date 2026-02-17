@@ -1011,7 +1011,12 @@ class AnthropicStreamingConverter:
                 yield event
 
         # Handle reasoning content (thinking)
-        if delta and hasattr(delta, "reasoning_content") and delta.reasoning_content and isinstance(delta.reasoning_content, str):
+        if (
+            delta
+            and hasattr(delta, "reasoning_content")
+            and delta.reasoning_content
+            and isinstance(delta.reasoning_content, str)
+        ):
             async for event in self._handle_thinking_delta(delta.reasoning_content):
                 yield event
 
